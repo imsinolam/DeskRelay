@@ -1,0 +1,421 @@
+import crypto from "node:crypto";
+
+import { describe, expect, test } from "bun:test";
+
+import {
+  WorkBuddyDesktopAdapter,
+  parseWorkBuddyTranscript,
+  parseWorkBuddyTranscriptRunSummary,
+  resolveWorkBuddySidecarSocketPath,
+  type WorkBuddyAdapterDependencies,
+} from "../../src/bridge/bridge-adapters.workbuddy.ts";
+import type { BridgeEvent } from "../../src/bridge/bridge-types.ts";
+import type {
+  WorkBuddyDesktopRpcClientLike,
+} from "../../src/bridge/workbuddy-desktop-rpc.ts";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+describe("WorkBuddy Desktop adapter", () => {
+  test("reproduces the WorkBuddy sidecar socket path", () => {
+    const configDir = "/Users/test/.workbuddy";
+    const uid = 501;
+    const uidHash = crypto.createHash("sha1").update(String(uid)).digest("hex").slice(0, 6);
+    const instanceHash = crypto.createHash("sha1").update(configDir).digest("hex").slice(0, 12);
+    expect(resolveWorkBuddySidecarSocketPath({
+      configDir,
+      uid,
+      tmpDir: "/tmp/runtime",
+      platform: "darwin",
+    })).toBe(`/tmp/runtime/wb-${uidHash}/${instanceHash}/sidecar.sock`);
+  });
+
+  test("parses and replaces updated transcript messages by id", () => {
+    const messages = parseWorkBuddyTranscript([
+      JSON.stringify({
+        id: "user-1",
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "检查任务" }, { type: "input_image" }],
+      }),
+      JSON.stringify({
+        id: "assistant-1",
+        type: "message",
+        role: "assistant",
+        status: "running",
+        content: [{ type: "output_text", text: "处理中" }],
+      }),
+      JSON.stringify({
+        id: "assistant-1",
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text: "已经完成" }],
+        providerData: { model: "deepseek-v4-flash-ioa" },
+      }),
+    ].join("\n"));
+    expect(messages).toEqual([
+      { role: "user", text: "检查任务\n[图片]", id: "user-1" },
+      {
+        role: "assistant",
+        text: "已经完成",
+        id: "assistant-1",
+        phase: "final_answer",
+        model: "deepseek-v4-flash-ioa",
+      },
+    ]);
+  });
+
+  test("hides WorkBuddy injected context and keeps only the visible user query", () => {
+    const messages = parseWorkBuddyTranscript(JSON.stringify({
+      id: "user-real-owner",
+      type: "message",
+      role: "user",
+      content: [{
+        type: "input_text",
+        text: [
+          '<system-reminder data-role="user-context">',
+          "大量桌面内部上下文",
+          "</system-reminder>",
+          "<user_query>请对比两版数据工具</user_query>",
+        ].join("\n"),
+      }, { type: "input_image" }],
+    }));
+    expect(messages).toEqual([{
+      role: "user",
+      text: "请对比两版数据工具\n[图片]",
+      id: "user-real-owner",
+    }]);
+  });
+
+
+  test("derives the latest turn duration instead of the whole desktop session age", () => {
+    const summary = parseWorkBuddyTranscriptRunSummary([
+      JSON.stringify({ type: "message", role: "user", timestamp: 1_000 }),
+      JSON.stringify({ type: "message", role: "assistant", status: "completed", timestamp: 2_000 }),
+      JSON.stringify({ type: "message", role: "user", timestamp: 10_000 }),
+      JSON.stringify({ type: "message", role: "assistant", status: "completed", timestamp: 13_500 }),
+    ].join("\n"));
+    expect(summary).toEqual({
+      status: "completed",
+      startedAtMs: 10_000,
+      completedAtMs: 13_500,
+      durationMs: 3_500,
+    });
+  });
+
+  test("uses the real desktop RPC owner instead of the isolated ACP prompt path", async () => {
+    const promptResult = deferred<unknown>();
+    let onEvent: ((channel: string, data: unknown) => void) | null = null;
+    const calls: Array<{ channel: string; args: unknown[] }> = [];
+    const client: WorkBuddyDesktopRpcClientLike = {
+      connect: async () => undefined,
+      invoke: async (channel, ...args) => {
+        calls.push({ channel, args });
+        if (channel === "session:sendMessage") return await promptResult.promise;
+        return {};
+      },
+      close: async () => undefined,
+    };
+    const row = {
+      id: "wb-session",
+      cwd: "/repo",
+      title: "真实任务",
+      customTitle: null,
+      status: "completed",
+      createdAt: 100,
+      updatedAt: 200,
+      lastActivityAt: 200,
+      projectId: null,
+    };
+    const listScopes: Array<string | undefined> = [];
+    const dependencies: WorkBuddyAdapterDependencies = {
+      createDesktopClient: (callbacks) => {
+        onEvent = callbacks.onEvent;
+        return client;
+      },
+      listSessions: async (cwd) => {
+        listScopes.push(cwd);
+        return [row];
+      },
+      readSession: async () => row,
+      readMessages: async () => [],
+      readRunSummary: async () => null,
+      readLocalImage: async () => ({ data: "aW1hZ2U=", mimeType: "image/png" }),
+    };
+    const adapter = new WorkBuddyDesktopAdapter({
+      kind: "workbuddy",
+      command: "workbuddy",
+      cwd: "/repo",
+      sessionStartMode: "restore",
+    }, dependencies);
+    const events: BridgeEvent[] = [];
+    adapter.setEventSink((event) => events.push(event));
+
+    await adapter.start();
+    expect(listScopes).toEqual([undefined]);
+    expect(calls[0]).toEqual({
+      channel: "session:load",
+      args: ["wb-session", { cwd: "/repo", forceRendererHistoryReplay: false }],
+    });
+
+    await adapter.sendInput("继续处理");
+    expect(adapter.getState().status).toBe("busy");
+    expect(calls.at(-1)?.channel).toBe("session:sendMessage");
+    expect(calls.some((call) => call.channel === "session/prompt")).toBe(false);
+    expect(calls.at(-1)?.args[0]).toBe("wb-session");
+    expect(calls.at(-1)?.args[1]).toMatchObject({
+      content: [{ type: "text", text: "继续处理" }],
+      _meta: {
+        "codebuddy.ai": {
+          conversationId: "wb-session",
+          emitSyntheticUserPromptLive: true,
+          source: "deskrelay",
+        },
+      },
+    });
+
+    onEvent!("session:event:wb-session", {
+      sessionId: "wb-session",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "处理完成" },
+      },
+    });
+    promptResult.resolve({ stopReason: "end_turn" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(events.some((event) =>
+      event.type === "final_reply" && event.text === "处理完成"
+    )).toBe(true);
+    expect(events.some((event) =>
+      event.type === "task_complete" && event.threadId === "wb-session"
+    )).toBe(true);
+    expect(adapter.getState().status).toBe("idle");
+  });
+
+  test("does not silently fall back to an isolated ACP session when desktop send fails", async () => {
+    const calls: string[] = [];
+    const row = {
+      id: "wb-session",
+      cwd: "/repo",
+      title: "真实任务",
+      customTitle: null,
+      status: "completed",
+      createdAt: 100,
+      updatedAt: 200,
+      lastActivityAt: 200,
+      projectId: null,
+    };
+    const dependencies: WorkBuddyAdapterDependencies = {
+      createDesktopClient: () => ({
+        connect: async () => undefined,
+        invoke: async (channel) => {
+          calls.push(channel);
+          if (channel === "session:sendMessage") {
+            throw new Error("desktop unavailable");
+          }
+          return {};
+        },
+        close: async () => undefined,
+      }),
+      listSessions: async () => [row],
+      readSession: async () => row,
+      readMessages: async () => [],
+      readRunSummary: async () => null,
+      readLocalImage: async () => ({ data: "aW1hZ2U=", mimeType: "image/png" }),
+    };
+    const adapter = new WorkBuddyDesktopAdapter({
+      kind: "workbuddy",
+      command: "workbuddy",
+      cwd: "/repo",
+      sessionStartMode: "restore",
+    }, dependencies);
+    const events: BridgeEvent[] = [];
+    adapter.setEventSink((event) => events.push(event));
+
+    await adapter.start();
+    await adapter.sendInput("继续处理");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(calls).toEqual(["session:load", "session:sendMessage"]);
+    expect(events.some((event) =>
+      event.type === "task_failed" && event.message.includes("desktop unavailable")
+    )).toBe(true);
+  });
+
+  test("forwards desktop permission requests and resolves them through WorkBuddy RPC", async () => {
+    let onEvent: ((channel: string, data: unknown) => void) | null = null;
+    const calls: Array<{ channel: string; args: unknown[] }> = [];
+    const row = {
+      id: "wb-session",
+      cwd: "/repo",
+      title: "审批任务",
+      customTitle: null,
+      status: "running",
+      createdAt: 100,
+      updatedAt: 200,
+      lastActivityAt: 200,
+      projectId: null,
+    };
+    const dependencies: WorkBuddyAdapterDependencies = {
+      createDesktopClient: (callbacks) => {
+        onEvent = callbacks.onEvent;
+        return {
+          connect: async () => undefined,
+          invoke: async (channel, ...args) => {
+            calls.push({ channel, args });
+            return true;
+          },
+          close: async () => undefined,
+        };
+      },
+      listSessions: async () => [row],
+      readSession: async () => row,
+      readMessages: async () => [],
+      readRunSummary: async () => null,
+      readLocalImage: async () => ({ data: "aW1hZ2U=", mimeType: "image/png" }),
+    };
+    const adapter = new WorkBuddyDesktopAdapter({
+      kind: "workbuddy",
+      command: "workbuddy",
+      cwd: "/repo",
+      sessionStartMode: "restore",
+    }, dependencies);
+    const events: BridgeEvent[] = [];
+    adapter.setEventSink((event) => events.push(event));
+
+    await adapter.start();
+    onEvent!("session:event:wb-session", {
+      type: "permissionRequest",
+      sessionId: "wb-session",
+      requestId: "permission-1",
+      request: {
+        options: [
+          { optionId: "allow-once", name: "允许一次", kind: "allow_once" },
+          { optionId: "reject-once", name: "拒绝", kind: "reject_once" },
+          { optionId: "allow-always", name: "本任务始终允许", kind: "allow_always" },
+        ],
+        toolCall: {
+          toolCallId: "tool-1",
+          title: "运行命令",
+          rawInput: { command: "npm test" },
+        },
+      },
+    });
+
+    expect(adapter.getState().status).toBe("awaiting_approval");
+    expect(events.some((event) =>
+      event.type === "approval_required" &&
+      event.request.requestId === "permission-1" &&
+      event.request.threadId === "wb-session"
+    )).toBe(true);
+
+    expect(await adapter.resolveApprovalForSession()).toBe(true);
+    expect(calls.at(-1)).toEqual({
+      channel: "session:resolvePermission",
+      args: ["wb-session", "permission-1", "allow-always"],
+    });
+    expect(adapter.getState().pendingApproval).toBeNull();
+  });
+
+  test("ignores replayed desktop output until a relay turn is actually running", async () => {
+    let onEvent: ((channel: string, data: unknown) => void) | null = null;
+    const row = {
+      id: "wb-session",
+      cwd: "/repo",
+      title: "历史任务",
+      customTitle: null,
+      status: "completed",
+      createdAt: 100,
+      updatedAt: 200,
+      lastActivityAt: 200,
+      projectId: null,
+    };
+    const dependencies: WorkBuddyAdapterDependencies = {
+      createDesktopClient: (callbacks) => {
+        onEvent = callbacks.onEvent;
+        return {
+          connect: async () => undefined,
+          invoke: async () => ({}),
+          close: async () => undefined,
+        };
+      },
+      listSessions: async () => [row],
+      readSession: async () => row,
+      readMessages: async () => [],
+      readRunSummary: async () => null,
+      readLocalImage: async () => ({ data: "aW1hZ2U=", mimeType: "image/png" }),
+    };
+    const adapter = new WorkBuddyDesktopAdapter({
+      kind: "workbuddy",
+      command: "workbuddy",
+      cwd: "/repo",
+      sessionStartMode: "restore",
+    }, dependencies);
+    const events: BridgeEvent[] = [];
+    adapter.setEventSink((event) => events.push(event));
+
+    await adapter.start();
+    onEvent!("session:event:wb-session", {
+      sessionId: "wb-session",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "不应乱入的历史输出" },
+      },
+    });
+
+    expect(events.some((event) =>
+      (event.type === "thinking" || event.type === "final_reply") &&
+      "text" in event && event.text.includes("不应乱入")
+    )).toBe(false);
+  });
+  test("creates and loads a real WorkBuddy desktop task", async () => {
+    const calls: Array<{ channel: string; args: unknown[] }> = [];
+    const createdRow = {
+      id: "wb-created", cwd: "/repo", title: "新任务", customTitle: null,
+      status: "completed", createdAt: 300, updatedAt: 300, lastActivityAt: 300, projectId: null,
+    };
+    const dependencies: WorkBuddyAdapterDependencies = {
+      createDesktopClient: () => ({
+        connect: async () => undefined,
+        invoke: async (channel, ...args) => {
+          calls.push({ channel, args });
+          if (channel === "session:create") return { sessionId: "wb-created", cwd: "/repo" };
+          return {};
+        },
+        close: async () => undefined,
+      }),
+      listSessions: async () => [],
+      readSession: async (sessionId) => sessionId === "wb-created" ? createdRow : null,
+      readMessages: async () => [],
+      readRunSummary: async () => null,
+      readLocalImage: async () => ({ data: "aW1hZ2U=", mimeType: "image/png" }),
+    };
+    const adapter = new WorkBuddyDesktopAdapter({
+      kind: "workbuddy", command: "workbuddy", cwd: "/repo", sessionStartMode: "restore",
+    }, dependencies);
+    const events: BridgeEvent[] = [];
+    adapter.setEventSink((event) => events.push(event));
+    await adapter.start();
+
+    await adapter.createSession();
+
+    expect(calls).toContainEqual({ channel: "session:create", args: [{ cwd: "/repo" }] });
+    expect(calls).toContainEqual({
+      channel: "session:load",
+      args: ["wb-created", { cwd: "/repo", forceRendererHistoryReplay: false }],
+    });
+    expect(adapter.getState().sharedSessionId).toBe("wb-created");
+    expect(events.some((event) => event.type === "session_switched" && event.sessionId === "wb-created")).toBe(true);
+  });
+
+});

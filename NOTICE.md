@@ -1,0 +1,9 @@
+# Notice
+
+Copyright (C) 2026 UNLINEARITY and DeskRelay contributors.
+
+DeskRelay evolved from the CLI WeChat Bridge project. Version 2.0 completes the independent DeskRelay naming migration across the npm package, CLI commands, runtime data directory, environment variables, documentation, and public release workflow.
+
+The project is licensed under the GNU Affero General Public License v3.0 or later. Third-party dependencies retain their own licenses; see `package.json` and the linked upstream projects in `README.md`.
+
+`qrcode-terminal` 0.12.0 is distributed under the Apache License 2.0. Its complete license text is included in that dependency's npm package.

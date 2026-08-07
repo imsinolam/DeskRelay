@@ -1,0 +1,4293 @@
+export const CODEX_MOBILE_HTML = `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>DeskRelay</title>
+  <link rel="stylesheet" href="/app.css?appv=__DESK_RELAY_ASSET_VERSION__">
+</head>
+<body>
+  <section class="boot-screen" id="boot-screen" aria-label="正在打开 DeskRelay">
+    <div class="boot-content">
+      <div class="boot-wordmark">DeskRelay</div>
+      <div class="boot-status" id="boot-status">正在连接电脑…</div>
+    </div>
+  </section>
+
+  <section class="auth-screen" id="auth-screen" aria-labelledby="auth-title" hidden>
+    <div class="auth-card">
+      <a class="auth-wordmark" href="/about" aria-label="查看 DeskRelay 项目说明">DeskRelay</a>
+      <h1 id="auth-title">验证访问</h1>
+      <p id="auth-description">请输入移动版访问密码。</p>
+      <form class="auth-form" id="auth-form">
+        <label class="auth-field">
+          <span>访问密码</span>
+          <input id="auth-password" type="password" minlength="8" maxlength="256" autocomplete="current-password" placeholder="至少 8 个字符" required>
+        </label>
+        <button class="auth-submit" id="auth-submit" type="submit">继续</button>
+        <div class="auth-error" id="auth-error" role="alert"></div>
+      </form>
+      <p class="auth-security-warning" id="auth-security-warning" hidden>当前连接未启用 HTTPS，请勿在不可信网络输入密码。公网访问建议先配置 HTTPS。</p>
+      <p class="auth-hint" id="auth-hint">密码仅保存在这台 Mac 上。</p>
+    </div>
+  </section>
+
+  <div class="app-shell" id="app" hidden>
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+    <aside class="sidebar" id="sidebar" aria-label="任务列表">
+      <div class="sidebar-head">
+        <div class="workspace-area">
+          <button class="workspace-switcher" id="workspace-switcher" type="button" aria-label="切换终端或打开 DeskRelay 菜单" aria-expanded="false">
+            <span class="workspace-product">DeskRelay</span>
+            <span class="workspace-divider">·</span>
+            <span class="workspace-adapter" id="active-adapter-label">Codex</span>
+            <span class="workspace-switch-progress" id="workspace-switch-progress" aria-hidden="true" hidden></span>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.25 8 9.75l3.5-3.5"/></svg>
+          </button>
+          <div class="workspace-menu" id="workspace-menu" role="menu" hidden>
+            <div class="adapter-menu" id="adapter-menu"></div>
+            <div class="workspace-menu-divider" role="separator"></div>
+            <a class="workspace-menu-item" href="/about" role="menuitem">项目说明</a>
+            <button class="workspace-menu-item" id="auth-logout" type="button" role="menuitem">退出</button>
+          </div>
+        </div>
+        <button class="icon-button sidebar-close" id="sidebar-close" type="button" aria-label="关闭任务列表">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="task-view-switch" role="tablist" aria-label="任务列表视图">
+        <button class="task-view-button is-active" id="task-view-projects" type="button" role="tab" aria-selected="true">项目</button>
+        <button class="task-view-button" id="task-view-recent" type="button" role="tab" aria-selected="false">最近</button>
+      </div>
+      <label class="search-box">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>
+        <input id="task-search" type="search" placeholder="搜索任务" autocomplete="off">
+      </label>
+      <div class="task-list" id="task-list"></div>
+    </aside>
+
+    <main class="main-panel">
+      <header class="topbar">
+        <button class="icon-button menu-button" id="menu-button" type="button" aria-label="打开任务列表">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14M5 16h14"/></svg>
+        </button>
+        <div class="topbar-copy">
+          <div class="topbar-title" id="current-title">选择一个任务</div>
+          <div class="topbar-meta" id="current-meta"></div>
+        </div>
+        <div class="topbar-actions">
+          <div class="status-label" id="current-status">未选择</div>
+          <button class="new-task-button" id="new-task-button" type="button" aria-label="新建任务" title="新建任务">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="messages" id="messages" aria-live="polite">
+        <div class="empty-state" id="empty-state">
+          <div class="empty-wordmark">DeskRelay</div>
+          <h1>从手机继续任务</h1>
+          <p>这里显示电脑端任务的完整上下文。</p>
+        </div>
+      </section>
+
+      <div class="message-navigation" id="message-navigation" aria-label="用户消息导航" hidden>
+        <button class="message-navigation-button" id="previous-user-message" type="button" aria-label="上一条用户消息" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 14 5-5 5 5"/></svg>
+        </button>
+        <button class="message-navigation-button" id="next-user-message" type="button" aria-label="下一条用户消息" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+        </button>
+      </div>
+
+      <form class="composer-wrap" id="composer-form">
+        <div class="composer-queue" id="composer-queue" aria-live="polite" hidden></div>
+        <input id="composer-image-input" type="file" hidden accept="image/png,image/jpeg,image/webp,image/gif" multiple>
+        <div class="composer">
+          <div class="composer-media" id="composer-media" hidden></div>
+          <button class="composer-image-button" id="composer-image-button" type="button" aria-label="添加图片">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <textarea id="composer-input" rows="1" maxlength="20000" placeholder="有问题，尽管问"></textarea>
+          <button class="send-button" id="send-button" type="submit" aria-label="发送">
+            <svg class="send-arrow-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 18V6M7.5 10.5L12 6l4.5 4.5"/></svg>
+            <svg class="send-stop-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2.2"/></svg>
+          </button>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <div class="task-context-menu" id="task-context-menu" role="menu" aria-label="任务操作" hidden>
+    <button id="task-context-rename" type="button" role="menuitem">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.6-10.6a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"/><path d="m14.8 6.2 3 3"/></svg>
+      <span>重命名</span>
+    </button>
+    <button id="task-context-copy-id" type="button" role="menuitem">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
+      <span>复制任务 ID</span>
+    </button>
+  </div>
+
+  <div class="task-rename-overlay" id="task-rename-overlay" hidden>
+    <form class="task-rename-dialog" id="task-rename-form" role="dialog" aria-modal="true" aria-labelledby="task-rename-title">
+      <div class="task-rename-title" id="task-rename-title">重命名任务</div>
+      <input class="task-rename-input" id="task-rename-input" type="text" maxlength="200" autocomplete="off" aria-label="任务名">
+      <div class="task-rename-actions">
+        <button class="task-rename-cancel" id="task-rename-cancel" type="button">取消</button>
+        <button class="task-rename-save" id="task-rename-save" type="submit">保存</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/app.js?appv=__DESK_RELAY_ASSET_VERSION__" defer></script>
+</body>
+</html>`;
+
+export const DESK_RELAY_ABOUT_HTML = `<!doctype html>
+<html class="about-document" lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <title>项目说明 · DeskRelay</title>
+  <link rel="stylesheet" href="/app.css?appv=__DESK_RELAY_ASSET_VERSION__">
+</head>
+<body class="about-page">
+  <header class="about-topbar">
+    <a class="about-logo" href="/about">DeskRelay</a>
+    <a class="about-open-app" href="/">打开任务</a>
+  </header>
+
+  <main class="about-main">
+    <section class="about-hero">
+      <div class="about-eyebrow">ONE REAL SESSION. EVERY SCREEN.</div>
+      <h1>让真实的 AI 编程任务<br>延伸到任何设备</h1>
+      <p>DeskRelay 连接电脑上的真实 Codex、Claude Code、Cursor 和其他编程 Agent 任务。微信、手机网页与其他入口只负责延伸这条任务，不复制会话，也不在后台创建一条看不见的分支。</p>
+      <div class="about-actions">
+        <a class="about-primary-action" href="/">打开任务</a>
+        <a class="about-secondary-action" href="#principles">了解工作方式</a>
+      </div>
+    </section>
+
+    <section class="about-statement" id="principles">
+      <div class="about-statement-label">核心原则</div>
+      <p>电脑端持有唯一真实任务。<br>其他端都只是延伸入口。</p>
+    </section>
+
+    <section class="about-section">
+      <div class="about-section-heading">
+        <div class="about-section-index">01</div>
+        <h2>为什么要保持同一条任务</h2>
+      </div>
+      <div class="about-grid about-grid-four">
+        <article class="about-card">
+          <h3>不分叉上下文</h3>
+          <p>手机发出的消息真实进入电脑端正在使用的任务，继续沿用原来的历史、项目目录和上下文。</p>
+        </article>
+        <article class="about-card">
+          <h3>不伪造同步</h3>
+          <p>远程端看到的任务、消息、状态和回复来自同一个真实会话，而不是另一套看起来相似的记录。</p>
+        </article>
+        <article class="about-card">
+          <h3>不替代原生客户端</h3>
+          <p>Codex、Cursor 或 Claude Code 仍然是主工作界面。DeskRelay 只补上离开电脑后的入口。</p>
+        </article>
+        <article class="about-card">
+          <h3>不中断后台任务</h3>
+          <p>可以从手机切换任务、查看进展、处理审批和排队消息，不需要把工作迁移到新的 Agent 平台。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="about-section">
+      <div class="about-section-heading">
+        <div class="about-section-index">02</div>
+        <h2>DeskRelay 如何工作</h2>
+      </div>
+      <div class="about-flow" aria-label="DeskRelay 工作流程">
+        <div class="about-flow-node">
+          <strong>远程入口</strong>
+          <span>微信 · 手机网页 · 浏览器</span>
+        </div>
+        <div class="about-flow-arrow" aria-hidden="true">→</div>
+        <div class="about-flow-node is-relay">
+          <strong>DeskRelay</strong>
+          <span>任务映射 · 队列 · 审批 · 状态</span>
+        </div>
+        <div class="about-flow-arrow" aria-hidden="true">→</div>
+        <div class="about-flow-node">
+          <strong>真实任务</strong>
+          <span>Codex · Claude Code · WorkBuddy · 更多 Agent</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="about-section about-two-column">
+      <div>
+        <div class="about-section-heading">
+          <div class="about-section-index">03</div>
+          <h2>它提供什么</h2>
+        </div>
+        <ul class="about-list">
+          <li>查看电脑端真实任务列表与完整消息</li>
+          <li>从微信和移动网页继续发送文字与图片</li>
+          <li>同步运行状态、处理时间与任务完成通知</li>
+          <li>管理待发送消息、停止任务与远程审批</li>
+          <li>通过适配器接入不同的 AI 编程工具</li>
+        </ul>
+      </div>
+      <div>
+        <div class="about-section-heading">
+          <div class="about-section-index">04</div>
+          <h2>它不是什么</h2>
+        </div>
+        <ul class="about-list is-muted">
+          <li>不是一个重新托管所有任务的云端 Agent</li>
+          <li>不是只会模拟点击和键盘的远程桌面</li>
+          <li>不是在手机端复制一份独立聊天记录</li>
+          <li>不会把远程会话伪装成桌面原始任务</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="about-section about-local-first">
+      <div class="about-section-heading">
+        <div class="about-section-index">05</div>
+        <h2>本地优先</h2>
+      </div>
+      <p>任务和 Agent 仍然运行在你的电脑上。DeskRelay 只在你授权的入口之间传递必要的信息。移动网页使用独立访问密码；公网访问可通过 DeskRelay 应用层主动 Relay 提供，电脑不需要暴露本地端口。</p>
+    </section>
+
+    <footer class="about-footer">
+      <div>
+        <strong>DeskRelay</strong>
+        <span>Your real coding-agent sessions, everywhere.</span>
+      </div>
+      <a href="/">返回任务</a>
+    </footer>
+  </main>
+</body>
+</html>`;
+
+export const CODEX_MOBILE_CSS = String.raw`
+:root {
+  color-scheme: light;
+  --page: #ffffff;
+  --canvas: #fcfcfc;
+  --sidebar: #f9f9f9;
+  --surface: #f4f4f4;
+  --surface-hover: #ececec;
+  --surface-selected: #e7e7e7;
+  --border: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.13);
+  --text: #0d0d0d;
+  --muted: #6b6b6b;
+  --muted-strong: #4f4f4f;
+  --accent: #0d0d0d;
+  --green: #10a37f;
+  --orange: #c17422;
+  --red: #d00e17;
+  --thread-max: 48rem;
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.10);
+  font-family: -apple-system-body, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+[hidden] { display: none !important; }
+* { box-sizing: border-box; }
+html { -webkit-tap-highlight-color: transparent; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; overscroll-behavior: none; background: var(--canvas); color: var(--text); }
+body { position: fixed; inset: 0; font-size: 16px; line-height: 1.5; }
+button, input, textarea, a { -webkit-tap-highlight-color: transparent; }
+button, input, textarea { font: inherit; }
+button { color: inherit; touch-action: manipulation; -webkit-appearance: none; appearance: none; user-select: none; }
+button:focus { outline: none; }
+button:focus-visible { outline: 2px solid var(--border-strong); outline-offset: 2px; }
+.about-document, .about-document body { width: 100%; height: auto; min-height: 100%; overflow: auto; overscroll-behavior: auto; }
+.about-page { position: static; inset: auto; background: var(--page); }
+.about-topbar { position: sticky; top: 0; min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: max(12px, env(safe-area-inset-top)) max(24px, calc((100vw - 1120px) / 2)) 12px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.88); backdrop-filter: blur(18px); z-index: 10; }
+.about-logo { color: var(--text); font-size: 18px; font-weight: 680; letter-spacing: -.035em; text-decoration: none; }
+.about-open-app { min-height: 36px; display: inline-flex; align-items: center; padding: 0 14px; border: 1px solid var(--border-strong); border-radius: 10px; color: var(--text); font-size: 13px; font-weight: 560; text-decoration: none; }
+.about-open-app:hover { background: var(--surface); }
+.about-main { width: min(100%, 1120px); margin: 0 auto; padding: 0 32px max(52px, env(safe-area-inset-bottom)); }
+.about-hero { padding: clamp(76px, 11vw, 142px) 0 clamp(76px, 10vw, 124px); }
+.about-eyebrow { margin-bottom: 24px; color: var(--muted); font-size: 12px; font-weight: 680; letter-spacing: .14em; }
+.about-hero h1 { max-width: 920px; margin: 0; font-size: clamp(44px, 7.3vw, 88px); font-weight: 570; letter-spacing: -.065em; line-height: .98; }
+.about-hero > p { max-width: 760px; margin: 34px 0 0; color: var(--muted-strong); font-size: clamp(17px, 2vw, 21px); line-height: 1.72; }
+.about-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 36px; }
+.about-primary-action, .about-secondary-action { min-height: 46px; display: inline-flex; align-items: center; justify-content: center; padding: 0 18px; border-radius: 12px; font-size: 14px; font-weight: 580; text-decoration: none; }
+.about-primary-action { background: var(--accent); color: var(--page); }
+.about-secondary-action { border: 1px solid var(--border-strong); color: var(--text); }
+.about-secondary-action:hover { background: var(--surface); }
+.about-statement { margin-bottom: 110px; padding: clamp(32px, 6vw, 64px); border-radius: 30px; background: #0d0d0d; color: #fff; }
+.about-statement-label { margin-bottom: 36px; color: rgba(255,255,255,.55); font-size: 12px; font-weight: 650; letter-spacing: .12em; }
+.about-statement p { margin: 0; font-size: clamp(32px, 5vw, 60px); font-weight: 510; letter-spacing: -.045em; line-height: 1.16; }
+.about-section { padding: 84px 0; border-top: 1px solid var(--border); scroll-margin-top: 72px; }
+.about-section-heading { display: flex; align-items: baseline; gap: 18px; margin-bottom: 36px; }
+.about-section-index { color: var(--muted); font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.about-section h2 { margin: 0; font-size: clamp(28px, 3.2vw, 42px); font-weight: 560; letter-spacing: -.04em; line-height: 1.12; }
+.about-grid { display: grid; gap: 12px; }
+.about-grid-four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.about-card { min-height: 210px; padding: 28px; border: 1px solid var(--border); border-radius: 20px; background: var(--canvas); }
+.about-card h3 { margin: 0 0 44px; font-size: 18px; font-weight: 620; letter-spacing: -.025em; }
+.about-card p { margin: 0; color: var(--muted-strong); font-size: 15px; line-height: 1.7; }
+.about-flow { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; }
+.about-flow-node { min-height: 144px; display: flex; flex-direction: column; justify-content: space-between; gap: 24px; padding: 24px; border: 1px solid var(--border); border-radius: 18px; background: var(--canvas); }
+.about-flow-node.is-relay { border-color: #0d0d0d; background: #0d0d0d; color: #fff; }
+.about-flow-node strong { font-size: 17px; font-weight: 620; }
+.about-flow-node span { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.about-flow-node.is-relay span { color: rgba(255,255,255,.58); }
+.about-flow-arrow { color: var(--muted); font-size: 22px; }
+.about-two-column { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(52px, 8vw, 110px); }
+.about-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.about-list li { padding: 18px 0; border-bottom: 1px solid var(--border); font-size: 15px; line-height: 1.55; }
+.about-list.is-muted { color: var(--muted-strong); }
+.about-local-first > p { max-width: 780px; margin: 0; color: var(--muted-strong); font-size: 18px; line-height: 1.75; }
+.about-footer { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 76px 0 28px; border-top: 1px solid var(--border); }
+.about-footer > div { display: grid; gap: 8px; }
+.about-footer strong { font-size: 20px; font-weight: 670; letter-spacing: -.035em; }
+.about-footer span { color: var(--muted); font-size: 13px; }
+.about-footer a { color: var(--text); font-size: 14px; font-weight: 560; text-decoration: none; }
+.boot-screen { min-height: 100dvh; display: grid; place-items: center; background: var(--canvas); }
+.boot-content { display: grid; justify-items: center; gap: 10px; }
+.boot-wordmark { color: var(--text); font-size: 24px; font-weight: 650; letter-spacing: -0.035em; }
+.boot-status { color: var(--muted); font-size: 13px; line-height: 1.5; text-align: center; }
+.auth-screen { min-height: 100dvh; display: grid; place-items: center; padding: max(24px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom)); background: var(--canvas); }
+.auth-card { width: min(100%, 390px); padding: 34px 30px 30px; border: 1px solid var(--border); border-radius: 24px; background: var(--page); box-shadow: var(--shadow); }
+.auth-wordmark { display: inline-block; margin-bottom: 28px; color: var(--text); font-size: 22px; font-weight: 680; letter-spacing: -0.04em; text-decoration: none; }
+.auth-card h1 { margin: 0 0 9px; font-size: 24px; font-weight: 650; letter-spacing: -0.035em; }
+.auth-card > p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.55; }
+.auth-form { display: grid; gap: 14px; margin-top: 25px; }
+.auth-field { display: grid; gap: 8px; color: var(--muted-strong); font-size: 13px; font-weight: 560; }
+.auth-field input { width: 100%; min-height: 50px; padding: 0 15px; border: 1px solid var(--border-strong); border-radius: 13px; outline: 0; background: var(--page); color: var(--text); font-size: 16px; transition: border-color .16s ease, box-shadow .16s ease; }
+.auth-field input:focus { border-color: rgba(13,13,13,.42); box-shadow: 0 0 0 3px rgba(13,13,13,.07); }
+.auth-submit { min-height: 48px; border: 0; border-radius: 13px; background: var(--accent); color: var(--page); font-size: 15px; font-weight: 620; cursor: pointer; }
+.auth-submit:disabled { opacity: .46; cursor: default; }
+.auth-error { min-height: 20px; color: var(--red); font-size: 13px; line-height: 1.5; }
+.auth-security-warning { margin-top: 4px !important; padding: 10px 12px; border: 1px solid rgba(193,116,34,.32); border-radius: 11px; background: rgba(193,116,34,.08); color: #8a4b12 !important; font-size: 12px !important; line-height: 1.5 !important; }
+.auth-hint { margin-top: 18px !important; font-size: 12px !important; text-align: center; }
+svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+
+.app-shell { display: grid; grid-template-columns: 260px minmax(0, 1fr); width: 100%; height: 100dvh; }
+.sidebar {
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
+  background: var(--sidebar);
+  z-index: 20;
+}
+.sidebar-head { min-height: 44px; flex: 0 0 auto; display: flex; align-items: center; gap: 4px; padding: 0 2px 4px; }
+.sidebar-head .workspace-area { min-width: 0; flex: 1; }
+.sidebar-head .workspace-switcher { max-width: 100%; }
+.sidebar-head .workspace-adapter { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  cursor: pointer;
+}
+.icon-button svg { width: 18px; height: 18px; }
+.icon-button:hover { background: var(--surface-hover); }
+.icon-button:active { background: #dfdfdf; }
+.sidebar-close { display: none; margin-left: auto; }
+.task-view-switch {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+  margin: 0 2px 6px;
+  padding: 2px;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, .04);
+}
+.task-view-button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 520;
+  cursor: pointer;
+}
+.task-view-button.is-active { background: var(--page); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.search-box {
+  flex: 0 0 auto;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 2px 8px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted-strong);
+}
+.search-box:hover, .search-box:focus-within { background: var(--surface-hover); }
+.search-box svg { width: 17px; height: 17px; flex: 0 0 auto; }
+.search-box input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 14px; }
+.search-box input::placeholder { color: var(--muted-strong); }
+.task-list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 0; overscroll-behavior: contain; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+.task-group { margin: 0; }
+.task-group-title {
+  width: 100%;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 10px 4px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+}
+.task-group-title:hover { color: var(--muted-strong); background: var(--surface-hover); }
+.task-group-title.is-static { cursor: default; }
+.task-group-title.is-static:hover { color: var(--muted); background: transparent; }
+.task-group-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-group-chevron { width: 13px; height: 13px; flex: 0 0 auto; transition: transform .15s ease; }
+.task-group.is-collapsed .task-group-chevron { transform: rotate(-90deg); }
+.task-group-title.is-static .task-group-chevron { display: none; }
+.task-group:first-child .task-group-title { padding-top: 4px; }
+.task-group:not(.is-recent) .task-group-items .task-item,
+.task-group:not(.is-recent) .task-group-more { padding-left: 28px; }
+.task-group-more, .task-list-more {
+  width: 100%;
+  min-height: 31px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.task-group-more:hover, .task-list-more:hover { color: var(--muted-strong); background: var(--surface-hover); }
+.task-list-more { margin: 3px 0 10px; }
+.task-item {
+  width: 100%;
+  min-height: 36px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin: 1px 0;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  touch-action: pan-y;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.task-item:hover { background: var(--surface-hover); }
+.task-item.is-active { background: var(--surface-selected); }
+.task-copy { min-width: 0; grid-column: 1; grid-row: 1; }
+.task-indicator { min-width: 10px; grid-column: 2; grid-row: 1; display: inline-flex; align-items: center; justify-content: flex-end; }
+.task-dot { width: 6px; height: 6px; flex: 0 0 auto; visibility: hidden; border-radius: 50%; background: transparent; }
+.task-dot.running { visibility: visible; background: var(--green); animation: task-dot-breathe 1.6s ease-in-out infinite; }
+.task-dot.input { visibility: visible; background: var(--orange); }
+.task-dot.error { visibility: visible; background: var(--red); }
+.task-status-badge { display: none; min-height: 20px; padding: 1px 6px; align-items: center; border: 1px solid rgba(193,116,34,.24); border-radius: 6px; background: rgba(193,116,34,.10); color: var(--orange); font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
+.task-status-badge.approval { display: inline-flex; }
+@keyframes task-dot-breathe {
+  0%, 100% { opacity: .55; transform: scale(.86); box-shadow: 0 0 0 0 rgba(16, 163, 127, 0); }
+  50% { opacity: 1; transform: scale(1.12); box-shadow: 0 0 0 4px rgba(16, 163, 127, .14); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .task-dot.running { animation: none; opacity: 1; transform: none; box-shadow: none; }
+}
+.task-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 430; line-height: 1.5; }
+.sidebar-overlay { display: none; }
+
+.main-panel { position: relative; min-width: 0; display: flex; flex-direction: column; height: 100dvh; overflow: hidden; background: var(--page); }
+.topbar {
+  min-height: 52px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: max(8px, env(safe-area-inset-top)) 14px 8px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(16px);
+  z-index: 10;
+}
+.menu-button { display: none; }
+.topbar-copy { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }
+.workspace-area { position: relative; flex: 0 0 auto; }
+.workspace-switcher { min-height: 32px; display: flex; align-items: center; gap: 5px; padding: 0 7px; border: 0; border-radius: 8px; background: transparent; color: var(--muted-strong); font: inherit; cursor: pointer; }
+.workspace-switcher:hover { background: var(--surface-hover); color: var(--text); }
+.workspace-product { color: var(--text); font-size: 16px; font-weight: 620; letter-spacing: -0.015em; }
+.workspace-divider { color: var(--muted); font-size: 13px; }
+.workspace-adapter { font-size: 13px; font-weight: 540; }
+.workspace-switch-progress { width: 12px; height: 12px; flex: 0 0 auto; margin-left: 2px; border: 1.5px solid var(--border-strong); border-top-color: var(--green); border-radius: 50%; animation: switch-spin .8s linear infinite; }
+.workspace-switcher svg { width: 13px; height: 13px; margin-left: 1px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+.workspace-switcher[aria-expanded="true"] svg { transform: rotate(180deg); }
+.workspace-switcher.is-switching > svg { display: none; }
+@keyframes switch-spin { to { transform: rotate(360deg); } }
+.workspace-menu { position: absolute; top: calc(100% + 7px); left: 0; min-width: min(220px, calc(100vw - 32px)); padding: 4px; border: 1px solid var(--border); border-radius: 12px; background: var(--page); box-shadow: var(--shadow); z-index: 24; }
+.adapter-menu { display: block; }
+.adapter-menu-item { width: 100%; min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.adapter-menu-item:hover { background: var(--surface-hover); }
+.adapter-menu-item.is-active { font-weight: 620; }
+.adapter-menu-state { color: var(--muted); font-size: 11px; font-weight: 430; }
+.workspace-menu-divider { height: 1px; margin: 4px 6px; background: var(--border); }
+.workspace-menu-item { width: 100%; min-height: 34px; display: flex; align-items: center; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; text-decoration: none; cursor: pointer; }
+.workspace-menu-item:hover { background: var(--surface-hover); }
+.topbar-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; font-weight: 420; }
+.topbar-meta { display: none; }
+.topbar-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
+.status-label { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 8px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.new-task-button { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 9px; background: transparent; color: var(--text); cursor: pointer; }
+.new-task-button:hover { background: var(--surface-hover); }
+.new-task-button:disabled { opacity: .36; cursor: default; }
+.new-task-button svg { width: 18px; height: 18px; }
+.status-label::before { content: ""; width: 7px; height: 7px; visibility: hidden; border-radius: 50%; background: transparent; }
+.status-label.running::before { visibility: visible; background: var(--green); }
+.status-label.starting::before { visibility: visible; border: 1.5px solid var(--border-strong); border-top-color: var(--green); background: transparent; animation: switch-spin .8s linear infinite; }
+.status-label.approval::before, .status-label.input::before { visibility: visible; background: var(--orange); }
+.status-label.error::before { visibility: visible; background: var(--red); }
+
+.messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 38px 24px 112px;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.message-row { width: min(100%, var(--thread-max)); display: flex; margin: 0 auto 20px; }
+.message-row.user { justify-content: flex-end; }
+.message-card { min-width: 0; max-width: 100%; color: var(--text); font-size: 16px; line-height: 1.52; overflow-wrap: anywhere; }
+.message-row.user .message-card { max-width: min(78%, 38rem); padding: 10px 16px; border-radius: 20px; background: var(--surface); }
+.message-row.assistant { margin-bottom: 16px; }
+.message-row.assistant.continues { margin-bottom: 10px; }
+.message-row.assistant .message-card { width: 100%; color: var(--text); font-size: 15px; line-height: 1.62; }
+.message-row.assistant.commentary .message-card { padding-left: 0; border-left: 0; color: var(--text); }
+.message-model { margin-top: 10px; color: var(--muted); font-size: 11px; font-weight: 430; line-height: 1.4; }
+.run-header { width: min(100%, var(--thread-max)); display: flex; align-items: center; gap: 9px; margin: -4px auto 13px; color: var(--muted-strong); font-size: 13px; font-weight: 560; }
+.run-header-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--green); }
+.run-header.running .run-header-dot { animation: run-pulse 1.4s ease-in-out infinite; }
+.run-header.approval .run-header-dot { background: var(--orange); }
+.run-header.failed .run-header-dot, .run-header.interrupted .run-header-dot { background: var(--red); }
+@keyframes run-pulse { 0%, 100% { opacity: .35; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }
+.run-progress { width: min(100%, var(--thread-max)); display: grid; gap: 9px; margin: 0 auto 24px; color: var(--muted); font-size: 14px; font-weight: 400; line-height: 1.45; }
+.run-progress-item { min-width: 0; display: flex; align-items: flex-start; gap: 9px; font-size: inherit; font-weight: inherit; }
+.run-progress-dot { width: 7px; height: 7px; flex: 0 0 auto; margin-top: 7px; border: 1.5px solid currentColor; border-radius: 50%; opacity: .62; }
+.run-progress-item.running { color: var(--muted-strong); }
+.run-progress-item.running .run-progress-dot { border-color: var(--green); animation: run-pulse 1.4s ease-in-out infinite; }
+.run-progress-item.failed { color: var(--red); }
+.run-progress-text { min-width: 0; overflow-wrap: anywhere; }
+.run-progress-history { margin: 1px 0 2px 16px; color: var(--muted); }
+.run-progress-history > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; padding: 0 2px; cursor: pointer; list-style: none; font-size: 12px; }
+.run-progress-history > summary::-webkit-details-marker { display: none; }
+.run-progress-history-items { display: grid; gap: 7px; padding: 5px 0 5px; }
+.run-progress-fold-open { display: none; }
+.run-progress-history[open] .run-progress-fold-closed { display: none; }
+.run-progress-history[open] .run-progress-fold-open { display: inline; }
+.run-progress-fold-action { color: var(--muted); font-size: 11px; }
+.approval-card { width: min(100%, var(--thread-max)); margin: 0 auto 20px; padding: 16px; border: 1px solid rgba(217,119,6,.24); border-radius: 16px; background: rgba(245,158,11,.07); }
+.approval-card-kicker { color: var(--orange); font-size: 12px; font-weight: 650; }
+.approval-card-title { margin-top: 7px; color: var(--text); font-size: 15px; font-weight: 600; line-height: 1.45; }
+.approval-card-detail { margin-top: 11px; }
+.approval-card-detail-label { margin-bottom: 5px; color: var(--muted); font-size: 11px; }
+.approval-card-detail pre { margin: 0; padding: 11px 12px; overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--page); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.approval-card-hint { margin-top: 10px; color: var(--muted-strong); font-size: 12px; line-height: 1.5; }
+.approval-card-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.approval-action { min-height: 34px; padding: 0 13px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--page); color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer; }
+.approval-action.primary { border-color: var(--accent); background: var(--accent); color: var(--page); }
+.approval-action.danger { color: var(--red); }
+.approval-action:disabled { opacity: .5; cursor: default; }
+.message-row.user.pending .message-card { opacity: .76; }
+.message-row.user.failed .message-card { border: 1px solid rgba(208,14,23,.22); }
+.message-delivery { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.3; }
+.message-delivery.failed { color: var(--red); }
+.message-images { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0 0 9px; }
+.message-images.single { grid-template-columns: minmax(0, 1fr); }
+.message-image-button { position: relative; width: 100%; min-width: 0; margin: 0; padding: 0; overflow: hidden; border: 0; border-radius: 12px; background: var(--surface); cursor: zoom-in; }
+.message-image-button img { width: 100%; max-height: 420px; display: block; object-fit: contain; background: var(--surface); }
+.message-image-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.message-image-button.failed { min-height: 96px; cursor: default; }
+.message-image-button.failed img { display: none; }
+.message-image-error { display: none; padding: 24px 12px; color: var(--muted); font-size: 12px; line-height: 1.45; text-align: center; }
+.message-image-button.failed .message-image-error { display: block; }
+.image-viewer { position: fixed; inset: 0; z-index: 120; display: grid; grid-template-rows: auto minmax(0, 1fr); padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); background: rgba(0, 0, 0, .92); }
+.image-viewer[hidden] { display: none; }
+.image-viewer-toolbar { display: flex; justify-content: flex-end; padding-bottom: 10px; }
+.image-viewer-close { min-width: 56px; height: 36px; padding: 0 14px; border: 0; border-radius: 18px; background: rgba(255, 255, 255, .14); color: #fff; font: inherit; cursor: pointer; }
+.image-viewer-stage { min-height: 0; display: grid; place-items: center; overflow: auto; }
+.image-viewer-stage img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+body.image-viewer-open { overflow: hidden; }
+.message-retry { padding: 0; border: 0; background: transparent; color: inherit; font-size: inherit; font-weight: 650; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.message-content { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+.response-pending { width: min(100%, var(--thread-max)); display: flex; align-items: center; gap: 4px; margin: -8px auto 20px; padding-left: 2px; color: var(--muted); }
+.response-pending-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .28; animation: response-pending-dot 1.15s ease-in-out infinite; }
+.response-pending-dot:nth-child(2) { animation-delay: .16s; }
+.response-pending-dot:nth-child(3) { animation-delay: .32s; }
+@keyframes response-pending-dot { 0%, 60%, 100% { opacity: .24; transform: translateY(0); } 30% { opacity: .9; transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) { .response-pending-dot { animation: none; opacity: .5; } }
+.message-content > :first-child { margin-top: 0; }
+.message-content > :last-child { margin-bottom: 0; }
+.message-content p { margin: 0 0 10px; }
+.message-content h1, .message-content h2, .message-content h3, .message-content h4, .message-content h5, .message-content h6 { margin: 12px 0; font-size: inherit; font-weight: inherit; letter-spacing: inherit; line-height: inherit; }
+.message-content ul, .message-content ol { margin: 6px 0 12px; padding-left: 22px; }
+.message-content li { margin: 4px 0; }
+.message-content strong { font-weight: 620; }
+.message-content blockquote { margin: 12px 0; padding: 1px 0 1px 14px; border-left: 2px solid #d1d1d1; color: var(--muted-strong); }
+.message-content pre { overflow-x: auto; margin: 14px 0; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: #f7f7f7; font: 13px/1.58 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.message-content code { padding: 2px 5px; border-radius: 5px; background: #f2f2f2; font: .88em/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.message-content pre code { padding: 0; background: transparent; font-size: inherit; }
+.message-code-fold { overflow: hidden; margin: 14px 0; border: 1px solid var(--border); border-radius: 12px; background: #f7f7f7; }
+.message-code-fold > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; padding: 0 13px; cursor: pointer; list-style: none; color: var(--muted-strong); font-size: 12px; line-height: 1.4; }
+.message-code-fold > summary::-webkit-details-marker { display: none; }
+.message-code-fold > pre { margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; }
+.message-code-fold-open { display: none; }
+.message-code-fold[open] .message-code-fold-closed { display: none; }
+.message-code-fold[open] .message-code-fold-open { display: inline; }
+.message-code-fold-action { flex: 0 0 auto; color: var(--muted); font-size: 11px; }
+.message-content a { color: #0b57d0; text-decoration: underline; text-decoration-color: rgba(11, 87, 208, 0.32); text-underline-offset: 2px; }
+.message-content hr { height: 1px; margin: 22px 0; border: 0; background: var(--border); }
+.message-content img { max-width: 100%; height: auto; border-radius: 12px; }
+.loading-row { padding: 30px 16px; color: var(--muted); text-align: center; font-size: 13px; }
+.empty-state { min-height: 62vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: var(--muted); }
+.empty-wordmark { color: var(--text); font-size: 30px; font-weight: 560; letter-spacing: -0.035em; line-height: 1; }
+.empty-state h1 { margin: 18px 0 6px; color: var(--text); font-size: 20px; font-weight: 580; letter-spacing: -0.02em; }
+.empty-state p { margin: 0; max-width: 300px; font-size: 14px; line-height: 1.55; }
+
+.composer-wrap {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 20px 24px max(12px, env(safe-area-inset-bottom));
+  background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,.94) 32%, #fff 62%);
+  z-index: 12;
+}
+.composer-queue, .composer { width: min(100%, var(--thread-max)); margin-left: auto; margin-right: auto; }
+.composer-queue { display: grid; gap: 6px; max-height: 190px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 0 20px; margin-bottom: 0px;}
+.composer-queue[hidden], .composer-media[hidden] { display: none; }
+.composer-media { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; padding: 2px 2px 4px; }
+.composer-media-item { position: relative; width: 72px; height: 72px; flex: 0 0 auto; }
+.composer-media-preview { width: 100%; height: 100%; display: block; padding: 0; border: 0; border-radius: 12px; background: transparent; cursor: zoom-in; }
+.composer-media-preview:focus { outline: 0; }
+.composer-media-preview:focus-visible { box-shadow: 0 0 0 2px rgba(16,163,127,.28); }
+.composer-media-item img { width: 100%; height: 100%; display: block; object-fit: cover; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.composer-media-remove { position: absolute; z-index: 1; top: -6px; right: -6px; width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: 2px solid var(--page); border-radius: 50%; background: var(--accent); color: var(--page); cursor: pointer; }
+.composer-media-remove svg { width: 11px; height: 11px; stroke-width: 2.2; }
+.queued-followup { border: 1px solid var(--border); border-radius: 16px 16px 0 0; background: var(--page); overflow: hidden; }
+.queued-followup-main { display: flex; align-items: center; gap: 9px; padding: 4px 4px 0px 8px; }
+.queued-followup-icon { width: 20px; height: 20px; flex: 0 0 auto; display: grid; place-items: center; color: var(--muted); }
+.queued-followup-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
+.queued-followup-copy { flex: 1; min-width: 0; }
+.queued-followup-text { max-height: 44px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text); font-size: 14px; line-height: 1.45; }
+.queued-followup-status, .queued-followup-images { margin-top: 2px; color: var(--muted); font-size: 11px; font-weight: 430; line-height: 1.35; }
+.queued-followup-status.is-pending { color: var(--muted-strong); }
+.queued-followup-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.queued-followup-action { min-width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 0 7px; border: 0; border-radius: 9px; background: transparent; color: var(--muted-strong); font: inherit; font-size: 13px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.queued-followup-action:hover { background: var(--surface); color: var(--text); }
+.queued-followup-action:focus { outline: 0; }
+.queued-followup-action:focus-visible { box-shadow: inset 0 0 0 2px rgba(16,163,127,.24); }
+.queued-followup-action:disabled { opacity: .42; cursor: default; }
+.queued-followup-action svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
+.composer {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 36px;
+  align-items: flex-end;
+  gap: 4px;
+  min-height: 52px;
+  padding: 8px;
+  border: 0;
+  border-radius: 28px;
+  background: var(--page);
+  box-shadow: 0 0 0 1px rgba(0,0,0,.04), 0 2px 8px rgba(0,0,0,.04), 0 4px 80px 8px rgba(0,0,0,.024);
+  transition: box-shadow .16s ease;
+}
+.composer:focus-within { box-shadow: 0 0 0 1px rgba(0,0,0,.08), 0 2px 10px rgba(0,0,0,.055), 0 8px 80px 10px rgba(0,0,0,.03); }
+.composer-image-button, .send-button { width: 36px; height: 36px; flex: 0 0 auto; display: grid; place-items: center; margin: 0; padding: 0; border: 0; border-radius: 50%; cursor: pointer; }
+.composer-image-button { grid-column: 1; background: transparent; color: var(--text); }
+.composer-image-button:hover { background: var(--surface); }
+.composer-image-button svg { width: 19px; height: 19px; stroke-width: 1.7; }
+.composer textarea { grid-column: 2; min-width: 0; min-height: 36px; max-height: 164px; resize: none; border: 0; outline: 0; padding: 6px 8px; background: transparent; color: var(--text); font-size: 16px; line-height: 24px; }
+.composer textarea::placeholder { color: #8f8f8f; }
+.send-button { grid-column: 3; background: var(--accent); color: white; }
+.send-button svg { width: 18px; height: 18px; stroke-width: 2; }
+.send-button .send-stop-icon { width: 20px; height: 20px; display: none; fill: currentColor; stroke: none; }
+.send-button.is-stop .send-arrow-icon { display: none; }
+.send-button.is-stop .send-stop-icon { display: block; }
+.send-button:disabled { background: #d7d7d7; color: #fff; cursor: default; }
+.send-button.is-stop:disabled { background: var(--accent); opacity: .58; }
+.message-navigation { position: absolute; left: auto; top: 68px; right: max(24px, calc((100% - var(--thread-max)) / 2)); bottom: auto; display: flex; align-items: center; gap: 7px; z-index: 14; opacity: .62; transition: opacity .16s ease; }
+.message-navigation:hover, .message-navigation:focus-within { opacity: 1; }
+.message-navigation-button { width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: 12px; background: rgba(255,255,255,.72); backdrop-filter: blur(10px); box-shadow: 0 4px 16px rgba(0,0,0,.10); color: var(--muted-strong); cursor: pointer; }
+.message-navigation-button:hover { color: var(--text); background: rgba(255,255,255,.94); }
+.message-navigation-button svg { width: 19px; height: 19px; stroke-width: 2; }
+.task-context-menu {
+  position: fixed;
+  min-width: 178px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--page);
+  box-shadow: var(--shadow);
+  z-index: 60;
+}
+.task-context-menu button {
+  width: 100%;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.task-context-menu button:hover { background: var(--surface-hover); }
+.task-context-menu button:focus { outline: 0; }
+.task-context-menu button:focus-visible { box-shadow: inset 0 0 0 2px rgba(16,163,127,.24); }
+.task-context-menu svg { width: 17px; height: 17px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
+.task-rename-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0,0,0,.28);
+  z-index: 70;
+}
+.task-rename-dialog {
+  width: min(100%, 420px);
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--page);
+  box-shadow: var(--shadow);
+}
+.task-rename-title { margin-bottom: 16px; font-size: 17px; font-weight: 650; letter-spacing: -.025em; }
+.task-rename-input {
+  width: 100%;
+  min-height: 46px;
+  padding: 0 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: 11px;
+  outline: 0;
+  background: var(--page);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.task-rename-input:focus { border-color: rgba(13,13,13,.42); box-shadow: 0 0 0 3px rgba(13,13,13,.07); }
+.task-rename-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.task-rename-actions button { min-width: 72px; min-height: 40px; padding: 0 15px; border: 0; border-radius: 10px; font: inherit; font-size: 14px; font-weight: 580; cursor: pointer; }
+.task-rename-cancel { background: var(--surface); color: var(--text); }
+.task-rename-save { background: var(--accent); color: var(--page); }
+.task-rename-actions button:disabled { opacity: .46; cursor: default; }
+body.task-rename-open { overflow: hidden; }
+.toast { position: fixed; left: 50%; bottom: calc(82px + env(safe-area-inset-bottom)); max-width: calc(100vw - 36px); transform: translate(-50%, 14px); padding: 9px 13px; border-radius: 10px; background: rgba(13,13,13,.9); color: white; font-size: 12px; opacity: 0; pointer-events: none; transition: .18s ease; z-index: 40; }
+.toast.is-visible { opacity: 1; transform: translate(-50%, 0); }
+
+@media (hover: none) and (pointer: coarse) {
+  button:active { opacity: .72; }
+  .icon-button:active, .composer-image-button:active { background: transparent; }
+  a:active { background: transparent; }
+}
+
+@media (max-width: 760px) {
+  .about-topbar { padding-left: 18px; padding-right: 18px; }
+  .about-main { padding-left: 20px; padding-right: 20px; }
+  .about-hero { padding-top: 70px; padding-bottom: 74px; }
+  .about-hero h1 { font-size: clamp(42px, 13vw, 64px); }
+  .about-statement { margin-bottom: 64px; padding: 28px 24px; border-radius: 22px; }
+  .about-section { padding: 62px 0; }
+  .about-grid-four, .about-two-column { grid-template-columns: 1fr; }
+  .about-card { min-height: 0; }
+  .about-card h3 { margin-bottom: 30px; }
+  .about-flow { grid-template-columns: 1fr; }
+  .about-flow-arrow { transform: rotate(90deg); justify-self: center; }
+  .about-footer { align-items: flex-start; flex-direction: column; }
+  .app-shell { display: block; }
+  .sidebar { position: fixed; inset: 0 auto 0 0; width: min(86vw, 300px); transform: translateX(-102%); transition: transform .2s ease, visibility 0s linear .2s; box-shadow: var(--shadow); }
+  .app-shell:not(.sidebar-open) .sidebar { visibility: hidden; pointer-events: none; }
+  .app-shell.sidebar-open .sidebar { visibility: visible; pointer-events: auto; transform: translateX(0); transition-delay: 0s; }
+  .sidebar-overlay { position: fixed; inset: 0; display: block; background: rgba(0,0,0,.28); opacity: 0; pointer-events: none; transition: opacity .2s ease; z-index: 15; }
+  .app-shell.sidebar-open .sidebar-overlay { opacity: 1; pointer-events: auto; }
+  .sidebar-close, .menu-button { display: grid; }
+  .topbar { position: absolute; top: 0; left: 0; right: 0; min-height: 52px; padding: max(8px, env(safe-area-inset-top)) 8px 8px; background: rgba(255,255,255,.86); z-index: 12; }
+  .menu-button { border-radius: 8px; }
+  .topbar-copy { gap: 7px; }
+  .sidebar-head .workspace-product { font-size: 15px; }
+  .topbar-title { max-width: 46vw; font-size: 11px; }
+  .status-label { width: 28px; padding: 0; justify-content: center; font-size: 0; }
+  .topbar-actions { gap: 1px; }
+  .new-task-button { width: 34px; height: 34px; }
+  .messages { padding: calc(64px + env(safe-area-inset-top)) 16px 116px; }
+  .message-row { margin-bottom: 18px; }
+  .message-card { font-size: 16px; line-height: 1.5; }
+  .message-row.user .message-card { max-width: 88%; padding: 9px 14px; border-radius: 18px; }
+  .composer-wrap { padding: 20px 16px max(8px, env(safe-area-inset-bottom)); }
+  .composer-queue { max-height: 172px; }
+  .queued-followup-main { gap: 8px; padding-left: 12px; }
+  .queued-followup-action { min-width: 32px; width: 32px; padding: 0; }
+  .queued-followup-action-label { display: none; }
+  .queued-followup-action-label.steer-label { display: inline; }
+  .queued-followup-action.steer-action { width: auto; padding: 0 6px; }
+  .queued-followup-edit { padding-left: 40px; }
+  .composer { min-height: 52px; padding: 8px; border-radius: 28px; }
+  .composer textarea { width: 100%; }
+  .message-navigation { left: auto; top: calc(64px + env(safe-area-inset-top)); right: 16px; bottom: auto; }
+  .task-rename-overlay { align-items: flex-end; padding: 12px 12px max(12px, env(safe-area-inset-bottom)); }
+  .task-rename-dialog { padding: 20px; border-radius: 18px; }
+}
+
+@media (max-width: 360px) {
+  .topbar-title { display: none; }
+  .messages { padding-left: 14px; padding-right: 14px; }
+  .composer-wrap { padding-left: 12px; padding-right: 12px; }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #212121;
+    --canvas: #212121;
+    --sidebar: #171717;
+    --surface: #2f2f2f;
+    --surface-hover: #2b2b2b;
+    --surface-selected: #2f2f2f;
+    --border: rgba(255,255,255,.08);
+    --border-strong: rgba(255,255,255,.14);
+    --text: #ececec;
+    --muted: #a3a3a3;
+    --muted-strong: #b4b4b4;
+    --accent: #ececec;
+    --shadow: 0 12px 40px rgba(0,0,0,.36);
+  }
+  .send-button { color: #212121; }
+  .auth-submit { color: #212121; }
+  .auth-field input { background: #2a2a2a; }
+  .auth-field input:focus { border-color: rgba(255,255,255,.34); box-shadow: 0 0 0 3px rgba(255,255,255,.06); }
+  .auth-security-warning { color: #e7a363 !important; }
+  .about-topbar { background: rgba(33,33,33,.88); }
+  .topbar { background: rgba(33,33,33,.88); }
+  .message-navigation-button { background: rgba(33,33,33,.72); }
+  .message-navigation-button:hover { background: rgba(47,47,47,.94); }
+  .icon-button:active { background: #333; }
+  .message-content pre, .message-content code { background: #2b2b2b; }
+  .message-content pre code { background: transparent; }
+  .composer { background: #303030; box-shadow: 0 0 0 1px rgba(255,255,255,.06), 0 2px 12px rgba(0,0,0,.22); }
+  .composer-wrap { background: linear-gradient(to bottom, rgba(33,33,33,0), rgba(33,33,33,.94) 32%, #212121 62%); }
+  .composer-image-button:hover { background: #3a3a3a; }
+  .message-content a { color: #7ab7ff; }
+}
+`;
+
+export const CODEX_MOBILE_JS = String.raw`
+(function () {
+  "use strict";
+
+  var app = document.getElementById("app");
+  var bootScreen = document.getElementById("boot-screen");
+  var bootStatus = document.getElementById("boot-status");
+  var authScreen = document.getElementById("auth-screen");
+  var authForm = document.getElementById("auth-form");
+  var authTitle = document.getElementById("auth-title");
+  var authDescription = document.getElementById("auth-description");
+  var authPassword = document.getElementById("auth-password");
+  var authSubmit = document.getElementById("auth-submit");
+  var authError = document.getElementById("auth-error");
+  var authSecurityWarning = document.getElementById("auth-security-warning");
+  var authHint = document.getElementById("auth-hint");
+  var authLogout = document.getElementById("auth-logout");
+  var taskList = document.getElementById("task-list");
+  var taskViewProjects = document.getElementById("task-view-projects");
+  var taskViewRecent = document.getElementById("task-view-recent");
+  var searchInput = document.getElementById("task-search");
+  var messagesEl = document.getElementById("messages");
+  var titleEl = document.getElementById("current-title");
+  var metaEl = document.getElementById("current-meta");
+  var statusEl = document.getElementById("current-status");
+  var newTaskButton = document.getElementById("new-task-button");
+  var workspaceSwitcher = document.getElementById("workspace-switcher");
+  var workspaceMenu = document.getElementById("workspace-menu");
+  var adapterMenu = document.getElementById("adapter-menu");
+  var activeAdapterLabel = document.getElementById("active-adapter-label");
+  var workspaceSwitchProgress = document.getElementById("workspace-switch-progress");
+  var composerForm = document.getElementById("composer-form");
+  var composerInput = document.getElementById("composer-input");
+  var composerImageInput = document.getElementById("composer-image-input");
+  var composerImageButton = document.getElementById("composer-image-button");
+  var composerMedia = document.getElementById("composer-media");
+  var sendButton = document.getElementById("send-button");
+  var messageNavigation = document.getElementById("message-navigation");
+  var previousUserMessage = document.getElementById("previous-user-message");
+  var nextUserMessage = document.getElementById("next-user-message");
+  var toastEl = document.getElementById("toast");
+  var composerQueue = document.getElementById("composer-queue");
+  var taskContextMenu = document.getElementById("task-context-menu");
+  var taskContextRename = document.getElementById("task-context-rename");
+  var taskContextCopyId = document.getElementById("task-context-copy-id");
+  var taskRenameOverlay = document.getElementById("task-rename-overlay");
+  var taskRenameForm = document.getElementById("task-rename-form");
+  var taskRenameInput = document.getElementById("task-rename-input");
+  var taskRenameCancel = document.getElementById("task-rename-cancel");
+  var taskRenameSave = document.getElementById("task-rename-save");
+
+  var state = {
+    setupToken: "",
+    authMode: "login",
+    authenticated: false,
+    appStarted: false,
+    adapters: [],
+    currentAdapter: "codex",
+    switchingAdapter: false,
+    switchingAdapterId: "",
+    switchStartedAtMs: 0,
+    adapterError: "",
+    tasks: [],
+    loadingTasks: false,
+    taskView: "projects",
+    collapsedProjectGroups: Object.create(null),
+    projectVisibleLimits: Object.create(null),
+    recentVisibleLimit: 20,
+    recentMoreNode: null,
+    currentThreadId: "",
+    serverMessages: [],
+    historyMessages: [],
+    latestMessages: [],
+    oldestMessageCursor: null,
+    hasOlderMessages: false,
+    historySource: "",
+    historyCaughtUp: true,
+    loadingOlderMessages: false,
+    historyRequestId: 0,
+    progressItems: [],
+    pendingMessages: [],
+    transcriptSignature: "",
+    queueSignature: "",
+    queuedMessages: [],
+    editingQueuedMessageId: "",
+    editingQueuedImageCount: 0,
+    queueActionMessageId: "",
+    runSummary: null,
+    localRunSummary: null,
+    pendingApproval: null,
+    resolvingApproval: false,
+    stopRequestedThreadId: "",
+    loadingMessages: false,
+    taskRequestId: 0,
+    nextTaskRefreshAtMs: 0,
+    messageRequestId: 0,
+    composerRevision: 0,
+    sending: false,
+    creatingTask: false,
+    pendingImages: [],
+    taskNodes: Object.create(null),
+    taskGroupNodes: Object.create(null),
+    taskEmptyNode: null,
+    contextTaskId: "",
+    renamingTaskId: "",
+    renameSubmitting: false,
+    suppressTaskClickThreadId: "",
+    suppressTaskClickUntil: 0,
+    toastTimer: null,
+    liveRefreshTimer: null,
+    runClockTimer: null,
+    appUpdateChecking: false,
+    lastAppVersionCheckAtMs: 0
+  };
+
+  var APP_VERSION = "__DESK_RELAY_ASSET_VERSION__";
+  var APP_VERSION_CHECK_INTERVAL_MS = 30 * 1000;
+  var PROJECT_TASK_BATCH_SIZE = 5;
+  var RECENT_TASK_BATCH_SIZE = 20;
+  var MESSAGE_PAGE_SIZE = 40;
+  var LIVE_MESSAGE_PAGE_SIZE = 5;
+  var TASK_REFRESH_INTERVAL_MS = 8000;
+  var TASK_LONG_PRESS_MS = 520;
+  var TASK_LONG_PRESS_MOVE_PX = 8;
+  var LAN_REDIRECT_ATTEMPT_KEY = "deskrelayLanRedirectAttemptedAt";
+  var LAN_REDIRECT_COOLDOWN_MS = 10 * 60 * 1000;
+  var LAN_REDIRECT_FALLBACK_MS = 3500;
+
+  function taskRecencyMs(task) {
+    var parsed = Date.parse(task && task.lastUpdatedAt || "");
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function sortTasksByRecency(tasks) {
+    return tasks.map(function (task, index) {
+      return { task: task, index: index };
+    }).sort(function (left, right) {
+      return taskRecencyMs(right.task) - taskRecencyMs(left.task) || left.index - right.index;
+    }).map(function (entry) { return entry.task; });
+  }
+
+  function resolveTaskSelector(tasks, selector) {
+    var normalized = String(selector || "").trim();
+    if (!normalized) return null;
+    var exact = tasks.find(function (task) { return task.threadId === normalized; });
+    if (exact) return exact;
+    var prefixMatches = tasks.filter(function (task) {
+      return task.threadId.indexOf(normalized) === 0;
+    });
+    return prefixMatches.length === 1 ? prefixMatches[0] : null;
+  }
+
+  function nextTaskVisibleLimit(current, total, batchSize) {
+    var batch = Math.max(1, Math.floor(Number(batchSize) || 1));
+    var normalizedCurrent = Math.max(batch, Math.floor(Number(current) || 0));
+    var normalizedTotal = Math.max(0, Math.floor(Number(total) || 0));
+    return Math.min(normalizedTotal, normalizedCurrent + batch);
+  }
+
+  function setProjectGroupCollapsed(collapsedGroups, visibleLimits, groupKey, collapsed) {
+    if (collapsed) {
+      collapsedGroups[groupKey] = true;
+      delete visibleLimits[groupKey];
+      return;
+    }
+    delete collapsedGroups[groupKey];
+    visibleLimits[groupKey] = PROJECT_TASK_BATCH_SIZE;
+  }
+
+  function readSetupToken() {
+    var url = new URL(window.location.href);
+    var queryToken = url.searchParams.get("setup") || "";
+    if (queryToken) {
+      try { sessionStorage.setItem("codexMobileSetup", queryToken); } catch (_) {}
+      url.searchParams.delete("setup");
+      history.replaceState(null, "", url.pathname + url.search + url.hash);
+      return queryToken;
+    }
+    try { return sessionStorage.getItem("codexMobileSetup") || ""; } catch (_) { return ""; }
+  }
+
+  function updateAuthSecurityWarning() {
+    var hostname = window.location.hostname.toLowerCase();
+    var localAddress = hostname === "localhost" || hostname === "127.0.0.1" ||
+      hostname === "::1" || hostname === "[::1]";
+    authSecurityWarning.hidden = window.location.protocol === "https:" || localAddress;
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function renderInline(value) {
+    var escaped = escapeHtml(value);
+    escaped = escaped.replace(/\x60([^\x60]+)\x60/g, "<code>$1</code>");
+    escaped = escaped.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    escaped = escaped.replace(/(^|\s)(https?:\/\/[^\s<]+)/g, function (_, prefix, url) {
+      return prefix + '<a href="' + url + '" target="_blank" rel="noreferrer">' + url + "</a>";
+    });
+    return escaped;
+  }
+
+  function renderTextBlock(text) {
+    var lines = text.split("\n");
+    var html = [];
+    var paragraph = [];
+    var listType = "";
+
+    function flushParagraph() {
+      if (!paragraph.length) return;
+      html.push("<p>" + paragraph.map(renderInline).join("<br>") + "</p>");
+      paragraph = [];
+    }
+    function closeList() {
+      if (!listType) return;
+      html.push("</" + listType + ">");
+      listType = "";
+    }
+
+    lines.forEach(function (line) {
+      var heading = line.match(/^(#{1,3})\s+(.+)$/);
+      var unordered = line.match(/^\s*[-*]\s+(.+)$/);
+      var ordered = line.match(/^\s*(\d+)[.)]\s+(.+)$/);
+      var quote = line.match(/^>\s?(.*)$/);
+      if (!line.trim()) {
+        flushParagraph();
+        closeList();
+        return;
+      }
+      if (heading) {
+        flushParagraph();
+        closeList();
+        var level = heading[1].length;
+        html.push("<h" + level + ">" + renderInline(heading[2]) + "</h" + level + ">");
+        return;
+      }
+      if (unordered || ordered) {
+        flushParagraph();
+        var nextList = unordered ? "ul" : "ol";
+        if (listType !== nextList) {
+          closeList();
+          listType = nextList;
+          html.push(nextList === "ol" ? '<ol start="' + ordered[1] + '">' : "<ul>");
+        }
+        var itemValue = ordered ? ' value="' + ordered[1] + '"' : "";
+        var itemText = unordered ? unordered[1] : ordered[2];
+        html.push("<li" + itemValue + ">" + renderInline(itemText) + "</li>");
+        return;
+      }
+      if (quote) {
+        flushParagraph();
+        closeList();
+        html.push("<blockquote>" + renderInline(quote[1]) + "</blockquote>");
+        return;
+      }
+      if (/^---+$/.test(line.trim())) {
+        flushParagraph();
+        closeList();
+        html.push("<hr>");
+        return;
+      }
+      closeList();
+      paragraph.push(line);
+    });
+    flushParagraph();
+    closeList();
+    return html.join("");
+  }
+
+  function renderMarkdown(text, foldPrefix) {
+    var parts = String(text || "").split(/\x60\x60\x60/);
+    return parts.map(function (part, index) {
+      if (index % 2 === 1) {
+        var newline = part.indexOf("\n");
+        var code = newline >= 0 ? part.slice(newline + 1) : part;
+        var normalizedCode = code.replace(/\n$/, "");
+        var lineCount = normalizedCode ? normalizedCode.split("\n").length : 1;
+        var codeHtml = "<pre><code>" + escapeHtml(normalizedCode) + "</code></pre>";
+        if (lineCount <= 6 && normalizedCode.length <= 320) return codeHtml;
+        var amount = lineCount > 1 ? lineCount + " 行" : normalizedCode.length + " 字";
+        var foldKey = String(foldPrefix || "message") + ":" + index;
+        return '<details class="message-code-fold" data-fold-key="' + escapeHtml(foldKey) + '"><summary>' +
+          '<span>代码 / 输出 · ' + amount + "</span>" +
+          '<span class="message-code-fold-action"><span class="message-code-fold-closed">展开</span>' +
+          '<span class="message-code-fold-open">收起</span></span></summary>' + codeHtml + "</details>";
+      }
+      return renderTextBlock(part);
+    }).join("");
+  }
+
+  async function fetchJson(path, options) {
+    options = options || {};
+    var response = await fetch(path, Object.assign({ credentials: "same-origin" }, options));
+    var payload = null;
+    try { payload = await response.json(); } catch (_) { payload = null; }
+    if (!response.ok) {
+      var error = new Error(payload && payload.error ? payload.error : "请求失败");
+      error.status = response.status;
+      throw error;
+    }
+    return payload;
+  }
+
+  async function checkForAppUpdate(force) {
+    var now = Date.now();
+    if (state.appUpdateChecking) return false;
+    if (!force && now - state.lastAppVersionCheckAtMs < APP_VERSION_CHECK_INTERVAL_MS) {
+      return false;
+    }
+    state.appUpdateChecking = true;
+    state.lastAppVersionCheckAtMs = now;
+    try {
+      var payload = await fetchJson(
+        "/app-version?current=" + encodeURIComponent(APP_VERSION),
+        { cache: "no-store" }
+      );
+      var nextVersion = payload && typeof payload.version === "string"
+        ? payload.version.trim()
+        : "";
+      if (!nextVersion || nextVersion === APP_VERSION) return false;
+      var nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set("appv", nextVersion);
+      window.location.replace(nextUrl.pathname + nextUrl.search + nextUrl.hash);
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      state.appUpdateChecking = false;
+    }
+  }
+
+  async function authApi(path, options) {
+    options = options || {};
+    var headers = Object.assign({}, options.headers || {});
+    if (state.setupToken) headers["x-codex-mobile-setup"] = state.setupToken;
+    return await fetchJson(path, Object.assign({}, options, { headers: headers }));
+  }
+
+  function currentLanHandoffTarget() {
+    var target = new URL(window.location.href);
+    target.searchParams.delete("setup");
+    target.searchParams.delete("key");
+    target.searchParams.delete("handoff");
+    target.searchParams.delete("lan");
+    return target.pathname + target.search + target.hash;
+  }
+
+  function recentlyAttemptedLanRedirect() {
+    try {
+      var attemptedAtMs = Number(sessionStorage.getItem(LAN_REDIRECT_ATTEMPT_KEY) || 0);
+      return Number.isFinite(attemptedAtMs) &&
+        attemptedAtMs > 0 &&
+        Date.now() - attemptedAtMs < LAN_REDIRECT_COOLDOWN_MS;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function rememberLanRedirectAttempt() {
+    try {
+      sessionStorage.setItem(LAN_REDIRECT_ATTEMPT_KEY, String(Date.now()));
+    } catch (_) {}
+  }
+
+  async function attemptLanAcceleration() {
+    if (window.location.protocol !== "https:") return false;
+    var pageUrl = new URL(window.location.href);
+    if (pageUrl.searchParams.get("lan") === "public") {
+      pageUrl.searchParams.delete("lan");
+      history.replaceState(null, "", pageUrl.pathname + pageUrl.search + pageUrl.hash);
+      return false;
+    }
+    if (recentlyAttemptedLanRedirect()) return false;
+
+    var route;
+    try {
+      route = await fetchJson("/api/network-route", { cache: "no-store" });
+    } catch (_) {
+      return false;
+    }
+    if (
+      !route ||
+      route.mode !== "public" ||
+      !route.sameNetworkLikely ||
+      typeof route.lanUrl !== "string" ||
+      !route.lanUrl
+    ) {
+      return false;
+    }
+
+    bootStatus.textContent = "检测到与电脑在同一网络，正在切换到高速连接…";
+    var handoff;
+    try {
+      handoff = await fetchJson("/api/network/lan-handoff", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ target: currentLanHandoffTarget() })
+      });
+    } catch (_) {
+      bootStatus.textContent = "正在连接电脑…";
+      return false;
+    }
+    if (!handoff || typeof handoff.handoffUrl !== "string" || !handoff.handoffUrl) {
+      bootStatus.textContent = "正在连接电脑…";
+      return false;
+    }
+
+    rememberLanRedirectAttempt();
+    var fallbackUrl = new URL(window.location.href);
+    fallbackUrl.searchParams.set("lan", "public");
+    var fallbackTimer = setTimeout(function () {
+      try { window.stop(); } catch (_) {}
+      window.location.replace(fallbackUrl.toString());
+    }, LAN_REDIRECT_FALLBACK_MS);
+    try {
+      window.location.assign(handoff.handoffUrl);
+      return true;
+    } catch (_) {
+      clearTimeout(fallbackTimer);
+      bootStatus.textContent = "正在连接电脑…";
+      return false;
+    }
+  }
+
+  async function api(path, options) {
+    try {
+      return await fetchJson(path, options);
+    } catch (error) {
+      if (error.status === 401) {
+        showAuthentication("login", "登录已过期，请重新输入访问密码。");
+      }
+      throw error;
+    }
+  }
+
+  function adapterApiPath(path) {
+    var url = new URL(path, window.location.origin);
+    if (state.currentAdapter) url.searchParams.set("adapter", state.currentAdapter);
+    return url.pathname + url.search;
+  }
+
+  function currentAdapterEntry() {
+    return state.adapters.find(function (adapter) {
+      return adapter.id === state.currentAdapter;
+    }) || null;
+  }
+
+  function fallbackAdapterName(adapterId) {
+    var labels = {
+      codex: "Codex",
+      claude: "Claude",
+      tclaude: "TClaude",
+      grok: "Grok CLI",
+      codebuddy: "CodeBuddy",
+      reasonix: "reasonix",
+      workbuddy: "WorkBuddy",
+      opencode: "OpenCode",
+      shell: "Shell"
+    };
+    return labels[adapterId] || adapterId || "Codex";
+  }
+
+  function adapterName(adapterId) {
+    var entry = state.adapters.find(function (adapter) { return adapter.id === adapterId; });
+    return entry?.label || fallbackAdapterName(adapterId);
+  }
+
+  function currentAdapterName() {
+    return adapterName(state.currentAdapter);
+  }
+
+  function switchingAdapterName() {
+    return adapterName(state.switchingAdapterId || state.currentAdapter);
+  }
+
+  function updateDocumentTitle() {
+    document.title = "DeskRelay · " + currentAdapterName();
+  }
+
+  function isAdapterCapabilityError() {
+    return /已连接，但网页版暂不支持/.test(state.adapterError || "");
+  }
+
+  function adapterStateLabel(status) {
+    if (status === "busy") return "处理中";
+    if (status === "awaiting_approval") return "待审批";
+    if (status === "awaiting_input") return "待输入";
+    if (status === "error") return "异常";
+    if (status === "open") return "已打开";
+    if (status === "idle") return "已连接";
+    if (status === "stopped") return "未打开";
+    if (status === "starting") return "启动中";
+    return "";
+  }
+
+  function renderAdapterMenu() {
+    activeAdapterLabel.textContent = state.switchingAdapter
+      ? switchingAdapterName()
+      : currentAdapterName();
+    workspaceSwitcher.classList.remove("is-switching");
+    workspaceSwitcher.setAttribute("aria-busy", state.switchingAdapter ? "true" : "false");
+    workspaceSwitchProgress.hidden = true;
+    updateDocumentTitle();
+    adapterMenu.innerHTML = "";
+    state.adapters.forEach(function (adapter) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "adapter-menu-item" +
+        (adapter.id === state.currentAdapter ? " is-active" : "") +
+        (state.switchingAdapter && adapter.id === state.switchingAdapterId ? " is-switching" : "");
+      button.disabled = state.switchingAdapter;
+      button.setAttribute("role", "menuitem");
+      var label = document.createElement("span");
+      label.textContent = adapter.label;
+      var status = document.createElement("span");
+      status.className = "adapter-menu-state";
+      var adapterStatus = adapterStateLabel(adapter.status);
+      status.textContent = state.switchingAdapter && adapter.id === state.switchingAdapterId
+        ? "目标"
+        : adapter.id === state.currentAdapter
+          ? "当前" + (adapterStatus ? " · " + adapterStatus : "")
+          : adapterStatus;
+      button.appendChild(label);
+      button.appendChild(status);
+      button.addEventListener("click", function () {
+        void switchAdapter(adapter.id);
+      });
+      adapterMenu.appendChild(button);
+    });
+  }
+
+  async function loadAdapters() {
+    var payload = await api("/api/adapters");
+    state.adapters = Array.isArray(payload.adapters) ? payload.adapters : [];
+    if (!state.adapters.some(function (adapter) { return adapter.id === state.currentAdapter; })) {
+      state.currentAdapter = payload.activeAdapter || state.adapters[0]?.id || "codex";
+    }
+    renderAdapterMenu();
+    return payload;
+  }
+
+  function resetTaskStateForAdapterSwitch() {
+    state.taskRequestId += 1;
+    state.messageRequestId += 1;
+    state.historyRequestId += 1;
+    state.composerRevision += 1;
+    state.tasks = [];
+    state.currentThreadId = "";
+    state.serverMessages = [];
+    state.historyMessages = [];
+    state.latestMessages = [];
+    state.oldestMessageCursor = null;
+    state.hasOlderMessages = false;
+    state.progressItems = [];
+    state.pendingMessages = [];
+    state.queuedMessages = [];
+    state.editingQueuedMessageId = "";
+    state.editingQueuedImageCount = 0;
+    state.runSummary = null;
+    state.localRunSummary = null;
+    state.pendingApproval = null;
+    state.adapterError = "";
+    state.pendingImages = [];
+    composerInput.value = "";
+    composerInput.placeholder = "有问题，尽管问";
+    composerImageButton.disabled = false;
+    renderPendingImages();
+    renderQueuedMessages([]);
+    renderTasks();
+    renderMessages(false);
+    updateHeader();
+  }
+
+  async function switchAdapter(adapterId, initial) {
+    if (!adapterId || state.switchingAdapter) return false;
+    var selectedAdapter = currentAdapterEntry();
+    var reconnectCurrent = Boolean(
+      state.adapterError && !isAdapterCapabilityError() ||
+      selectedAdapter && ["stopped", "open", "error"].includes(selectedAdapter.status)
+    );
+    if (adapterId === state.currentAdapter && !initial && !reconnectCurrent) {
+      toggleWorkspaceMenu(false);
+      return true;
+    }
+    state.switchingAdapter = true;
+    state.switchingAdapterId = adapterId;
+    state.switchStartedAtMs = Date.now();
+    renderAdapterMenu();
+    renderTasks();
+    renderMessages(false);
+    updateHeader();
+    toggleWorkspaceMenu(false);
+    try {
+      var result = await api(
+        "/api/adapters/" + encodeURIComponent(adapterId) + "/switch",
+        { method: "POST" }
+      );
+      state.currentAdapter = result.activeAdapter || adapterId;
+      resetTaskStateForAdapterSwitch();
+      var canonicalUrl = new URL(window.location.href);
+      canonicalUrl.searchParams.set("adapter", state.currentAdapter);
+      if (!initial) canonicalUrl.searchParams.delete("task");
+      history.replaceState(null, "", canonicalUrl.pathname + canonicalUrl.search + canonicalUrl.hash);
+      await loadAdapters();
+      if (!initial) await loadTasks(true);
+      if (!initial) showToast("已切换到 " + currentAdapterName());
+      return true;
+    } catch (error) {
+      state.adapterError = error.message || "暂时无法连接这个终端。";
+      renderMessages(false);
+      updateHeader();
+      showToast("切换失败：" + (error.message || "请稍后重试"));
+      await loadAdapters().catch(function () {});
+      return false;
+    } finally {
+      state.switchingAdapter = false;
+      state.switchingAdapterId = "";
+      state.switchStartedAtMs = 0;
+      renderAdapterMenu();
+      renderTasks();
+      updateHeader();
+    }
+  }
+
+  function showAuthentication(mode, message, disabled) {
+    state.authenticated = false;
+    state.taskRequestId += 1;
+    state.messageRequestId += 1;
+    state.composerRevision += 1;
+    state.authMode = mode;
+    if (state.liveRefreshTimer) clearTimeout(state.liveRefreshTimer);
+    state.liveRefreshTimer = null;
+    bootScreen.hidden = true;
+    app.hidden = true;
+    authScreen.hidden = false;
+    authPassword.value = "";
+    authPassword.disabled = Boolean(disabled);
+    authSubmit.disabled = Boolean(disabled);
+    authError.textContent = message || "";
+    if (mode === "setup") {
+      authTitle.textContent = "设置访问密码";
+      authDescription.textContent = "首次使用，请先为 DeskRelay 移动端设置密码。";
+      authHint.textContent = "至少 8 个字符。密码只保存在这台 Mac 上。";
+      authSubmit.textContent = "设置并进入";
+      authPassword.autocomplete = "new-password";
+    } else {
+      authTitle.textContent = "进入 DeskRelay";
+      authDescription.textContent = "输入访问密码，继续电脑上的任务。";
+      authHint.textContent = "登录状态会在此设备保留 30 天。";
+      authSubmit.textContent = "进入";
+      authPassword.autocomplete = "current-password";
+    }
+    if (!disabled) setTimeout(function () { authPassword.focus(); }, 0);
+  }
+
+  async function initializeAuthentication() {
+    updateAuthSecurityWarning();
+    state.setupToken = readSetupToken();
+    try {
+      var status = await authApi("/api/auth/status");
+      if (status.authenticated) {
+        void startAuthenticatedApp();
+        return;
+      }
+      if (!status.configured) {
+        if (!status.canSetup) {
+          showAuthentication("setup", "请从微信重新打开最新链接，再设置访问密码。", true);
+          return;
+        }
+        showAuthentication("setup", "", false);
+        return;
+      }
+      showAuthentication("login", "", false);
+    } catch (error) {
+      showAuthentication("login", error.message || "暂时无法连接电脑端。", true);
+    }
+  }
+
+  async function startAuthenticatedApp() {
+    state.authenticated = true;
+    authScreen.hidden = true;
+    if (!state.appStarted) {
+      app.hidden = true;
+      bootScreen.hidden = false;
+      bootStatus.textContent = "正在连接电脑…";
+      if (await attemptLanAcceleration()) return;
+    }
+    var needsInitialTask = !state.appStarted || !state.currentThreadId;
+    state.appStarted = true;
+    if (!state.runClockTimer) {
+      state.runClockTimer = setInterval(updateRunHeaderClock, 1000);
+    }
+    var pageUrl = new URL(window.location.href);
+    var requestedAdapter = pageUrl.searchParams.get("adapter") || "";
+    var requestedTask = pageUrl.searchParams.get("task") || "";
+    if (requestedAdapter) state.currentAdapter = requestedAdapter;
+    state.loadingTasks = needsInitialTask;
+    renderAdapterMenu();
+    renderTasks();
+    updateHeader();
+    if (needsInitialTask && !state.currentThreadId) {
+      messagesEl.innerHTML = "";
+    }
+    bootScreen.hidden = true;
+    app.hidden = false;
+    syncComposerInset();
+    updateUserMessageNavigation();
+
+    var adapterPayload;
+    try {
+      adapterPayload = await loadAdapters();
+    } catch (error) {
+      state.loadingTasks = false;
+      state.adapterError = error.message || "暂时无法连接电脑端。";
+      renderTasks();
+      renderMessages(false);
+      updateHeader();
+      scheduleLiveRefresh(2200);
+      return;
+    }
+    if (!requestedAdapter) {
+      state.currentAdapter = adapterPayload.activeAdapter || state.currentAdapter;
+      renderAdapterMenu();
+    } else if (requestedAdapter !== adapterPayload.activeAdapter) {
+      var switched = await switchAdapter(requestedAdapter, true);
+      if (!switched) {
+        state.currentAdapter = adapterPayload.activeAdapter || state.currentAdapter;
+        pageUrl.searchParams.set("adapter", state.currentAdapter);
+        history.replaceState(null, "", pageUrl.pathname + pageUrl.search + pageUrl.hash);
+      } else {
+        needsInitialTask = true;
+      }
+    } else {
+      state.currentAdapter = requestedAdapter;
+      renderAdapterMenu();
+    }
+    if (needsInitialTask) {
+      if (requestedTask && !/^[0-9a-f]{8}$/i.test(requestedTask)) {
+        await Promise.all([
+          selectTask(requestedTask, false),
+          loadTasks(true)
+        ]);
+      } else {
+        await loadTasks(true);
+      }
+    } else {
+      await Promise.all([loadTasks(false), loadMessages(false, false)]);
+    }
+    if (!state.authenticated) return;
+    syncComposerInset();
+    scrollToLatest(false);
+    updateUserMessageNavigation();
+    scheduleLiveRefresh(2200);
+  }
+
+  function taskStatusLabel(status) {
+    if (status === "running") return "运行中";
+    if (status === "approval") return "待审批";
+    if (status === "input") return "待输入";
+    if (status === "error") return "异常";
+    return "空闲";
+  }
+
+  function currentTask() {
+    return state.tasks.find(function (task) { return task.threadId === state.currentThreadId; }) || null;
+  }
+
+  function visiblePendingMessages() {
+    return state.pendingMessages.filter(function (pending) {
+      return pending.displayInTranscript !== false;
+    });
+  }
+
+  function currentVisibleRunSummary() {
+    var messages = state.serverMessages.concat(visiblePendingMessages().map(function (pending) {
+      return Object.assign({ role: "user", pending: true }, pending);
+    }));
+    return resolveVisibleRunSummary(
+      messages,
+      currentTask(),
+      effectiveRunSummary(),
+      Date.now()
+    );
+  }
+
+  function updateHeader() {
+    var task = currentTask();
+    var capabilityLimited = isAdapterCapabilityError();
+    var hasComposerContent = Boolean(
+      composerInput.value.trim() || state.pendingImages.length > 0 ||
+      state.editingQueuedMessageId && state.editingQueuedImageCount > 0
+    );
+    var stopMode = shouldUseStopComposerAction(
+      task,
+      currentVisibleRunSummary(),
+      hasComposerContent
+    );
+    titleEl.textContent = state.switchingAdapter
+      ? switchingAdapterName()
+      : task
+        ? task.title
+        : state.loadingTasks
+          ? currentAdapterName()
+          : state.adapterError
+            ? currentAdapterName() + (capabilityLimited ? " 网页能力受限" : " 未连接")
+            : "选择一个任务";
+    metaEl.textContent = state.switchingAdapter
+      ? ""
+      : task
+        ? (task.projectName || currentAdapterName() + " 任务")
+        : state.adapterError
+          ? capabilityLimited
+            ? "请在微信或电脑终端中继续使用"
+            : "点击上方终端菜单重新连接"
+          : "";
+    updateDocumentTitle();
+    statusEl.className = "status-label" + (
+      state.switchingAdapter ? " starting" : task ? " " + task.status : ""
+    );
+    statusEl.textContent = state.switchingAdapter
+      ? switchProgressLabel(state.switchStartedAtMs, Date.now())
+      : task
+        ? taskStatusLabel(task.status)
+        : state.loadingTasks
+          ? "读取中"
+          : state.adapterError
+            ? capabilityLimited ? "已连接" : "未连接"
+            : "未选择";
+    sendButton.classList.toggle("is-stop", stopMode);
+    sendButton.setAttribute(
+      "aria-label",
+      stopMode
+        ? (state.stopRequestedThreadId === state.currentThreadId ? "正在停止" : "停止")
+        : "发送"
+    );
+    sendButton.disabled = Boolean(
+      state.sending || Boolean(state.queueActionMessageId) || !task ||
+      state.stopRequestedThreadId === state.currentThreadId ||
+      (!stopMode && !hasComposerContent)
+    );
+    newTaskButton.disabled = Boolean(state.creatingTask || state.switchingAdapter || state.loadingTasks);
+    newTaskButton.setAttribute(
+      "aria-label",
+      state.creatingTask ? "正在新建任务" : "新建 " + currentAdapterName() + " 任务"
+    );
+  }
+
+  function setTaskView(view) {
+    var normalized = view === "recent" ? "recent" : "projects";
+    if (state.taskView === normalized) {
+      updateTaskViewSwitch();
+      return;
+    }
+    state.taskView = normalized;
+    updateTaskViewSwitch();
+    renderTasks();
+    taskList.scrollTop = 0;
+  }
+
+  function updateTaskViewSwitch() {
+    var projectActive = state.taskView === "projects";
+    taskViewProjects.classList.toggle("is-active", projectActive);
+    taskViewProjects.setAttribute("aria-selected", projectActive ? "true" : "false");
+    taskViewRecent.classList.toggle("is-active", !projectActive);
+    taskViewRecent.setAttribute("aria-selected", projectActive ? "false" : "true");
+  }
+
+  function taskGroupKey(task) {
+    if (typeof task.projectId === "string" && task.projectId.trim()) {
+      return "project:" + task.projectId.trim();
+    }
+    if (typeof task.projectName === "string" && task.projectName.trim()) {
+      return "project-name:" + task.projectName.trim();
+    }
+    return "recent";
+  }
+
+  function syncChildOrder(parent, nodes) {
+    nodes.forEach(function (node, index) {
+      var current = parent.children[index] || null;
+      if (current !== node) {
+        parent.insertBefore(node, current);
+      }
+    });
+    while (parent.children.length > nodes.length) {
+      parent.removeChild(parent.lastElementChild);
+    }
+  }
+
+  function taskById(threadId) {
+    return state.tasks.find(function (task) { return task.threadId === threadId; }) || null;
+  }
+
+  function closeTaskContextMenu() {
+    taskContextMenu.hidden = true;
+    taskContextMenu.style.visibility = "";
+    state.contextTaskId = "";
+  }
+
+  function openTaskContextMenu(threadId, clientX, clientY, sourceButton) {
+    var task = taskById(threadId);
+    if (!task) return;
+    toggleWorkspaceMenu(false);
+    state.contextTaskId = threadId;
+    taskContextRename.hidden = task.canRename !== true;
+    taskContextMenu.hidden = false;
+    taskContextMenu.style.visibility = "hidden";
+    taskContextMenu.style.left = "0px";
+    taskContextMenu.style.top = "0px";
+    var rect = sourceButton.getBoundingClientRect();
+    var menuWidth = taskContextMenu.offsetWidth;
+    var menuHeight = taskContextMenu.offsetHeight;
+    var x = Number.isFinite(clientX) ? clientX + 4 : rect.left + 12;
+    var y = Number.isFinite(clientY) ? clientY + 4 : rect.bottom - 4;
+    x = Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8));
+    y = Math.max(8, Math.min(y, window.innerHeight - menuHeight - 8));
+    taskContextMenu.style.left = Math.round(x) + "px";
+    taskContextMenu.style.top = Math.round(y) + "px";
+    taskContextMenu.style.visibility = "visible";
+    var firstItem = task.canRename === true ? taskContextRename : taskContextCopyId;
+    if (firstItem && document.activeElement === sourceButton && clientX === undefined) {
+      firstItem.focus();
+    }
+  }
+
+  function openTaskRenameDialog() {
+    var task = taskById(state.contextTaskId);
+    if (!task || task.canRename !== true) {
+      closeTaskContextMenu();
+      return;
+    }
+    state.renamingTaskId = task.threadId;
+    closeTaskContextMenu();
+    taskRenameInput.value = task.title || "";
+    taskRenameOverlay.hidden = false;
+    document.body.classList.add("task-rename-open");
+    requestAnimationFrame(function () {
+      taskRenameInput.focus();
+      taskRenameInput.select();
+    });
+  }
+
+  function closeTaskRenameDialog(force) {
+    if (state.renameSubmitting && force !== true) return;
+    taskRenameOverlay.hidden = true;
+    taskRenameForm.removeAttribute("aria-busy");
+    taskRenameCancel.disabled = false;
+    taskRenameSave.disabled = false;
+    state.renamingTaskId = "";
+    document.body.classList.remove("task-rename-open");
+  }
+
+  async function renameTaskFromDialog() {
+    if (state.renameSubmitting || !state.renamingTaskId) return;
+    var task = taskById(state.renamingTaskId);
+    var title = taskRenameInput.value.trim();
+    if (!task) {
+      closeTaskRenameDialog(true);
+      return;
+    }
+    if (!title) {
+      showToast("任务名不能为空");
+      taskRenameInput.focus();
+      return;
+    }
+    if (title === task.title) {
+      closeTaskRenameDialog(true);
+      return;
+    }
+    state.renameSubmitting = true;
+    taskRenameForm.setAttribute("aria-busy", "true");
+    taskRenameCancel.disabled = true;
+    taskRenameSave.disabled = true;
+    try {
+      var payload = await api(adapterApiPath(
+        "/api/tasks/" + encodeURIComponent(task.threadId)
+      ), {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: title })
+      });
+      var index = state.tasks.findIndex(function (item) {
+        return item.threadId === task.threadId;
+      });
+      if (index >= 0) {
+        state.tasks[index] = Object.assign({}, state.tasks[index], {
+          title: payload && typeof payload.title === "string" ? payload.title : title
+        });
+      }
+      state.renameSubmitting = false;
+      closeTaskRenameDialog(true);
+      renderTasks();
+      updateHeader();
+      showToast("已重命名");
+      void loadTasks(false);
+    } catch (error) {
+      showToast(error.message || "重命名失败");
+    } finally {
+      state.renameSubmitting = false;
+      taskRenameForm.removeAttribute("aria-busy");
+      taskRenameCancel.disabled = false;
+      taskRenameSave.disabled = false;
+    }
+  }
+
+  async function copyTextToClipboard(text) {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (_) {}
+    }
+    var textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    textarea.style.top = "0";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+    var copied = false;
+    try { copied = document.execCommand("copy"); } catch (_) {}
+    document.body.removeChild(textarea);
+    return copied;
+  }
+
+  async function copyContextTaskId() {
+    var threadId = state.contextTaskId;
+    closeTaskContextMenu();
+    if (!threadId) return;
+    var copied = await copyTextToClipboard(threadId);
+    showToast(copied ? "已复制任务 ID" : "复制失败，请稍后重试");
+  }
+
+  function hasActiveTextSelection() {
+    var selection = window.getSelection && window.getSelection();
+    return Boolean(selection && !selection.isCollapsed && String(selection).trim());
+  }
+
+  function isTaskContextMenuTriggerAllowed(button, clientX, clientY) {
+    if (hasActiveTextSelection()) return false;
+    if (
+      window.matchMedia("(max-width: 760px)").matches &&
+      !app.classList.contains("sidebar-open")
+    ) return false;
+    if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return true;
+    var hit = document.elementFromPoint(clientX, clientY);
+    return Boolean(hit && button.contains(hit));
+  }
+
+  function closeSidebar() {
+    app.classList.remove("sidebar-open");
+    closeTaskContextMenu();
+  }
+
+  function createTaskButton(threadId) {
+    var button = document.createElement("button");
+    var longPressTimer = null;
+    var longPressPointerId = null;
+    var longPressStartX = 0;
+    var longPressStartY = 0;
+    var longPressActive = false;
+
+    function cancelLongPress() {
+      if (longPressTimer) clearTimeout(longPressTimer);
+      longPressTimer = null;
+      longPressPointerId = null;
+      longPressActive = false;
+    }
+
+    button.type = "button";
+    button.className = "task-item";
+    button.dataset.threadId = threadId;
+    button.setAttribute("aria-haspopup", "menu");
+    button.innerHTML =
+      '<span class="task-copy"><span class="task-title"></span></span>' +
+      '<span class="task-indicator"><span class="task-dot"></span><span class="task-status-badge"></span></span>';
+    button.addEventListener("click", function (event) {
+      if (
+        state.suppressTaskClickThreadId === threadId &&
+        Date.now() < state.suppressTaskClickUntil
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      closeTaskContextMenu();
+      selectTask(threadId, true);
+    });
+    button.addEventListener("contextmenu", function (event) {
+      if (!isTaskContextMenuTriggerAllowed(button, event.clientX, event.clientY)) {
+        cancelLongPress();
+        return;
+      }
+      event.preventDefault();
+      cancelLongPress();
+      state.suppressTaskClickThreadId = threadId;
+      state.suppressTaskClickUntil = Date.now() + 700;
+      openTaskContextMenu(threadId, event.clientX, event.clientY, button);
+    });
+    button.addEventListener("pointerdown", function (event) {
+      if (event.button !== 0 || event.pointerType === "mouse") return;
+      cancelLongPress();
+      longPressPointerId = event.pointerId;
+      longPressStartX = event.clientX;
+      longPressStartY = event.clientY;
+      longPressActive = true;
+      longPressTimer = setTimeout(function () {
+        longPressTimer = null;
+        var hit = document.elementFromPoint(longPressStartX, longPressStartY);
+        var sidebarHiddenOnMobile = window.matchMedia("(max-width: 760px)").matches &&
+          !app.classList.contains("sidebar-open");
+        if (
+          !longPressActive ||
+          !button.isConnected ||
+          !hit ||
+          !button.contains(hit) ||
+          sidebarHiddenOnMobile ||
+          hasActiveTextSelection()
+        ) {
+          cancelLongPress();
+          return;
+        }
+        longPressPointerId = null;
+        longPressActive = false;
+        state.suppressTaskClickThreadId = threadId;
+        state.suppressTaskClickUntil = Date.now() + 700;
+        openTaskContextMenu(threadId, longPressStartX, longPressStartY, button);
+      }, TASK_LONG_PRESS_MS);
+    });
+    button.addEventListener("pointermove", function (event) {
+      if (event.pointerId !== longPressPointerId) return;
+      if (
+        Math.abs(event.clientX - longPressStartX) > TASK_LONG_PRESS_MOVE_PX ||
+        Math.abs(event.clientY - longPressStartY) > TASK_LONG_PRESS_MOVE_PX
+      ) cancelLongPress();
+    });
+    button.addEventListener("pointerup", cancelLongPress);
+    button.addEventListener("pointercancel", cancelLongPress);
+    button.addEventListener("pointerleave", cancelLongPress);
+    button.addEventListener("lostpointercapture", cancelLongPress);
+    button.addEventListener("keydown", function (event) {
+      if (event.key === "ContextMenu" || event.shiftKey && event.key === "F10") {
+        event.preventDefault();
+        openTaskContextMenu(threadId, undefined, undefined, button);
+      }
+    });
+    return button;
+  }
+
+  function updateTaskButton(button, task) {
+    button.className = "task-item" + (task.threadId === state.currentThreadId ? " is-active" : "");
+    button.title = task.title + " · " + taskStatusLabel(task.status);
+    var dot = button.querySelector(".task-dot");
+    if (dot) dot.className = "task-dot " + task.status;
+    var badge = button.querySelector(".task-status-badge");
+    if (badge) {
+      badge.className = "task-status-badge" + (task.status === "approval" ? " approval" : "");
+      badge.textContent = task.status === "approval" ? "审批" : "";
+    }
+    var title = button.querySelector(".task-title");
+    if (title && title.textContent !== task.title) title.textContent = task.title;
+  }
+
+  function getTaskButton(task) {
+    var button = state.taskNodes[task.threadId];
+    if (!button) {
+      button = createTaskButton(task.threadId);
+      state.taskNodes[task.threadId] = button;
+    }
+    updateTaskButton(button, task);
+    return button;
+  }
+
+  function getTaskGroup(group, searching) {
+    var section = state.taskGroupNodes[group.key];
+    if (!section) {
+      section = document.createElement("section");
+      section.className = "task-group";
+      section.dataset.groupKey = group.key;
+      var heading = document.createElement("button");
+      heading.type = "button";
+      heading.className = "task-group-title";
+      heading.innerHTML =
+        '<svg class="task-group-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m5.5 6 2.5 2.5L10.5 6"/></svg>' +
+        '<span class="task-group-title-text"></span>';
+      heading.addEventListener("click", function () {
+        if (section.dataset.collapsible !== "true") return;
+        var key = section.dataset.groupKey || "";
+        var collapse = !Boolean(state.collapsedProjectGroups[key]);
+        setProjectGroupCollapsed(
+          state.collapsedProjectGroups,
+          state.projectVisibleLimits,
+          key,
+          collapse
+        );
+        renderTasks();
+      });
+      var items = document.createElement("div");
+      items.className = "task-group-items";
+      var more = document.createElement("button");
+      more.type = "button";
+      more.className = "task-group-more";
+      more.textContent = "显示更多";
+      more.addEventListener("click", function () {
+        var key = section.dataset.groupKey || "";
+        var total = Number(section.dataset.taskCount) || 0;
+        var current = Number(state.projectVisibleLimits[key]) || PROJECT_TASK_BATCH_SIZE;
+        state.projectVisibleLimits[key] = nextTaskVisibleLimit(
+          current,
+          total,
+          PROJECT_TASK_BATCH_SIZE
+        );
+        renderTasks();
+      });
+      section.appendChild(heading);
+      section.appendChild(items);
+      section.appendChild(more);
+      state.taskGroupNodes[group.key] = section;
+    }
+
+    var collapsible = group.key !== "recent";
+    var collapsed = collapsible && !searching && Boolean(state.collapsedProjectGroups[group.key]);
+    section.className = "task-group" +
+      (group.key === "recent" ? " is-recent" : "") +
+      (collapsed ? " is-collapsed" : "");
+    section.dataset.groupKey = group.key;
+    section.dataset.collapsible = collapsible ? "true" : "false";
+    section.dataset.taskCount = String(group.tasks.length);
+
+    var headingNode = section.querySelector(".task-group-title");
+    var headingText = section.querySelector(".task-group-title-text");
+    if (headingText && headingText.textContent !== group.title) {
+      headingText.textContent = group.title;
+    }
+    if (headingNode) {
+      headingNode.classList.toggle("is-static", !collapsible);
+      headingNode.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      headingNode.setAttribute("aria-label", collapsible
+        ? group.title + (collapsed ? "，展开项目" : "，收起项目")
+        : group.title);
+    }
+
+    var configuredLimit = Number(state.projectVisibleLimits[group.key]) || PROJECT_TASK_BATCH_SIZE;
+    var activeIndex = group.tasks.findIndex(function (task) {
+      return task.threadId === state.currentThreadId;
+    });
+    var visibleLimit = searching
+      ? group.tasks.length
+      : Math.max(configuredLimit, activeIndex >= 0 ? activeIndex + 1 : 0);
+    var visibleTasks = collapsed ? [] : group.tasks.slice(0, visibleLimit);
+    var itemsNode = section.querySelector(".task-group-items");
+    syncChildOrder(itemsNode, visibleTasks.map(getTaskButton));
+    var moreNode = section.querySelector(".task-group-more");
+    if (moreNode) {
+      moreNode.hidden = collapsed || searching || visibleTasks.length >= group.tasks.length;
+    }
+    return section;
+  }
+
+  function getRecentMoreButton() {
+    if (!state.recentMoreNode) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "task-list-more";
+      button.textContent = "显示更多";
+      button.addEventListener("click", function () {
+        state.recentVisibleLimit = nextTaskVisibleLimit(
+          state.recentVisibleLimit,
+          state.tasks.length,
+          RECENT_TASK_BATCH_SIZE
+        );
+        renderTasks();
+      });
+      state.recentMoreNode = button;
+    }
+    return state.recentMoreNode;
+  }
+
+  function renderRecentTasks(filtered, searching) {
+    var sorted = sortTasksByRecency(filtered);
+    var activeIndex = sorted.findIndex(function (task) {
+      return task.threadId === state.currentThreadId;
+    });
+    var visibleLimit = searching
+      ? sorted.length
+      : Math.max(state.recentVisibleLimit, activeIndex >= 0 ? activeIndex + 1 : 0);
+    var visibleTasks = sorted.slice(0, visibleLimit);
+    var nodes = visibleTasks.map(getTaskButton);
+    if (!searching && visibleTasks.length < sorted.length) {
+      nodes.push(getRecentMoreButton());
+    }
+    syncChildOrder(taskList, nodes);
+  }
+
+  function renderProjectTasks(filtered, searching) {
+    var groupByKey = Object.create(null);
+    var groups = [];
+    filtered.forEach(function (task, taskIndex) {
+      var key = taskGroupKey(task);
+      var group = groupByKey[key];
+      if (!group) {
+        var projectName = typeof task.projectName === "string" ? task.projectName.trim() : "";
+        group = {
+          key: key,
+          title: projectName || "最近",
+          projectOrder: Number.isFinite(task.projectOrder) ? task.projectOrder : Number.MAX_SAFE_INTEGER,
+          firstTaskIndex: taskIndex,
+          tasks: []
+        };
+        groupByKey[key] = group;
+        groups.push(group);
+      }
+      group.projectOrder = Math.min(
+        group.projectOrder,
+        Number.isFinite(task.projectOrder) ? task.projectOrder : Number.MAX_SAFE_INTEGER
+      );
+      group.tasks.push({ task: task, sourceIndex: taskIndex });
+    });
+
+    groups.forEach(function (group) {
+      group.tasks.sort(function (left, right) {
+        var leftOrder = Number.isFinite(left.task.projectThreadOrder)
+          ? left.task.projectThreadOrder
+          : Number.MAX_SAFE_INTEGER;
+        var rightOrder = Number.isFinite(right.task.projectThreadOrder)
+          ? right.task.projectThreadOrder
+          : Number.MAX_SAFE_INTEGER;
+        return leftOrder - rightOrder || left.sourceIndex - right.sourceIndex;
+      });
+      group.tasks = group.tasks.map(function (entry) { return entry.task; });
+    });
+    groups.sort(function (left, right) {
+      if (left.key === "recent") return 1;
+      if (right.key === "recent") return -1;
+      return left.projectOrder - right.projectOrder || left.firstTaskIndex - right.firstTaskIndex;
+    });
+
+    var activeGroupKeys = Object.create(null);
+    var groupNodes = groups.map(function (group) {
+      activeGroupKeys[group.key] = true;
+      return getTaskGroup(group, searching);
+    });
+    Object.keys(state.taskGroupNodes).forEach(function (key) {
+      if (!activeGroupKeys[key]) {
+        var staleGroup = state.taskGroupNodes[key];
+        if (staleGroup && staleGroup.parentNode) staleGroup.parentNode.removeChild(staleGroup);
+        delete state.taskGroupNodes[key];
+        delete state.collapsedProjectGroups[key];
+        delete state.projectVisibleLimits[key];
+      }
+    });
+    syncChildOrder(taskList, groupNodes);
+  }
+
+  function renderTasks() {
+    updateTaskViewSwitch();
+    if (state.switchingAdapter) {
+      syncChildOrder(taskList, []);
+      return;
+    }
+    var query = searchInput.value.trim().toLowerCase();
+    var filtered = state.tasks.filter(function (task) {
+      return !query || (task.title + " " + (task.projectName || "")).toLowerCase().includes(query);
+    });
+
+    var liveTaskIds = Object.create(null);
+    state.tasks.forEach(function (task) { liveTaskIds[task.threadId] = true; });
+    Object.keys(state.taskNodes).forEach(function (threadId) {
+      if (!liveTaskIds[threadId]) {
+        var staleNode = state.taskNodes[threadId];
+        if (staleNode && staleNode.parentNode) staleNode.parentNode.removeChild(staleNode);
+        delete state.taskNodes[threadId];
+      }
+    });
+
+    if (!filtered.length) {
+      if (!state.taskEmptyNode) {
+        state.taskEmptyNode = document.createElement("div");
+        state.taskEmptyNode.className = "loading-row";
+      }
+      if (state.loadingTasks) {
+        syncChildOrder(taskList, []);
+        return;
+      }
+      state.taskEmptyNode.textContent = state.adapterError || "没有匹配的任务";
+      syncChildOrder(taskList, [state.taskEmptyNode]);
+      return;
+    }
+
+    if (state.taskView === "recent") {
+      renderRecentTasks(filtered, Boolean(query));
+      return;
+    }
+    renderProjectTasks(filtered, Boolean(query));
+  }
+
+  function toggleWorkspaceMenu(forceOpen) {
+    var nextOpen = typeof forceOpen === "boolean"
+      ? forceOpen
+      : workspaceMenu.hidden;
+    workspaceMenu.hidden = !nextOpen;
+    workspaceSwitcher.setAttribute("aria-expanded", nextOpen ? "true" : "false");
+    if (nextOpen) void loadAdapters().catch(function () {});
+  }
+
+  async function loadTasks(initial) {
+    if (!state.authenticated) return;
+    var requestId = ++state.taskRequestId;
+    state.loadingTasks = true;
+    renderTasks();
+    updateHeader();
+    try {
+      var payload = await api(adapterApiPath("/api/tasks"));
+      if (requestId !== state.taskRequestId || !state.authenticated) return;
+      var hadAdapterError = Boolean(state.adapterError);
+      state.adapterError = "";
+      var previousCurrentTask = state.tasks.find(function (task) {
+        return task.threadId === state.currentThreadId;
+      }) || null;
+      state.tasks = payload.tasks || [];
+      if (
+        previousCurrentTask &&
+        !state.tasks.some(function (task) { return task.threadId === previousCurrentTask.threadId; })
+      ) state.tasks.push(previousCurrentTask);
+      var url = new URL(window.location.href);
+      var requested = initial ? (url.searchParams.get("task") || "") : "";
+      var chosen = null;
+      if (requested) chosen = resolveTaskSelector(state.tasks, requested);
+      if (!chosen && state.currentThreadId) {
+        chosen = state.tasks.find(function (task) { return task.threadId === state.currentThreadId; });
+      }
+      var keepDirectTask = Boolean(
+        initial && requested && state.currentThreadId === requested && !chosen
+      );
+      if (!chosen && !keepDirectTask) {
+        chosen = state.tasks.find(function (task) { return task.selected; }) || state.tasks[0];
+      }
+      if (initial && chosen && requested !== chosen.threadId) {
+        var canonicalUrl = new URL(window.location.href);
+        canonicalUrl.searchParams.set("adapter", state.currentAdapter);
+        canonicalUrl.searchParams.set("task", chosen.threadId);
+        history.replaceState(null, "", canonicalUrl.pathname + canonicalUrl.search + canonicalUrl.hash);
+      }
+      renderTasks();
+      if (chosen && chosen.threadId !== state.currentThreadId) {
+        await selectTask(chosen.threadId, false);
+      } else {
+        if (hadAdapterError) renderMessages(false);
+        if (!chosen && !state.currentThreadId) renderMessages(false);
+        updateHeader();
+      }
+      state.nextTaskRefreshAtMs = Date.now() + TASK_REFRESH_INTERVAL_MS;
+    } catch (error) {
+      if (requestId !== state.taskRequestId || error.status === 401) return;
+      var nextError = error.message || "任务列表读取失败";
+      var errorChanged = nextError !== state.adapterError;
+      state.adapterError = nextError;
+      if (!state.currentThreadId) {
+        state.tasks = [];
+        state.serverMessages = [];
+        state.historyMessages = [];
+        state.latestMessages = [];
+        state.progressItems = [];
+        state.runSummary = null;
+        state.pendingApproval = null;
+      }
+      renderTasks();
+      renderMessages(false);
+      updateHeader();
+      if (error.status !== 409 && initial && errorChanged) showToast(nextError);
+    } finally {
+      if (requestId === state.taskRequestId) {
+        state.loadingTasks = false;
+        renderTasks();
+        updateHeader();
+      }
+    }
+  }
+
+  function syncComposerInset() {
+    var composerHeight = composerForm.offsetHeight;
+    messagesEl.style.paddingBottom = Math.max(96, composerHeight + 16) + "px";
+  }
+
+  function queuedMessageDisplayText(message) {
+    var text = String(message && message.text || "").replace(/\s+/g, " ").trim();
+    if (text) return text;
+    var imageCount = Math.max(0, Number(message && message.imageCount) || 0);
+    return imageCount ? "图片 " + imageCount + " 张" : "（空消息）";
+  }
+
+  function mergeQueuedMessagesForDisplay(queuedMessages, pendingMessages) {
+    var confirmed = Array.isArray(queuedMessages) ? queuedMessages.slice() : [];
+    var confirmedIds = {};
+    confirmed.forEach(function (message) { confirmedIds[message.id] = true; });
+    var optimistic = (Array.isArray(pendingMessages) ? pendingMessages : []).flatMap(
+      function (pending) {
+        if (
+          pending.displayInTranscript ||
+          pending.status === "failed" ||
+          pending.status === "sent" ||
+          pending.queuedMessageId && confirmedIds[pending.queuedMessageId]
+        ) return [];
+        var message = {
+          id: pending.queuedMessageId || pending.clientId,
+          text: pending.text,
+          imageCount: pending.imageCount,
+          optimistic: true,
+          status: pending.status
+        };
+        if (pending.createdAtMs !== undefined) message.createdAtMs = pending.createdAtMs;
+        return [message];
+      }
+    );
+    return confirmed.concat(optimistic);
+  }
+
+  async function steerQueuedMessage(messageId) {
+    if (!state.currentThreadId || state.queueActionMessageId) return;
+    state.queueActionMessageId = messageId;
+    renderQueuedMessages(state.queuedMessages);
+    try {
+      await api(adapterApiPath(
+        "/api/tasks/" + encodeURIComponent(state.currentThreadId) +
+        "/queue/" + encodeURIComponent(messageId) + "/steer"),
+        { method: "POST" }
+      );
+      state.queuedMessages = state.queuedMessages.filter(function (message) {
+        return message.id !== messageId;
+      });
+      state.editingQueuedMessageId = "";
+      showToast("已引导到当前任务");
+      renderQueuedMessages(state.queuedMessages);
+      await loadMessages(false);
+    } catch (error) {
+      showToast("引导失败：" + (error.message || "请稍后重试"));
+    } finally {
+      state.queueActionMessageId = "";
+      renderQueuedMessages(state.queuedMessages);
+    }
+  }
+
+  async function deleteQueuedMessage(messageId) {
+    if (!state.currentThreadId || state.queueActionMessageId) return;
+    state.queueActionMessageId = messageId;
+    renderQueuedMessages(state.queuedMessages);
+    try {
+      await api(adapterApiPath(
+        "/api/tasks/" + encodeURIComponent(state.currentThreadId) +
+        "/queue/" + encodeURIComponent(messageId)),
+        { method: "DELETE" }
+      );
+      state.queuedMessages = state.queuedMessages.filter(function (message) {
+        return message.id !== messageId;
+      });
+      state.editingQueuedMessageId = "";
+      showToast("已删除待发送消息");
+      renderQueuedMessages(state.queuedMessages);
+      await loadMessages(false);
+    } catch (error) {
+      showToast("删除失败：" + (error.message || "请稍后重试"));
+    } finally {
+      state.queueActionMessageId = "";
+      renderQueuedMessages(state.queuedMessages);
+    }
+  }
+
+  function beginQueuedMessageEdit(message) {
+    if (!message || message.optimistic || state.queueActionMessageId) return;
+    if (composerInput.value.trim() || state.pendingImages.length > 0) {
+      showToast("请先发送或清空输入框中的内容");
+      composerInput.focus();
+      return;
+    }
+    state.editingQueuedMessageId = message.id;
+    state.editingQueuedImageCount = Math.max(0, Number(message.imageCount) || 0);
+    state.composerRevision += 1;
+    composerInput.value = String(message.text || "");
+    composerInput.placeholder = "编辑待发送消息";
+    composerImageButton.disabled = true;
+    renderQueuedMessages(state.queuedMessages);
+    resizeComposer();
+    composerInput.focus();
+    composerInput.setSelectionRange(composerInput.value.length, composerInput.value.length);
+  }
+
+  function cancelQueuedMessageEdit() {
+    if (!state.editingQueuedMessageId) return;
+    state.editingQueuedMessageId = "";
+    state.editingQueuedImageCount = 0;
+    state.composerRevision += 1;
+    composerInput.value = "";
+    composerInput.placeholder = "有问题，尽管问";
+    composerImageButton.disabled = false;
+    resizeComposer();
+    renderQueuedMessages(state.queuedMessages);
+  }
+
+  async function submitQueuedMessageEdit(text) {
+    var messageId = state.editingQueuedMessageId;
+    if (!state.currentThreadId || state.queueActionMessageId) return;
+    var message = state.queuedMessages.find(function (item) { return item.id === messageId; });
+    if (!message) {
+      cancelQueuedMessageEdit();
+      showToast("这条待发送消息已经不存在");
+      return;
+    }
+    if (!String(text || "").trim() && state.editingQueuedImageCount === 0) {
+      showToast("消息内容不能为空");
+      return;
+    }
+    state.queueActionMessageId = messageId;
+    renderQueuedMessages(state.queuedMessages);
+    try {
+      await api(adapterApiPath(
+        "/api/tasks/" + encodeURIComponent(state.currentThreadId) +
+        "/queue/" + encodeURIComponent(messageId)),
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text: text })
+        }
+      );
+      state.queuedMessages = state.queuedMessages.map(function (item) {
+        return item.id === messageId ? Object.assign({}, item, { text: text }) : item;
+      });
+      state.editingQueuedMessageId = "";
+      state.editingQueuedImageCount = 0;
+      state.composerRevision += 1;
+      composerInput.value = "";
+      composerInput.placeholder = "有问题，尽管问";
+      composerImageButton.disabled = false;
+      resizeComposer();
+      showToast("已重新加入待发送");
+      renderQueuedMessages(state.queuedMessages);
+      await loadMessages(false);
+    } catch (error) {
+      showToast("重新发送失败：" + (error.message || "请稍后重试"));
+    } finally {
+      state.queueActionMessageId = "";
+      renderQueuedMessages(state.queuedMessages);
+    }
+  }
+
+  function renderQueuedMessages(messages) {
+    state.queuedMessages = Array.isArray(messages) ? messages : [];
+    state.queueSignature = JSON.stringify(state.queuedMessages);
+    var visibleMessages = mergeQueuedMessagesForDisplay(
+      state.queuedMessages,
+      state.pendingMessages
+    ).filter(function (message) {
+      return message.id !== state.editingQueuedMessageId;
+    });
+    if (
+      state.editingQueuedMessageId &&
+      !state.queuedMessages.some(function (message) {
+        return message.id === state.editingQueuedMessageId;
+      })
+    ) state.editingQueuedMessageId = "";
+    composerQueue.innerHTML = "";
+    composerQueue.hidden = visibleMessages.length === 0;
+    visibleMessages.forEach(function (message) {
+      var item = document.createElement("div");
+      item.className = "queued-followup";
+      item.setAttribute("data-queued-message-id", message.id);
+      var optimistic = Boolean(message.optimistic);
+      var busy = state.queueActionMessageId === message.id;
+      if (optimistic) {
+        item.classList.add("is-pending");
+        item.setAttribute("aria-busy", "true");
+      }
+
+      var main = document.createElement("div");
+      main.className = "queued-followup-main";
+      var icon = document.createElement("span");
+      icon.className = "queued-followup-icon";
+      icon.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h9a4 4 0 0 1 4 4v1M18 7l-3-3m3 3-3 3M19 17h-9a4 4 0 0 1-4-4v-1M6 17l3 3m-3-3 3-3"/></svg>';
+      var copy = document.createElement("div");
+      copy.className = "queued-followup-copy";
+      var textEl = document.createElement("div");
+      textEl.className = "queued-followup-text";
+      textEl.textContent = queuedMessageDisplayText(message);
+      copy.appendChild(textEl);
+      var status = document.createElement("div");
+      status.className = "queued-followup-status" + (optimistic ? " is-pending" : "");
+      status.textContent = optimistic
+        ? "正在加入待发送…"
+        : busy
+          ? "正在更新…"
+          : "已排队 · 等待当前任务完成";
+      copy.appendChild(status);
+      if (Number(message.imageCount) > 0 && String(message.text || "").trim()) {
+        var imageMeta = document.createElement("div");
+        imageMeta.className = "queued-followup-images";
+        imageMeta.textContent = "图片 " + Number(message.imageCount) + " 张";
+        copy.appendChild(imageMeta);
+      }
+
+      var actions = document.createElement("div");
+      actions.className = "queued-followup-actions";
+      var steer = document.createElement("button");
+      steer.type = "button";
+      steer.className = "queued-followup-action steer-action";
+      steer.disabled = optimistic || Boolean(state.queueActionMessageId);
+      steer.setAttribute("aria-label", "引导这条消息");
+      steer.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h12M13 8l4 4-4 4"/></svg><span class="queued-followup-action-label steer-label">引导</span>';
+      steer.addEventListener("click", function () { void steerQueuedMessage(message.id); });
+      var edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "queued-followup-action";
+      edit.disabled = optimistic || Boolean(state.queueActionMessageId);
+      edit.setAttribute("aria-label", "编辑这条消息");
+      edit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 19 3.5-.8L18 8.7 15.3 6 5.8 15.5 5 19Z"/><path d="m13.8 7.5 2.7 2.7"/></svg><span class="queued-followup-action-label">编辑</span>';
+      edit.addEventListener("click", function () {
+        beginQueuedMessageEdit(message);
+      });
+      var remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "queued-followup-action";
+      remove.disabled = optimistic || Boolean(state.queueActionMessageId);
+      remove.setAttribute("aria-label", "删除这条消息");
+      remove.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>';
+      remove.addEventListener("click", function () { void deleteQueuedMessage(message.id); });
+      if (busy) steer.setAttribute("aria-busy", "true");
+      actions.appendChild(steer);
+      actions.appendChild(edit);
+      actions.appendChild(remove);
+      actions.hidden = optimistic;
+
+      main.appendChild(icon);
+      main.appendChild(copy);
+      main.appendChild(actions);
+      item.appendChild(main);
+
+      composerQueue.appendChild(item);
+    });
+    requestAnimationFrame(syncComposerInset);
+  }
+
+  function isNearBottom() {
+    return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 120;
+  }
+
+  function scrollToLatest(smooth) {
+    if (smooth) {
+      messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: "smooth" });
+      return;
+    }
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function resolveUserMessageNavigation(offsets, scrollTop, targetInset) {
+    var anchor = Math.max(0, Number(scrollTop) || 0) + Math.max(0, Number(targetInset) || 0);
+    var currentIndex = offsets.findIndex(function (offset) {
+      return Math.abs(offset - anchor) <= 24;
+    });
+    if (currentIndex >= 0) {
+      return {
+        previousIndex: currentIndex - 1,
+        nextIndex: currentIndex + 1 < offsets.length ? currentIndex + 1 : -1,
+      };
+    }
+    var previousIndex = -1;
+    var nextIndex = -1;
+    offsets.some(function (offset, index) {
+      if (offset > anchor) {
+        nextIndex = index;
+        return true;
+      }
+      previousIndex = index;
+      return false;
+    });
+    return { previousIndex: previousIndex, nextIndex: nextIndex };
+  }
+
+  function userMessageNavigationTargetInset() {
+    var topbar = document.querySelector(".topbar");
+    if (topbar && window.getComputedStyle(topbar).position === "absolute") {
+      return Math.max(64, topbar.offsetHeight + 12);
+    }
+    return 24;
+  }
+
+  function updateUserMessageNavigation() {
+    var userRows = Array.prototype.slice.call(
+      messagesEl.querySelectorAll(".message-row.user")
+    );
+    if (!userRows.length) {
+      messageNavigation.hidden = true;
+      previousUserMessage.hidden = true;
+      nextUserMessage.hidden = true;
+      return;
+    }
+    var targetInset = userMessageNavigationTargetInset();
+    var navigation = resolveUserMessageNavigation(
+      userRows.map(function (row) { return row.offsetTop; }),
+      messagesEl.scrollTop,
+      targetInset
+    );
+    previousUserMessage.hidden = navigation.previousIndex < 0;
+    nextUserMessage.hidden = navigation.nextIndex < 0;
+    previousUserMessage.dataset.messageIndex = String(navigation.previousIndex);
+    nextUserMessage.dataset.messageIndex = String(navigation.nextIndex);
+    messageNavigation.hidden = previousUserMessage.hidden && nextUserMessage.hidden;
+  }
+
+  function navigateToUserMessage(index) {
+    var userRows = messagesEl.querySelectorAll(".message-row.user");
+    var row = userRows[index];
+    if (!row) return;
+    messagesEl.scrollTo({
+      top: Math.max(0, row.offsetTop - userMessageNavigationTargetInset()),
+      behavior: "smooth"
+    });
+    setTimeout(updateUserMessageNavigation, 260);
+  }
+
+  function formatRunDuration(durationMs) {
+    var seconds = Math.max(0, Math.floor((Number(durationMs) || 0) / 1000));
+    return Math.floor(seconds / 60) + "m " + (seconds % 60) + "s";
+  }
+
+  function switchProgressLabel(startedAtMs, nowMs) {
+    var elapsedMs = Math.max(0, Number(nowMs) - Number(startedAtMs));
+    return (elapsedMs >= 10_000 ? "仍在连接" : "连接中") + " · " + formatRunDuration(elapsedMs);
+  }
+
+  function effectiveRunSummary() {
+    var local = state.localRunSummary;
+    var remote = state.runSummary;
+    if (local && (!remote || !remote.turnId || remote.turnId !== local.turnId)) return local;
+    return remote || local;
+  }
+
+  function isTaskActivelyRunning(task) {
+    return Boolean(task && (
+      task.status === "running" || task.status === "approval" || task.status === "input"
+    ));
+  }
+
+  function filterProgressItemsForCurrentTurn(progressItems, task, summary) {
+    var items = Array.isArray(progressItems) ? progressItems : [];
+    var currentTurnId = task && task.activeTurnId || summary && summary.turnId;
+    if (currentTurnId) {
+      return items.filter(function (item) { return item && item.turnId === currentTurnId; });
+    }
+    if (isTaskActivelyRunning(task) || summary && summary.status === "running") return [];
+    return items;
+  }
+
+  function resolveVisibleRunSummary(messages, task, summary, nowMs) {
+    var latestAssistant = null;
+    var latestUser = null;
+    for (var index = messages.length - 1; index >= 0; index -= 1) {
+      if (!latestAssistant && messages[index].role === "assistant") {
+        latestAssistant = messages[index];
+      }
+      if (!latestUser && messages[index].role === "user") {
+        latestUser = messages[index];
+      }
+      if (latestAssistant && latestUser) break;
+    }
+    if (isTaskActivelyRunning(task)) {
+      if (summary && summary.status === "running") return summary;
+      var startedAtMs = Number(task && task.startedAtMs) ||
+        Number(summary && summary.startedAtMs) || nowMs;
+      return {
+        turnId: task && task.activeTurnId || summary && summary.turnId ||
+          latestAssistant && latestAssistant.turnId || undefined,
+        status: "running",
+        startedAtMs: startedAtMs,
+        durationMs: Math.max(0, nowMs - startedAtMs)
+      };
+    }
+    if (
+      summary &&
+      summary.status !== "running" &&
+      summary.turnId &&
+      latestUser &&
+      latestUser.turnId &&
+      latestUser.turnId !== summary.turnId
+    ) return null;
+    return summary || null;
+  }
+
+  function shouldUseStopComposerAction(task, summary, hasContent) {
+    return Boolean(task && !hasContent && summary && summary.status === "running");
+  }
+
+  function runDurationMs(summary) {
+    if (!summary) return 0;
+    if (summary.status === "running") {
+      if (summary.startedAtMs) return Math.max(Number(summary.durationMs) || 0, Date.now() - summary.startedAtMs);
+      return (Number(summary.durationMs) || 0) + Math.max(0, Date.now() - (summary.receivedAtMs || Date.now()));
+    }
+    if (Number(summary.durationMs) > 0) return Number(summary.durationMs);
+    if (!summary.completedAtMs || !summary.startedAtMs) return 0;
+    return Math.max(0, summary.completedAtMs - summary.startedAtMs);
+  }
+
+  function runHeaderLabel(summary, stopping) {
+    var duration = formatRunDuration(runDurationMs(summary));
+    if (state.pendingApproval) return "等待确认 · " + duration;
+    if (summary.status === "running") {
+      return (stopping ? "正在停止" : "正在处理") + " · " + duration;
+    }
+    if (summary.status === "failed") return "处理失败 · " + duration;
+    if (summary.status === "interrupted") return "已中断 · " + duration;
+    return "已完成 · " + duration;
+  }
+
+  function renderRunHeader(summary) {
+    var row = document.createElement("div");
+    var stopping = summary.status === "running" &&
+      state.stopRequestedThreadId === state.currentThreadId;
+    row.className = "run-header " + (state.pendingApproval ? "approval" : (summary.status || "unknown"));
+    row.id = "run-header";
+    row.innerHTML = '<span class="run-header-dot"></span><span class="run-header-label">' +
+      escapeHtml(runHeaderLabel(summary, stopping)) + "</span>";
+    return row;
+  }
+
+  function partitionProgressItems(progressItems) {
+    var items = Array.isArray(progressItems) ? progressItems.filter(Boolean) : [];
+    var plans = items.filter(function (item) { return item.kind === "plan"; });
+    var pinned = plans.length > 0 ? [plans[plans.length - 1]] : [];
+    var activity = items.filter(function (item) { return item.kind !== "plan"; });
+    var visibleSet = new Set(activity.filter(function (item) {
+      return item.status !== "completed";
+    }));
+    activity.filter(function (item) {
+      return item.status === "completed";
+    }).slice(-3).forEach(function (item) {
+      visibleSet.add(item);
+    });
+    return {
+      pinned: pinned,
+      hidden: activity.filter(function (item) { return !visibleSet.has(item); }),
+      visible: activity.filter(function (item) { return visibleSet.has(item); })
+    };
+  }
+
+  function renderProgressItemHtml(item) {
+    var status = item && (item.status === "running" || item.status === "failed")
+      ? item.status
+      : "completed";
+    return '<div class="run-progress-item ' + status + '">' +
+      '<span class="run-progress-dot" aria-hidden="true"></span>' +
+      '<span class="run-progress-text">' + escapeHtml(item && item.text || currentAdapterName() + " 正在处理") + "</span>" +
+    "</div>";
+  }
+
+  function renderProgressList(progressItems) {
+    if (!Array.isArray(progressItems) || progressItems.length === 0) return null;
+    var list = document.createElement("section");
+    list.className = "run-progress";
+    list.setAttribute("aria-label", currentAdapterName() + " 处理进展");
+    var groups = partitionProgressItems(progressItems);
+    var hiddenHtml = groups.hidden.length > 0
+      ? '<details class="run-progress-history"><summary><span>之前 ' + groups.hidden.length + ' 条进展</span>' +
+        '<span class="run-progress-fold-action"><span class="run-progress-fold-closed">展开</span>' +
+        '<span class="run-progress-fold-open">收起</span></span></summary>' +
+        '<div class="run-progress-history-items">' + groups.hidden.map(renderProgressItemHtml).join("") + "</div></details>"
+      : "";
+    list.innerHTML = groups.pinned.map(renderProgressItemHtml).join("") + hiddenHtml +
+      groups.visible.map(renderProgressItemHtml).join("");
+    return list;
+  }
+
+  function renderApprovalCard(approval) {
+    var card = document.createElement("section");
+    card.className = "approval-card";
+    card.id = "pending-approval";
+    var detail = approval.detailPreview || approval.commandPreview || "";
+    var detailLabel = approval.detailLabel || (approval.toolName ? "请求使用 " + approval.toolName : "请求执行的操作");
+    var sessionButton = approval.allowForSession
+      ? '<button class="approval-action" type="button" data-approval-action="confirm_session">本任务始终允许</button>'
+      : "";
+    card.innerHTML =
+      '<div class="approval-card-kicker">需要你的确认</div>' +
+      '<div class="approval-card-title">' + escapeHtml(approval.summary || currentAdapterName() + " 请求执行一项操作。") + "</div>" +
+      (detail
+        ? '<div class="approval-card-detail"><div class="approval-card-detail-label">' + escapeHtml(detailLabel) + '</div><pre>' + escapeHtml(detail) + "</pre></div>"
+        : "") +
+      '<div class="approval-card-hint">' + escapeHtml(currentAdapterName()) + " 正在等待你的决定，确认后才会继续处理。</div>" +
+      '<div class="approval-card-actions">' +
+        '<button class="approval-action danger" type="button" data-approval-action="deny">拒绝</button>' +
+        sessionButton +
+        '<button class="approval-action primary" type="button" data-approval-action="confirm">允许本次</button>' +
+      "</div>";
+    Array.prototype.forEach.call(card.querySelectorAll("[data-approval-action]"), function (button) {
+      button.disabled = state.resolvingApproval;
+      button.addEventListener("click", function () {
+        resolvePendingApproval(button.getAttribute("data-approval-action"));
+      });
+    });
+    return card;
+  }
+
+  async function resolvePendingApproval(action) {
+    if (state.resolvingApproval || !state.currentThreadId || !state.pendingApproval) return;
+    state.resolvingApproval = true;
+    renderMessages(false);
+    try {
+      await api(adapterApiPath("/api/tasks/" + encodeURIComponent(state.currentThreadId) + "/approval"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: action })
+      });
+      state.pendingApproval = null;
+      showToast(action === "deny"
+        ? "已拒绝，" + currentAdapterName() + " 将停止这项操作"
+        : "已允许，" + currentAdapterName() + " 继续处理");
+      renderMessages(false);
+      setTimeout(function () { loadMessages(false); }, 180);
+    } catch (error) {
+      showToast(error.message || "权限处理失败，请重试");
+      loadMessages(false);
+    } finally {
+      state.resolvingApproval = false;
+      renderMessages(false);
+    }
+  }
+
+  function updateRunHeaderClock() {
+    if (state.switchingAdapter) {
+      updateHeader();
+    }
+    var header = document.getElementById("run-header");
+    var messages = state.serverMessages.concat(visiblePendingMessages().map(function (pending) {
+      return Object.assign({ role: "user", pending: true }, pending);
+    }));
+    var summary = resolveVisibleRunSummary(
+      messages,
+      currentTask(),
+      effectiveRunSummary(),
+      Date.now()
+    );
+    if (!header || !summary) return;
+    var label = header.querySelector(".run-header-label");
+    if (label) {
+      label.textContent = runHeaderLabel(
+        summary,
+        state.stopRequestedThreadId === state.currentThreadId
+      );
+    }
+  }
+
+  function reconcilePendingMessages(messages) {
+    var users = messages.filter(function (message) { return message.role === "user"; });
+    var used = {};
+
+    function userMessageKey(message) {
+      if (message && message.id) return "id:" + message.id;
+      return "content:" + [
+        message && message.turnId || "",
+        message && message.role || "",
+        message && message.phase || "",
+        message && message.text || ""
+      ].join("\u0000");
+    }
+
+    function matchesPendingText(message, pending) {
+      var actual = String(message && message.text || "").trim();
+      var expected = String(pending && pending.text || "").trim();
+      if (actual === expected) return true;
+      if (!(pending && pending.imageCount > 0)) return false;
+      var withoutImages = actual.split("\n").filter(function (line) {
+        return line.trim().toLowerCase() !== "[image]";
+      }).join("\n").trim();
+      return withoutImages === expected;
+    }
+
+    state.pendingMessages = state.pendingMessages.filter(function (pending) {
+      var baselineKeys = Array.isArray(pending.baselineUserKeys)
+        ? new Set(pending.baselineUserKeys)
+        : null;
+      var matchIndex = -1;
+      if (pending.turnId) {
+        matchIndex = users.findIndex(function (message, index) {
+          return !used[index] && message.turnId === pending.turnId;
+        });
+      }
+      if (matchIndex < 0) {
+        matchIndex = users.findIndex(function (message, index) {
+          if (used[index] || !matchesPendingText(message, pending)) return false;
+          if (baselineKeys) return !baselineKeys.has(userMessageKey(message));
+          return index >= pending.baselineUserCount;
+        });
+      }
+      if (
+        matchIndex < 0 &&
+        pending.turnId &&
+        pending.imageCount > 0 &&
+        !pending.text.trim() &&
+        messages.some(function (message) { return message.turnId === pending.turnId; })
+      ) {
+        return false;
+      }
+      if (matchIndex < 0) return true;
+      used[matchIndex] = true;
+      return false;
+    });
+  }
+
+  function runHeaderInsertIndex(messages, summary) {
+    if (!summary) return -1;
+    if (summary.turnId) {
+      var exact = messages.findIndex(function (message) {
+        return message.role === "assistant" && message.turnId === summary.turnId;
+      });
+      if (exact >= 0) return exact;
+    }
+    for (var index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index].role === "user") return index + 1;
+    }
+    return messages.length;
+  }
+
+  function visibleMessageText(message) {
+    var text = String(message && message.text || "");
+    if (!message || message.role !== "user") return text;
+    var imageMarker = /(^|\n)\s*图片：\s*png\d+(?:\s+png\d+)*\s*(?=\n|$)|\[image\]|<\/?image\b/i.test(text);
+    var cleaned = text
+      .replace(/(^|\n)\s*图片：\s*png\d+(?:\s+png\d+)*\s*(?=\n|$)/gi, function (_, prefix) {
+        return prefix ? "\n" : "";
+      })
+      .replace(/\[image\](?:<\/image>)?/gi, "")
+      .replace(/<\/?image\b[^>]*>/gi, "")
+      .replace(/^\s*\[local image:[^\]]+\]\s*$/gim, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    return cleaned || (imageMarker ? "已发送图片" : "");
+  }
+
+  function visibleMessageModel(message) {
+    if (
+      !message ||
+      message.role !== "assistant" ||
+      message.phase === "commentary" ||
+      typeof message.model !== "string"
+    ) {
+      return "";
+    }
+    return message.model.trim();
+  }
+
+  var imageViewer = null;
+  var imageViewerImage = null;
+
+  function ensureImageViewer() {
+    if (imageViewer) return imageViewer;
+    imageViewer = document.createElement("div");
+    imageViewer.className = "image-viewer";
+    imageViewer.hidden = true;
+    imageViewer.setAttribute("role", "dialog");
+    imageViewer.setAttribute("aria-modal", "true");
+    imageViewer.setAttribute("aria-label", "图片预览");
+    imageViewer.innerHTML = '<div class="image-viewer-toolbar">' +
+      '<button class="image-viewer-close" type="button">关闭</button></div>' +
+      '<div class="image-viewer-stage"></div>';
+    imageViewerImage = document.createElement("img");
+    imageViewerImage.alt = "";
+    imageViewer.querySelector(".image-viewer-stage").appendChild(imageViewerImage);
+    document.body.appendChild(imageViewer);
+    imageViewer.querySelector(".image-viewer-close").addEventListener("click", closeImageViewer);
+    imageViewer.addEventListener("click", function (event) {
+      if (event.target === imageViewer || event.target.classList.contains("image-viewer-stage")) {
+        closeImageViewer();
+      }
+    });
+    return imageViewer;
+  }
+
+  function openImageViewer(url, alt) {
+    if (!url) return;
+    var viewer = ensureImageViewer();
+    imageViewerImage.src = url;
+    imageViewerImage.alt = alt || "生成图片";
+    viewer.hidden = false;
+    document.body.classList.add("image-viewer-open");
+    viewer.querySelector(".image-viewer-close").focus();
+  }
+
+  function closeImageViewer() {
+    if (!imageViewer || imageViewer.hidden) return;
+    imageViewer.hidden = true;
+    document.body.classList.remove("image-viewer-open");
+    if (imageViewerImage) imageViewerImage.removeAttribute("src");
+  }
+
+  function renderMessageImages(message) {
+    var images = Array.isArray(message && message.images) ? message.images : [];
+    var visibleImages = images.map(function (image) {
+      var url = typeof image.previewUrl === "string" && image.previewUrl
+        ? image.previewUrl
+        : typeof image.url === "string"
+          ? image.url
+          : "";
+      if (!url) return "";
+      var alt = image.alt || image.fileName || (message.pending ? "待发送图片" : "生成图片");
+      return '<button class="message-image-button" type="button" data-open-image="' +
+        escapeHtml(url) + '" data-image-alt="' + escapeHtml(alt) + '" aria-label="打开图片：' +
+        escapeHtml(alt) + '"><img src="' + escapeHtml(url) + '" alt="' + escapeHtml(alt) +
+        '" loading="lazy" decoding="async"><span class="message-image-error">图片加载失败，请刷新后重试</span></button>';
+    }).filter(Boolean);
+    return visibleImages.length
+      ? '<div class="message-images' + (visibleImages.length === 1 ? " single" : "") + '">' +
+        visibleImages.join("") + "</div>"
+      : "";
+  }
+
+  function bindMessageImageActions(row) {
+    row.querySelectorAll("[data-open-image]").forEach(function (button) {
+      var image = button.querySelector("img");
+      if (image) image.addEventListener("error", function () {
+        button.classList.add("failed");
+        button.disabled = true;
+        button.removeAttribute("data-open-image");
+      });
+      button.addEventListener("click", function () {
+        openImageViewer(button.dataset.openImage, button.dataset.imageAlt);
+      });
+    });
+  }
+
+  function renderMessageRow(message, index, nextMessage) {
+    var row = document.createElement("article");
+    var pendingClass = message.pending ? " " + (message.status === "failed" ? "failed" : "pending") : "";
+    var continues = message.role === "assistant" && nextMessage && nextMessage.role === "assistant" &&
+      (!message.turnId || !nextMessage.turnId || message.turnId === nextMessage.turnId);
+    var continuesClass = continues ? " continues" : "";
+    row.className = "message-row " + message.role + (message.phase === "commentary" ? " commentary" : "") + continuesClass + pendingClass;
+    row.id = message.clientId ? "pending-" + message.clientId : (message.id ? "message-" + message.id : "message-" + index);
+    var deliveryHtml = "";
+    if (message.pending) {
+      var statusText = message.status === "sending"
+        ? "正在发送到 " + currentAdapterName() + "…"
+        : message.status === "failed"
+          ? "发送失败"
+          : message.status === "unconfirmed"
+            ? "发送状态未确认"
+            : message.status === "queued"
+              ? "已排队 · 等待当前任务完成"
+              : "已发送 · 正在处理";
+      var retry = message.status === "failed"
+        ? '<button class="message-retry" type="button" data-retry="' + escapeHtml(message.clientId) + '">重试</button>'
+        : "";
+      deliveryHtml = '<div class="message-delivery ' + (message.status === "failed" ? "failed" : "") + '"><span>' + statusText + "</span>" + retry + "</div>";
+    }
+    var imagesHtml = renderMessageImages(message);
+    var visibleText = visibleMessageText(message);
+    var textHtml = visibleText ? '<div class="message-content">' + renderMarkdown(visibleText, row.id) + "</div>" : "";
+    var model = visibleMessageModel(message);
+    var modelHtml = model
+      ? '<div class="message-model">' + escapeHtml(model) + "</div>"
+      : "";
+    row.innerHTML = '<div class="message-card">' + imagesHtml + textHtml + modelHtml + deliveryHtml + "</div>";
+    var retryButton = row.querySelector("[data-retry]");
+    if (retryButton) retryButton.addEventListener("click", function () { retryPendingMessage(message.clientId); });
+    bindMessageImageActions(row);
+    return row;
+  }
+
+  function renderResponsePendingIndicator(summary) {
+    if (!summary || summary.status !== "running" || state.pendingApproval) return null;
+    var row = document.createElement("div");
+    row.className = "response-pending";
+    row.setAttribute("role", "status");
+    row.setAttribute("aria-label", "正在处理");
+    row.innerHTML = '<span class="response-pending-dot"></span>' +
+      '<span class="response-pending-dot"></span>' +
+      '<span class="response-pending-dot"></span>';
+    return row;
+  }
+
+  function runSummaryRenderKey(summary) {
+    if (!summary) return null;
+    return [
+      summary.turnId || "",
+      summary.status || "",
+      Number(summary.startedAtMs) || 0,
+      Number(summary.completedAtMs) || 0
+    ];
+  }
+
+  function captureOpenFoldState() {
+    if (messagesEl.dataset.threadId !== state.currentThreadId) {
+      return { codeKeys: [], progressHistoryOpen: false };
+    }
+    return {
+      codeKeys: Array.from(messagesEl.querySelectorAll(".message-code-fold[open]"))
+        .map(function (details) { return details.getAttribute("data-fold-key") || ""; })
+        .filter(Boolean),
+      progressHistoryOpen: Boolean(messagesEl.querySelector(".run-progress-history[open]"))
+    };
+  }
+
+  function restoreOpenFoldState(foldState) {
+    var openCodeKeys = new Set(foldState && foldState.codeKeys || []);
+    messagesEl.querySelectorAll(".message-code-fold").forEach(function (details) {
+      if (openCodeKeys.has(details.getAttribute("data-fold-key") || "")) {
+        details.open = true;
+      }
+    });
+    var progressHistory = messagesEl.querySelector(".run-progress-history");
+    if (progressHistory && foldState && foldState.progressHistoryOpen) {
+      progressHistory.open = true;
+    }
+    messagesEl.dataset.threadId = state.currentThreadId || "";
+  }
+
+  function renderMessages(forceBottom) {
+    if (state.switchingAdapter) {
+      messagesEl.innerHTML = "";
+      messagesEl.dataset.threadId = "";
+      updateUserMessageNavigation();
+      return;
+    }
+    var shouldStick = forceBottom || isNearBottom();
+    var previousScrollTop = messagesEl.scrollTop;
+    var openFoldState = captureOpenFoldState();
+    var messages = state.serverMessages.concat(visiblePendingMessages().map(function (pending) {
+      return Object.assign({ role: "user", pending: true }, pending);
+    }));
+    var summary = resolveVisibleRunSummary(
+      messages,
+      currentTask(),
+      effectiveRunSummary(),
+      Date.now()
+    );
+    var headerIndex = runHeaderInsertIndex(messages, summary);
+    messagesEl.innerHTML = "";
+    if (!messages.length && !summary && !state.pendingApproval && state.progressItems.length === 0) {
+      if (state.adapterError) {
+        var capabilityLimited = isAdapterCapabilityError();
+        messagesEl.innerHTML = '<div class="empty-state"><div class="empty-wordmark">' + escapeHtml(currentAdapterName()) + '</div><h1>' +
+          (capabilityLimited ? '网页版暂不支持此终端' : '终端暂未连接') + '</h1><p>' +
+          escapeHtml(state.adapterError) + '<br>' +
+          (capabilityLimited
+            ? '可从上方菜单切换到其他终端。'
+            : '点击上方「DeskRelay · ' + escapeHtml(currentAdapterName()) + '」重新连接。') +
+          '</p></div>';
+      } else {
+        messagesEl.innerHTML = '<div class="empty-state"><div class="empty-wordmark">DeskRelay</div><h1>还没有消息</h1><p>可以从手机继续这个任务。</p></div>';
+      }
+      messagesEl.dataset.threadId = state.currentThreadId || "";
+      updateUserMessageNavigation();
+      return;
+    }
+    var approvalRendered = false;
+    var progressRendered = false;
+    function appendRunProgress() {
+      if (progressRendered) return;
+      var progress = renderProgressList(state.progressItems);
+      if (progress) messagesEl.appendChild(progress);
+      progressRendered = true;
+    }
+    messages.forEach(function (message, index) {
+      if (summary && index === headerIndex) {
+        messagesEl.appendChild(renderRunHeader(summary));
+        appendRunProgress();
+        if (state.pendingApproval) {
+          messagesEl.appendChild(renderApprovalCard(state.pendingApproval));
+          approvalRendered = true;
+        }
+      }
+      messagesEl.appendChild(renderMessageRow(message, index, messages[index + 1]));
+    });
+    if (summary && headerIndex >= messages.length) {
+      messagesEl.appendChild(renderRunHeader(summary));
+      appendRunProgress();
+      if (state.pendingApproval) {
+        messagesEl.appendChild(renderApprovalCard(state.pendingApproval));
+        approvalRendered = true;
+      }
+    }
+    if (!progressRendered && state.progressItems.length > 0) {
+      appendRunProgress();
+    }
+    if (state.pendingApproval && !approvalRendered) {
+      messagesEl.appendChild(renderApprovalCard(state.pendingApproval));
+    }
+    var responsePending = renderResponsePendingIndicator(summary);
+    if (responsePending) messagesEl.appendChild(responsePending);
+    restoreOpenFoldState(openFoldState);
+    requestAnimationFrame(function () {
+      if (shouldStick) scrollToLatest(false);
+      else messagesEl.scrollTop = previousScrollTop;
+      updateUserMessageNavigation();
+    });
+  }
+
+  async function stopCurrentTask() {
+    var threadId = state.currentThreadId;
+    if (!threadId || state.stopRequestedThreadId === threadId) return;
+    state.stopRequestedThreadId = threadId;
+    renderMessages(false);
+    updateHeader();
+    try {
+      var result = await api(adapterApiPath("/api/tasks/" + encodeURIComponent(threadId) + "/stop"), {
+        method: "POST"
+      });
+      if (threadId !== state.currentThreadId) return;
+      if (result.interrupted) {
+        showToast("已发送停止请求");
+        setTimeout(function () {
+          if (threadId === state.currentThreadId) loadMessages(false);
+        }, 300);
+      } else {
+        state.stopRequestedThreadId = "";
+        showToast("任务当前没有运行");
+        renderMessages(false);
+        updateHeader();
+      }
+    } catch (error) {
+      if (threadId === state.currentThreadId) {
+        state.stopRequestedThreadId = "";
+        showToast("停止失败：" + (error.message || "请稍后重试"));
+        renderMessages(false);
+        updateHeader();
+      }
+    }
+  }
+
+  function updateRunSummary(summary, task) {
+    var taskRunning = isTaskActivelyRunning(task);
+    var previous = state.runSummary;
+    var next = summary ? Object.assign({}, summary, { receivedAtMs: Date.now() }) : null;
+    if (taskRunning && next && next.status !== "running") {
+      next = null;
+    } else if (!taskRunning && next && next.status === "running") {
+      var localRunning = state.localRunSummary &&
+        state.localRunSummary.status === "running" &&
+        (!state.localRunSummary.turnId || !next.turnId ||
+          state.localRunSummary.turnId === next.turnId);
+      if (!localRunning) {
+        if (previous && previous.turnId === next.turnId && previous.status !== "running") {
+          next = previous;
+        } else {
+          next = Object.assign({}, next, {
+            status: "unknown",
+            completedAtMs: Date.now(),
+            durationMs: runDurationMs(next)
+          });
+        }
+      }
+    }
+    state.runSummary = next;
+    if (!taskRunning && state.stopRequestedThreadId === state.currentThreadId) {
+      state.stopRequestedThreadId = "";
+    }
+    if (state.localRunSummary) {
+      var localTurnConfirmed = Boolean(
+        state.localRunSummary.turnId &&
+        next &&
+        next.turnId === state.localRunSummary.turnId
+      );
+      var localAgeMs = Date.now() - Number(state.localRunSummary.startedAtMs || Date.now());
+      if (localTurnConfirmed || taskRunning && next && next.status === "running") {
+        state.localRunSummary = null;
+      } else if (!taskRunning && !state.sending && localAgeMs > 120000) {
+        state.localRunSummary = null;
+      }
+    }
+  }
+
+  function normalizeMessagePage(payload, messages) {
+    var page = payload && payload.messagePage || {};
+    return {
+      hasMore: Boolean(page.hasMore),
+      nextBefore: page.nextBefore === null || page.nextBefore === undefined
+        ? null
+        : String(page.nextBefore),
+      source: page.source === "openagentlog" ? "openagentlog" : "native",
+      caughtUp: page.caughtUp !== false
+    };
+  }
+
+  function messagePageKey(message) {
+    if (message && message.id) return "id:" + message.id;
+    return "content:" + [
+      message && message.turnId || "",
+      message && message.role || "",
+      message && message.phase || "",
+      message && message.text || ""
+    ].join("\u0000");
+  }
+
+  function messagesRepresentSameEntry(left, right) {
+    if (!left || !right) return false;
+    if (left.id && right.id) return left.id === right.id;
+    if (
+      (left.role || "") !== (right.role || "") ||
+      (left.text || "") !== (right.text || "")
+    ) return false;
+    var text = String(left.text || "").trim().toLowerCase();
+    if (!text || /^\[(?:tool_use|tool_result)\]$/.test(text)) return false;
+    if (left.turnId && right.turnId && left.turnId !== right.turnId) return false;
+    if (left.phase && right.phase && left.phase !== right.phase) return false;
+    return true;
+  }
+
+  function messagePageAlignment(existing, incoming) {
+    var previous = existing || [];
+    var next = incoming || [];
+    var lengths = Array.from({ length: previous.length + 1 }, function () {
+      return Array(next.length + 1).fill(0);
+    });
+    for (var previousIndex = 1; previousIndex <= previous.length; previousIndex += 1) {
+      for (var incomingIndex = 1; incomingIndex <= next.length; incomingIndex += 1) {
+        if (messagesRepresentSameEntry(
+          previous[previousIndex - 1],
+          next[incomingIndex - 1]
+        )) {
+          lengths[previousIndex][incomingIndex] =
+            lengths[previousIndex - 1][incomingIndex - 1] + 1;
+        } else {
+          lengths[previousIndex][incomingIndex] = Math.max(
+            lengths[previousIndex - 1][incomingIndex],
+            lengths[previousIndex][incomingIndex - 1]
+          );
+        }
+      }
+    }
+    if (!lengths[previous.length][next.length]) return null;
+
+    var matches = [];
+    var previousCursor = previous.length;
+    var incomingCursor = next.length;
+    while (previousCursor > 0 && incomingCursor > 0) {
+      if (
+        messagesRepresentSameEntry(
+          previous[previousCursor - 1],
+          next[incomingCursor - 1]
+        ) &&
+        lengths[previousCursor][incomingCursor] ===
+          lengths[previousCursor - 1][incomingCursor - 1] + 1
+      ) {
+        matches.unshift({
+          previousIndex: previousCursor - 1,
+          incomingIndex: incomingCursor - 1
+        });
+        previousCursor -= 1;
+        incomingCursor -= 1;
+      } else if (
+        lengths[previousCursor - 1][incomingCursor] >
+        lengths[previousCursor][incomingCursor - 1]
+      ) {
+        previousCursor -= 1;
+      } else {
+        incomingCursor -= 1;
+      }
+    }
+    return {
+      first: matches[0],
+      last: matches[matches.length - 1]
+    };
+  }
+
+  function mergeMessagePages(existing, incoming) {
+    var previous = existing || [];
+    var next = incoming || [];
+    var alignment = messagePageAlignment(previous, next);
+    if (alignment) {
+      var prefix = previous.slice(0, alignment.first.previousIndex);
+      var suffix = alignment.last.incomingIndex === next.length - 1
+        ? previous.slice(alignment.last.previousIndex + 1)
+        : [];
+      return prefix.concat(next, suffix);
+    }
+
+    var merged = previous.slice();
+    var indexByKey = Object.create(null);
+    merged.forEach(function (message, index) {
+      indexByKey[messagePageKey(message)] = index;
+    });
+    next.forEach(function (message) {
+      var key = messagePageKey(message);
+      var existingIndex = indexByKey[key];
+      if (existingIndex !== undefined) {
+        merged[existingIndex] = message;
+        return;
+      }
+      indexByKey[key] = merged.length;
+      merged.push(message);
+    });
+    return merged;
+  }
+
+  function rebuildServerMessages() {
+    state.serverMessages = mergeMessagePages(
+      state.historyMessages,
+      state.latestMessages
+    );
+  }
+
+  function applyLatestMessagePage(payload, historyOnly) {
+    var messages = payload.messages || [];
+    var page = normalizeMessagePage(payload, messages);
+    if (historyOnly || !state.latestMessages.length) {
+      state.historyMessages = [];
+      state.latestMessages = messages;
+      state.oldestMessageCursor = page.nextBefore;
+      state.historySource = page.source;
+      state.historyCaughtUp = page.caughtUp;
+    } else {
+      state.latestMessages = mergeMessagePages(state.latestMessages, messages);
+    }
+    state.hasOlderMessages = state.oldestMessageCursor !== null;
+    rebuildServerMessages();
+    return page;
+  }
+
+  async function loadOlderMessages() {
+    if (
+      !state.authenticated ||
+      !state.currentThreadId ||
+      !state.hasOlderMessages ||
+      state.loadingOlderMessages
+    ) return;
+    var requestedThreadId = state.currentThreadId;
+    var requestId = ++state.historyRequestId;
+    var before = state.oldestMessageCursor;
+    if (before === null) {
+      state.hasOlderMessages = false;
+      return;
+    }
+    state.loadingOlderMessages = true;
+    var previousHeight = messagesEl.scrollHeight;
+    var previousTop = messagesEl.scrollTop;
+    try {
+      var payload = await api(adapterApiPath(
+        "/api/tasks/" + encodeURIComponent(requestedThreadId) +
+        "/messages?limit=" + MESSAGE_PAGE_SIZE + "&before=" + encodeURIComponent(before)
+      ));
+      if (
+        requestId !== state.historyRequestId ||
+        requestedThreadId !== state.currentThreadId ||
+        payload.threadId !== requestedThreadId
+      ) return;
+      var messages = payload.messages || [];
+      var page = normalizeMessagePage(payload, messages);
+      state.historyMessages = mergeMessagePages(messages, state.historyMessages);
+      state.oldestMessageCursor = page.nextBefore;
+      state.hasOlderMessages = state.oldestMessageCursor !== null;
+      rebuildServerMessages();
+      state.transcriptSignature = "";
+      renderMessages(false);
+      messagesEl.scrollTop = previousTop + Math.max(0, messagesEl.scrollHeight - previousHeight);
+    } catch (error) {
+      if (requestId === state.historyRequestId && error.status !== 401) {
+        showToast(error.message || "更早消息读取失败");
+      }
+    } finally {
+      if (requestId === state.historyRequestId) state.loadingOlderMessages = false;
+    }
+  }
+
+  async function loadMessages(forceBottom, historyOnly, forceFullPage) {
+    if (!state.authenticated || !state.currentThreadId) return null;
+    if (state.loadingMessages) return null;
+    var requestedThreadId = state.currentThreadId;
+    var requestId = ++state.messageRequestId;
+    state.loadingMessages = true;
+    try {
+      var livePageSize = forceFullPage ? MESSAGE_PAGE_SIZE : LIVE_MESSAGE_PAGE_SIZE;
+      var pageSize = historyOnly || !state.latestMessages.length
+        ? MESSAGE_PAGE_SIZE
+        : livePageSize;
+      var payload = await api(adapterApiPath(
+        "/api/tasks/" + encodeURIComponent(requestedThreadId) +
+        "/messages?limit=" + pageSize + (historyOnly ? "&history=1" : "")
+      ));
+      if (
+        requestId !== state.messageRequestId ||
+        requestedThreadId !== state.currentThreadId ||
+        payload.threadId !== requestedThreadId
+      ) return;
+      applyLatestMessagePage(payload, historyOnly);
+      var messages = state.serverMessages;
+      reconcilePendingMessages(payload.messages || []);
+      var taskIndex = state.tasks.findIndex(function (task) { return task.threadId === payload.threadId; });
+      if (taskIndex >= 0 && payload.task) state.tasks[taskIndex] = payload.task;
+      if (!historyOnly) {
+        state.pendingApproval = payload.pendingApproval || null;
+        updateRunSummary(payload.runSummary || null, payload.task || null);
+        state.progressItems = filterProgressItemsForCurrentTurn(
+          payload.progressItems || [],
+          payload.task || null,
+          effectiveRunSummary()
+        );
+      }
+      var pendingSignature = state.pendingMessages.map(function (pending) {
+        return [
+          pending.clientId,
+          pending.status,
+          pending.turnId,
+          pending.text,
+          pending.imageCount,
+          pending.displayInTranscript
+        ];
+      });
+      var signature = JSON.stringify([
+        messages,
+        pendingSignature,
+        runSummaryRenderKey(effectiveRunSummary()),
+        payload.task && [payload.task.status, payload.task.startedAtMs, payload.task.activeTurnId],
+        state.stopRequestedThreadId,
+        state.pendingApproval,
+        state.progressItems
+      ]);
+      if (signature !== state.transcriptSignature) {
+        state.transcriptSignature = signature;
+        renderMessages(forceBottom);
+      }
+      var queuedMessages = payload.queuedMessages || [];
+      var queueSignature = JSON.stringify(queuedMessages);
+      if (queueSignature !== state.queueSignature) renderQueuedMessages(queuedMessages);
+      updateHeader();
+      renderTasks();
+      return payload;
+    } catch (error) {
+      if (
+        requestId === state.messageRequestId &&
+        requestedThreadId === state.currentThreadId &&
+        error.status !== 401
+      ) showToast(error.message || "消息读取失败");
+      return null;
+    } finally {
+      if (requestId === state.messageRequestId) state.loadingMessages = false;
+    }
+  }
+
+  async function createTask() {
+    if (state.creatingTask || state.switchingAdapter) return;
+    state.creatingTask = true;
+    updateHeader();
+    try {
+      var payload = await api(adapterApiPath("/api/tasks"), { method: "POST" });
+      var task = payload && payload.task;
+      if (!task || !task.threadId) throw new Error("电脑端没有返回新任务。");
+      state.adapterError = "";
+      await loadTasks(false);
+      await selectTask(task.threadId, true);
+      showToast("已新建 " + currentAdapterName() + " 任务");
+    } catch (error) {
+      showToast(error.message || "新建任务失败");
+    } finally {
+      state.creatingTask = false;
+      updateHeader();
+    }
+  }
+
+  async function selectTask(threadId, updateUrl) {
+    closeTaskContextMenu();
+    state.messageRequestId += 1;
+    state.composerRevision += 1;
+    state.currentThreadId = threadId;
+    state.serverMessages = [];
+    state.historyMessages = [];
+    state.latestMessages = [];
+    state.oldestMessageCursor = null;
+    state.hasOlderMessages = false;
+    state.historySource = "";
+    state.historyCaughtUp = true;
+    state.loadingOlderMessages = false;
+    state.historyRequestId += 1;
+    state.progressItems = [];
+    state.pendingMessages = [];
+    state.editingQueuedMessageId = "";
+    state.editingQueuedImageCount = 0;
+    composerInput.value = "";
+    composerInput.placeholder = "有问题，尽管问";
+    composerImageButton.disabled = false;
+    state.pendingImages = [];
+    renderPendingImages();
+    resizeComposer();
+    state.runSummary = null;
+    state.localRunSummary = null;
+    state.pendingApproval = null;
+    state.resolvingApproval = false;
+    state.stopRequestedThreadId = "";
+    state.transcriptSignature = "";
+    state.queueSignature = "";
+    renderQueuedMessages([]);
+    messagesEl.innerHTML = '<div class="loading-row">正在读取最近消息…</div>';
+    updateUserMessageNavigation();
+    if (updateUrl) {
+      var url = new URL(window.location.href);
+      url.searchParams.set("task", threadId);
+      history.replaceState(null, "", url.pathname + url.search + url.hash);
+    }
+    closeSidebar();
+    renderTasks();
+    updateHeader();
+    await loadMessages(true, true, false);
+    if (threadId === state.currentThreadId) {
+      void loadMessages(false, false, false);
+    }
+  }
+
+  function showToast(text) {
+    toastEl.textContent = text;
+    toastEl.classList.add("is-visible");
+    if (state.toastTimer) clearTimeout(state.toastTimer);
+    state.toastTimer = setTimeout(function () { toastEl.classList.remove("is-visible"); }, 2200);
+  }
+
+  function renderPendingImages() {
+    composerMedia.innerHTML = "";
+    composerMedia.hidden = state.pendingImages.length === 0;
+    state.pendingImages.forEach(function (image) {
+      var item = document.createElement("div");
+      item.className = "composer-media-item";
+      var previewButton = document.createElement("button");
+      previewButton.type = "button";
+      previewButton.className = "composer-media-preview";
+      previewButton.setAttribute("aria-label", "打开图片：" + image.fileName);
+      previewButton.addEventListener("click", function () {
+        openImageViewer(image.previewUrl, image.fileName);
+      });
+      var preview = document.createElement("img");
+      preview.src = image.previewUrl;
+      preview.alt = image.fileName;
+      previewButton.appendChild(preview);
+      var remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "composer-media-remove";
+      remove.setAttribute("aria-label", "移除图片");
+      remove.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg>';
+      remove.addEventListener("click", function () {
+        state.pendingImages = state.pendingImages.filter(function (entry) {
+          return entry.id !== image.id;
+        });
+        renderPendingImages();
+        updateHeader();
+        requestAnimationFrame(syncComposerInset);
+      });
+      item.appendChild(previewButton);
+      item.appendChild(remove);
+      composerMedia.appendChild(item);
+    });
+    requestAnimationFrame(syncComposerInset);
+  }
+
+  function readImageFile(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        var result = typeof reader.result === "string" ? reader.result : "";
+        var marker = ";base64,";
+        var markerIndex = result.indexOf(marker);
+        if (markerIndex < 0) {
+          reject(new Error("图片读取失败"));
+          return;
+        }
+        resolve({
+          id: String(Date.now()) + "-" + Math.random().toString(36).slice(2),
+          fileName: file.name || "image",
+          mimeType: file.type,
+          sizeBytes: file.size,
+          dataBase64: result.slice(markerIndex + marker.length),
+          previewUrl: result
+        });
+      };
+      reader.onerror = function () { reject(new Error("图片读取失败")); };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function addImageFiles(fileList) {
+    if (state.editingQueuedMessageId) {
+      showToast("编辑待发送消息时暂不支持增减图片");
+      return;
+    }
+    var requestedThreadId = state.currentThreadId;
+    var requestedComposerRevision = state.composerRevision;
+    var supportedTypes = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+    var files = Array.prototype.slice.call(fileList || []).filter(function (file) {
+      return file && supportedTypes.includes(file.type);
+    });
+    if (!files.length) {
+      showToast("请选择 PNG、JPG、WebP 或 GIF 图片");
+      return;
+    }
+    var remaining = Math.max(0, 4 - state.pendingImages.length);
+    if (remaining === 0) {
+      showToast("一次最多发送 4 张图片");
+      return;
+    }
+    if (files.length > remaining) {
+      showToast("一次最多发送 4 张图片");
+      files = files.slice(0, remaining);
+    }
+    var accepted = [];
+    for (var index = 0; index < files.length; index += 1) {
+      var file = files[index];
+      if (file.size > 8 * 1024 * 1024) {
+        showToast("单张图片不能超过 8 MB");
+        continue;
+      }
+      try {
+        var acceptedImage = await readImageFile(file);
+        if (
+          requestedComposerRevision !== state.composerRevision ||
+          requestedThreadId !== state.currentThreadId
+        ) return;
+        accepted.push(acceptedImage);
+      } catch (error) {
+        if (
+          requestedComposerRevision !== state.composerRevision ||
+          requestedThreadId !== state.currentThreadId
+        ) return;
+        showToast(error.message || "图片读取失败");
+      }
+    }
+    if (
+      requestedComposerRevision !== state.composerRevision ||
+      requestedThreadId !== state.currentThreadId
+    ) return;
+    var totalBytes = state.pendingImages.concat(accepted).reduce(function (sum, image) {
+      return sum + image.sizeBytes;
+    }, 0);
+    if (totalBytes > 18 * 1024 * 1024) {
+      showToast("图片总大小不能超过 18 MB");
+      return;
+    }
+    state.pendingImages = state.pendingImages.concat(accepted);
+    renderPendingImages();
+    updateHeader();
+  }
+
+  function insertComposerText(text) {
+    if (!text) return;
+    var start = composerInput.selectionStart || 0;
+    var end = composerInput.selectionEnd || start;
+    composerInput.value =
+      composerInput.value.slice(0, start) + text + composerInput.value.slice(end);
+    composerInput.selectionStart = composerInput.selectionEnd = start + text.length;
+    resizeComposer();
+  }
+
+  function resizeComposer() {
+    composerInput.style.height = "auto";
+    composerInput.style.height = Math.min(composerInput.scrollHeight, 168) + "px";
+    updateHeader();
+    requestAnimationFrame(syncComposerInset);
+  }
+
+  function makePendingMessage(text, images) {
+    return {
+      clientId: "mobile-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8),
+      createdAtMs: Date.now(),
+      threadId: state.currentThreadId,
+      text: text,
+      images: images.slice(),
+      imageCount: images.length,
+      status: "sending",
+      turnId: "",
+      queued: false,
+      optimisticRun: false,
+      displayInTranscript: true,
+      baselineUserCount: state.serverMessages.filter(function (message) { return message.role === "user"; }).length,
+      baselineUserKeys: state.serverMessages.filter(function (message) {
+        return message.role === "user";
+      }).map(messagePageKey)
+    };
+  }
+
+  async function submitPendingMessage(pending) {
+    var requestedThreadId = pending.threadId;
+    state.sending = true;
+    pending.status = "sending";
+    renderMessages(true);
+    updateHeader();
+    showToast("正在发送…");
+    try {
+      var images = (pending.images || []).map(function (image) {
+        return {
+          fileName: image.fileName,
+          mimeType: image.mimeType,
+          dataBase64: image.dataBase64
+        };
+      });
+      var result = await api(adapterApiPath("/api/tasks/" + encodeURIComponent(requestedThreadId) + "/messages"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: pending.text, images: images })
+      });
+      if (result.duplicate) {
+        state.pendingMessages = state.pendingMessages.filter(function (message) {
+          return message.clientId !== pending.clientId;
+        });
+        if (pending.optimisticRun) {
+          state.localRunSummary = null;
+          pending.optimisticRun = false;
+        }
+        renderQueuedMessages(state.queuedMessages);
+        renderMessages(true);
+        showToast("与最近一条消息相同，未重复发送");
+        await loadMessages(false);
+        return;
+      }
+      pending.turnId = result.turnId || "";
+      pending.queuedMessageId = result.queuedMessageId || "";
+      pending.queued = Boolean(result.queued);
+      pending.status = pending.queued ? "queued" : "sent";
+      if (requestedThreadId !== state.currentThreadId) return;
+      if (pending.queued) {
+        if (pending.optimisticRun) {
+          state.localRunSummary = null;
+          pending.optimisticRun = false;
+        }
+        var queuedMessage = {
+          id: pending.queuedMessageId || pending.clientId,
+          text: pending.text,
+          imageCount: pending.imageCount,
+          createdAtMs: pending.createdAtMs
+        };
+        if (!state.queuedMessages.some(function (message) {
+          return message.id === queuedMessage.id;
+        })) state.queuedMessages.push(queuedMessage);
+        state.pendingMessages = state.pendingMessages.filter(function (message) {
+          return message.clientId !== pending.clientId;
+        });
+        renderQueuedMessages(state.queuedMessages);
+        showToast("已加入待发送");
+        await loadMessages(false);
+      } else {
+        pending.displayInTranscript = true;
+        renderQueuedMessages(state.queuedMessages);
+        if (pending.optimisticRun && state.localRunSummary) {
+          state.localRunSummary.turnId = pending.turnId || undefined;
+        } else if (!state.localRunSummary || state.localRunSummary.status !== "running") {
+          state.localRunSummary = {
+            turnId: pending.turnId || undefined,
+            status: "running",
+            startedAtMs: Date.now(),
+            durationMs: 0,
+            receivedAtMs: Date.now()
+          };
+        }
+        showToast("已发送，" + currentAdapterName() + " 正在处理");
+      }
+      renderMessages(true);
+      setTimeout(function () {
+        if (requestedThreadId === state.currentThreadId) loadMessages(true);
+      }, 250);
+    } catch (error) {
+      var uncertain = String(error && error.message || "").includes("暂未确认");
+      pending.status = uncertain ? "unconfirmed" : "failed";
+      pending.displayInTranscript = true;
+      renderQueuedMessages(state.queuedMessages);
+      if (pending.optimisticRun) {
+        state.localRunSummary = null;
+        pending.optimisticRun = false;
+      }
+      if (requestedThreadId === state.currentThreadId) {
+        try {
+          await loadMessages(false);
+        } catch {}
+        var stillPending = state.pendingMessages.some(function (message) {
+          return message.clientId === pending.clientId;
+        });
+        if (stillPending) {
+          renderMessages(true);
+          showToast(uncertain
+            ? "发送状态暂未确认，请先查看任务状态"
+            : "发送失败：" + (error.message || "请稍后重试"));
+        } else {
+          showToast("已发送，" + currentAdapterName() + " 正在处理");
+        }
+      }
+    } finally {
+      state.sending = false;
+      updateHeader();
+    }
+  }
+
+  function beginOptimisticRunIfNeeded(pending) {
+    var visibleSummary = currentVisibleRunSummary();
+    if (visibleSummary && visibleSummary.status === "running") return;
+    pending.optimisticRun = true;
+    state.localRunSummary = {
+      status: "running",
+      startedAtMs: Date.now(),
+      durationMs: 0,
+      receivedAtMs: Date.now()
+    };
+  }
+
+  function retryPendingMessage(clientId) {
+    if (state.sending) return;
+    var pending = state.pendingMessages.find(function (message) { return message.clientId === clientId; });
+    if (!pending) return;
+    pending.turnId = "";
+    pending.baselineUserCount = state.serverMessages.filter(function (message) {
+      return message.role === "user";
+    }).length;
+    pending.baselineUserKeys = state.serverMessages.filter(function (message) {
+      return message.role === "user";
+    }).map(messagePageKey);
+    beginOptimisticRunIfNeeded(pending);
+    renderMessages(true);
+    submitPendingMessage(pending);
+  }
+
+  composerForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+    var text = composerInput.value;
+    var images = state.pendingImages.slice();
+    if (state.editingQueuedMessageId) {
+      if (images.length > 0) {
+        showToast("编辑待发送消息时暂不支持增减图片");
+        return;
+      }
+      if (!text.trim() && state.editingQueuedImageCount === 0) {
+        showToast("消息内容不能为空");
+        return;
+      }
+      void submitQueuedMessageEdit(text);
+      return;
+    }
+    var hasContent = Boolean(text.trim() || images.length > 0);
+    if (shouldUseStopComposerAction(currentTask(), currentVisibleRunSummary(), hasContent)) {
+      stopCurrentTask();
+      return;
+    }
+    if (!hasContent || !state.currentThreadId || state.sending) return;
+    var pending = makePendingMessage(text, images);
+    var likelyQueued = isTaskActivelyRunning(currentTask()) ||
+      state.queuedMessages.length > 0 || Boolean(state.pendingApproval);
+    pending.displayInTranscript = !likelyQueued;
+    if (!likelyQueued) beginOptimisticRunIfNeeded(pending);
+    state.composerRevision += 1;
+    state.pendingMessages.push(pending);
+    composerInput.value = "";
+    state.pendingImages = [];
+    renderPendingImages();
+    resizeComposer();
+    renderQueuedMessages(state.queuedMessages);
+    renderMessages(true);
+    submitPendingMessage(pending);
+  });
+
+  authForm.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    var password = authPassword.value;
+    if (!password) return;
+    authSubmit.disabled = true;
+    authError.textContent = "";
+    try {
+      await authApi(state.authMode === "setup" ? "/api/auth/setup" : "/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password: password })
+      });
+      try { sessionStorage.removeItem("codexMobileSetup"); } catch (_) {}
+      state.setupToken = "";
+      void startAuthenticatedApp();
+    } catch (error) {
+      authError.textContent = error.message || "验证失败，请重试。";
+      authPassword.select();
+    } finally {
+      authSubmit.disabled = false;
+    }
+  });
+
+  composerImageButton.addEventListener("click", function () {
+    if (state.editingQueuedMessageId) {
+      showToast("编辑待发送消息时暂不支持增减图片");
+      return;
+    }
+    composerImageInput.click();
+  });
+  composerImageInput.addEventListener("change", function () {
+    if (state.editingQueuedMessageId) {
+      composerImageInput.value = "";
+      showToast("编辑待发送消息时暂不支持增减图片");
+      return;
+    }
+    void addImageFiles(composerImageInput.files);
+    composerImageInput.value = "";
+  });
+  composerInput.addEventListener("paste", function (event) {
+    var clipboard = event.clipboardData;
+    if (!clipboard) return;
+    var files = Array.prototype.slice.call(clipboard.files || []).filter(function (file) {
+      return file.type && file.type.indexOf("image/") === 0;
+    });
+    if (!files.length && clipboard.items) {
+      files = Array.prototype.slice.call(clipboard.items).flatMap(function (item) {
+        if (item.kind !== "file" || item.type.indexOf("image/") !== 0) return [];
+        var file = item.getAsFile();
+        return file ? [file] : [];
+      });
+    }
+    if (!files.length) return;
+    if (state.editingQueuedMessageId) {
+      showToast("编辑待发送消息时暂不支持增减图片");
+      return;
+    }
+    event.preventDefault();
+    var plainText = clipboard.getData("text/plain");
+    if (plainText) insertComposerText(plainText);
+    void addImageFiles(files);
+  });
+
+  authLogout.addEventListener("click", async function () {
+    toggleWorkspaceMenu(false);
+    closeTaskContextMenu();
+    closeTaskRenameDialog(true);
+    try { await fetchJson("/api/auth/logout", { method: "POST" }); } catch (_) {}
+    state.taskRequestId += 1;
+    state.messageRequestId += 1;
+    state.composerRevision += 1;
+    state.tasks = [];
+    state.currentThreadId = "";
+    state.serverMessages = [];
+    state.historyMessages = [];
+    state.latestMessages = [];
+    state.oldestMessageCursor = null;
+    state.hasOlderMessages = false;
+    state.loadingOlderMessages = false;
+    state.historyRequestId += 1;
+    state.progressItems = [];
+    state.pendingMessages = [];
+    state.queuedMessages = [];
+    state.editingQueuedMessageId = "";
+    state.editingQueuedImageCount = 0;
+    state.queueActionMessageId = "";
+    state.adapters = [];
+    state.currentAdapter = "codex";
+    state.switchingAdapter = false;
+    state.switchingAdapterId = "";
+    state.switchStartedAtMs = 0;
+    updateDocumentTitle();
+    state.adapterError = "";
+    state.pendingImages = [];
+    composerInput.value = "";
+    composerInput.placeholder = "有问题，尽管问";
+    composerImageButton.disabled = false;
+    renderPendingImages();
+    state.runSummary = null;
+    state.localRunSummary = null;
+    state.pendingApproval = null;
+    state.resolvingApproval = false;
+    state.stopRequestedThreadId = "";
+    showAuthentication("login", "已退出。", false);
+  });
+
+  composerInput.addEventListener("input", function () {
+    resizeComposer();
+  });
+  composerInput.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && state.editingQueuedMessageId) {
+      event.preventDefault();
+      cancelQueuedMessageEdit();
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      composerForm.requestSubmit();
+    }
+  });
+  taskContextRename.addEventListener("click", openTaskRenameDialog);
+  taskContextCopyId.addEventListener("click", function () { void copyContextTaskId(); });
+  taskRenameCancel.addEventListener("click", function () { closeTaskRenameDialog(); });
+  taskRenameOverlay.addEventListener("click", function (event) {
+    if (event.target === taskRenameOverlay) closeTaskRenameDialog();
+  });
+  taskRenameForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+    void renameTaskFromDialog();
+  });
+  taskViewProjects.addEventListener("click", function () { setTaskView("projects"); });
+  taskViewRecent.addEventListener("click", function () { setTaskView("recent"); });
+  searchInput.addEventListener("input", renderTasks);
+  window.addEventListener("resize", function () {
+    syncComposerInset();
+    closeTaskContextMenu();
+  });
+  taskList.addEventListener("scroll", closeTaskContextMenu, { passive: true });
+  messagesEl.addEventListener("scroll", function () {
+    updateUserMessageNavigation();
+    if (messagesEl.scrollTop < 120) void loadOlderMessages();
+  });
+  previousUserMessage.addEventListener("click", function () {
+    navigateToUserMessage(Number(previousUserMessage.dataset.messageIndex));
+  });
+  nextUserMessage.addEventListener("click", function () {
+    navigateToUserMessage(Number(nextUserMessage.dataset.messageIndex));
+  });
+  workspaceSwitcher.addEventListener("click", function () { toggleWorkspaceMenu(); });
+  newTaskButton.addEventListener("click", function () { void createTask(); });
+  messagesEl.addEventListener("selectstart", closeTaskContextMenu);
+  messagesEl.addEventListener("contextmenu", closeTaskContextMenu);
+  messagesEl.addEventListener("pointerdown", closeTaskContextMenu);
+  document.addEventListener("selectionchange", function () {
+    if (hasActiveTextSelection()) closeTaskContextMenu();
+  });
+  document.addEventListener("click", function (event) {
+    if (!workspaceMenu.hidden && !workspaceMenu.contains(event.target) && !workspaceSwitcher.contains(event.target)) {
+      toggleWorkspaceMenu(false);
+    }
+    if (!taskContextMenu.hidden && !taskContextMenu.contains(event.target)) {
+      closeTaskContextMenu();
+    }
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") {
+      if (imageViewer && !imageViewer.hidden) {
+        event.preventDefault();
+        closeImageViewer();
+        return;
+      }
+      if (!taskRenameOverlay.hidden) {
+        event.preventDefault();
+        closeTaskRenameDialog();
+        return;
+      }
+      closeTaskContextMenu();
+      toggleWorkspaceMenu(false);
+    }
+  });
+  document.getElementById("menu-button").addEventListener("click", function () { app.classList.add("sidebar-open"); });
+  document.getElementById("sidebar-close").addEventListener("click", closeSidebar);
+  document.getElementById("sidebar-overlay").addEventListener("click", closeSidebar);
+
+  function scheduleLiveRefresh(delayMs) {
+    if (!state.authenticated) return;
+    if (state.liveRefreshTimer) clearTimeout(state.liveRefreshTimer);
+    state.liveRefreshTimer = setTimeout(async function () {
+      if (await checkForAppUpdate(false)) return;
+      var refreshes = [loadMessages(false, false)];
+      if (Date.now() >= state.nextTaskRefreshAtMs) {
+        refreshes.push(loadTasks(false));
+      }
+      await Promise.all(refreshes);
+      scheduleLiveRefresh(document.hidden ? 10000 : 2200);
+    }, delayMs);
+  }
+
+  window.addEventListener("pageshow", function () {
+    void checkForAppUpdate(true);
+  });
+
+  document.addEventListener("visibilitychange", function () {
+    if (!state.authenticated) return;
+    if (!document.hidden) {
+      void (async function () {
+        if (await checkForAppUpdate(true)) return;
+        state.nextTaskRefreshAtMs = 0;
+        await Promise.all([loadTasks(false), loadMessages(false, false)]);
+      })();
+    }
+    scheduleLiveRefresh(document.hidden ? 10000 : 300);
+  });
+
+  updateDocumentTitle();
+  initializeAuthentication();
+})();
+`;

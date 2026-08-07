@@ -1,0 +1,7697 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import crypto from "node:crypto";
+import { spawn as spawnChild } from "node:child_process";
+import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
+import type {
+  ApprovalRequest,
+  BridgeMessageImage,
+  BridgeQueuedTaskInput,
+  BridgeResumeSessionCandidate,
+  BridgeResumeSessionRuntimeStatus,
+  BridgeSessionMessage,
+  BridgeSessionMessagePage,
+  BridgeSessionMessagePageOptions,
+  BridgeSessionProgressItem,
+  BridgeSessionReadOptions,
+  BridgeSessionRunSummary,
+  BridgeSessionSendResult,
+  BridgeThreadSwitchReason,
+  BridgeThreadSwitchSource,
+  BridgeTurnInputItem,
+  BridgeTurnOrigin,
+} from "./bridge-types.ts";
+import {
+  compactMirroredUserInputText,
+  detectCliApproval,
+  normalizeOutput,
+  nowIso,
+  sanitizeWechatInboundPromptForDisplay,
+  truncatePreview,
+} from "./bridge-utils.ts";
+import { AbstractPtyAdapter } from "./bridge-adapters.core.ts";
+import { killProcessTreeSync } from "./bridge-process-reaper.ts";
+import * as shared from "./bridge-adapters.shared.ts";
+import {
+  CodexDesktopIpcClient,
+  type CodexDesktopConversationState,
+} from "./codex-desktop-ipc.ts";
+import { ensureWorkspaceChannelDir } from "../wechat/channel-config.ts";
+import {
+  CODEX_REMOTE_AUTH_TOKEN_ENV,
+  LOCAL_CLIENT_PROTOCOL_VERSION,
+  type LocalClientEndpoint,
+} from "../runtime/runtime-types.ts";
+
+type AdapterOptions = shared.AdapterOptions;
+type CodexActiveTurn = shared.CodexActiveTurn;
+type CodexPendingApprovalRequest = shared.CodexPendingApprovalRequest;
+type CodexPendingUserInputRequest = shared.CodexPendingUserInputRequest;
+type CodexApprovalResolutionAction =
+  | "confirm"
+  | "confirm_session"
+  | "deny";
+type CodexQueuedNotification = shared.CodexQueuedNotification;
+type CodexRpcPendingRequest = shared.CodexRpcPendingRequest;
+type CodexRpcRequestId = shared.CodexRpcRequestId;
+type SpawnTarget = shared.SpawnTarget;
+type CodexThreadAnnouncementSignal =
+  | "status_changed"
+  | "thread_started"
+  | "session_fallback"
+  | "turn_started"
+  | "user_message";
+type CodexPendingThreadAnnouncement = {
+  threadId: string;
+  source: BridgeThreadSwitchSource;
+  reason: BridgeThreadSwitchReason;
+  signals: Set<CodexThreadAnnouncementSignal>;
+  timer: ReturnType<typeof setTimeout> | null;
+};
+
+type CodexDesktopTurnState = {
+  turnId: string;
+  status: string;
+  errorMessage: string | null;
+  items: unknown[];
+};
+
+type CodexDesktopRuntimeStatusCacheEntry = {
+  filePath: string;
+  fileSize: number;
+  modifiedAtMs: number;
+  scannedAtMs: number;
+  runtimeStatus: BridgeResumeSessionRuntimeStatus;
+};
+
+const CODEX_DESKTOP_RUNTIME_STATUS_SCAN_CHUNK_BYTES = 64 * 1024;
+const CODEX_DESKTOP_RUNTIME_STATUS_SCAN_LIMIT_BYTES = 8 * 1024 * 1024;
+const CODEX_DESKTOP_RUNTIME_STATUS_CACHE_TTL_MS = 2_000;
+const CODEX_SESSION_MESSAGE_PAGE_SCAN_CHUNK_BYTES = 64 * 1024;
+const CODEX_SESSION_MESSAGE_MODEL_SCAN_LIMIT_BYTES = 8 * 1024 * 1024;
+const CODEX_SESSION_MESSAGE_PAGE_DEFAULT_LIMIT = 40;
+const CODEX_SESSION_MESSAGE_PAGE_MAX_LIMIT = 100;
+const CODEX_SESSION_RUN_SUMMARY_SCAN_LIMIT_BYTES = 64 * 1024 * 1024;
+const CODEX_SESSION_PROGRESS_SCAN_LIMIT_BYTES = 8 * 1024 * 1024;
+const CODEX_DUPLICATE_INPUT_RECENT_WINDOW_MS = 2 * 60 * 1_000;
+const CODEX_ROLLOUT_TURN_CONTEXT_MARKER = Buffer.from('"turn_context"');
+const CODEX_ROLLOUT_MODEL_MARKER = Buffer.from('"model"');
+const CODEX_ROLLOUT_RESPONSE_ITEM_MARKER = Buffer.from('"response_item"');
+const CODEX_ROLLOUT_MESSAGE_MARKER = Buffer.from('"message"');
+
+type CodexRolloutModelCacheEntry = {
+  inode: number;
+  fileSize: number;
+  modifiedAtMs: number;
+  modelsByTurnId: Map<string, string>;
+  missingTurnIds: Set<string>;
+};
+
+const codexRolloutModelCache = new Map<string, CodexRolloutModelCacheEntry>();
+
+const {
+  CODEX_APP_SERVER_HOST,
+  CODEX_APP_SERVER_READY_TIMEOUT_MS,
+  CODEX_FINAL_REPLY_SETTLE_DELAY_MS,
+  CODEX_RECENT_SESSION_KEY_LIMIT,
+  CODEX_RPC_CONNECT_RETRY_MS,
+  CODEX_RPC_RECONNECT_TIMEOUT_MS,
+  CODEX_SESSION_FALLBACK_SCAN_INTERVAL_MS,
+  CODEX_SESSION_LOCAL_MIRROR_FALLBACK_WINDOW_MS,
+  CODEX_SESSION_POLL_INTERVAL_MS,
+  CODEX_STARTUP_WARMUP_MS,
+  CODEX_THREAD_SIGNAL_TTL_MS,
+  INTERRUPT_SETTLE_DELAY_MS,
+  appendBoundedLog,
+  buildCodexApprovalRequest,
+  buildCodexSessionsRoot,
+  buildCodexCliArgs,
+  buildCodexDynamicToolCallFailureResponse,
+  buildCodexMcpServerElicitationDeclineResponse,
+  buildCodexMcpServerElicitationResponse,
+  buildCodexPermissionsRequestApprovalResponse,
+  buildCodexUserInputRequest,
+  coerceWebSocketMessageData,
+  delay,
+  describeUnknownError,
+  extractCodexFinalTextFromItem,
+  extractCodexThreadFollowIdFromStatusChanged,
+  extractCodexThreadStartedThreadId,
+  extractCodexUserMessageText,
+  findCodexSessionFile,
+  findRecentCodexSessionFileForCwd,
+  getCodexRpcRequestId,
+  getCodexApprovalAutoResponse,
+  getCodexWechatOutboundAttachmentDenyMessage,
+  getNotificationThreadId,
+  getNotificationTurnId,
+  isRecord,
+  listCodexSessionFilesRecursively,
+  isRecentIsoTimestamp,
+  normalizeComparablePath,
+  normalizeCodexRpcError,
+  reserveLocalPort,
+  resolveSpawnTarget,
+  shouldAutoCompleteCodexWechatTurnAfterFinalReply,
+  shouldIgnoreCodexSessionReplayEntry,
+  shouldRecoverCodexStaleBusyState,
+  waitForTcpPort,
+} = shared;
+
+const CODEX_LOCAL_THREAD_ANNOUNCE_SETTLE_MS = 150;
+
+export type CodexDesktopPermissionSettings = {
+  approvalPolicy: string;
+  approvalsReviewer: string;
+  sandbox: "read-only" | "workspace-write" | "danger-full-access";
+  sandboxPolicy: Record<string, unknown>;
+};
+
+const DEFAULT_CODEX_PERMISSION_SETTINGS: CodexDesktopPermissionSettings = {
+  approvalPolicy: "on-request",
+  approvalsReviewer: "user",
+  sandbox: "workspace-write",
+  sandboxPolicy: { type: "workspaceWrite" },
+};
+
+function cloneCodexPermissionSettings(
+  settings: CodexDesktopPermissionSettings,
+): CodexDesktopPermissionSettings {
+  return {
+    ...settings,
+    sandboxPolicy: { ...settings.sandboxPolicy },
+  };
+}
+
+function mapCodexSandboxPolicyToMode(
+  sandboxPolicy: Record<string, unknown>,
+): CodexDesktopPermissionSettings["sandbox"] | null {
+  switch (sandboxPolicy.type) {
+    case "dangerFullAccess":
+    case "danger-full-access":
+      return "danger-full-access";
+    case "workspaceWrite":
+    case "workspace-write":
+      return "workspace-write";
+    case "readOnly":
+    case "read-only":
+      return "read-only";
+    default:
+      return null;
+  }
+}
+
+function normalizeCodexDesktopThreadPermissions(
+  value: unknown,
+): CodexDesktopPermissionSettings | null {
+  if (!isRecord(value) || !isRecord(value.sandboxPolicy)) {
+    return null;
+  }
+
+  const sandbox = mapCodexSandboxPolicyToMode(value.sandboxPolicy);
+  if (!sandbox) {
+    return null;
+  }
+
+  return {
+    approvalPolicy:
+      typeof value.approvalPolicy === "string" && value.approvalPolicy.trim()
+        ? value.approvalPolicy
+        : sandbox === "danger-full-access"
+          ? "never"
+          : "on-request",
+    approvalsReviewer:
+      typeof value.approvalsReviewer === "string" && value.approvalsReviewer.trim()
+        ? value.approvalsReviewer
+        : "user",
+    sandbox,
+    sandboxPolicy: { ...value.sandboxPolicy },
+  };
+}
+
+function resolveCodexHostPermissionSettings(
+  persistedState: Record<string, unknown>,
+): CodexDesktopPermissionSettings | null {
+  const hostModes = persistedState["agent-mode-by-host-id"];
+  if (!isRecord(hostModes)) {
+    return null;
+  }
+
+  switch (hostModes.local) {
+    case "full-access":
+      return {
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+        sandbox: "danger-full-access",
+        sandboxPolicy: { type: "dangerFullAccess" },
+      };
+    case "read-only":
+      return {
+        approvalPolicy: "on-request",
+        approvalsReviewer: "user",
+        sandbox: "read-only",
+        sandboxPolicy: { type: "readOnly" },
+      };
+    case "workspace-write":
+    case "agent":
+      return cloneCodexPermissionSettings(DEFAULT_CODEX_PERMISSION_SETTINGS);
+    default:
+      return null;
+  }
+}
+
+export function resolveCodexDesktopPermissionSettings(
+  globalState: unknown,
+  threadId?: string,
+): CodexDesktopPermissionSettings | null {
+  if (!isRecord(globalState)) {
+    return null;
+  }
+
+  const persistedState = globalState["electron-persisted-atom-state"];
+  if (!isRecord(persistedState)) {
+    return null;
+  }
+
+  const normalizedThreadId = threadId?.trim();
+  if (normalizedThreadId) {
+    const permissionsByThread = persistedState["heartbeat-thread-permissions-by-id"];
+    if (isRecord(permissionsByThread)) {
+      const threadSettings = normalizeCodexDesktopThreadPermissions(
+        permissionsByThread[normalizedThreadId],
+      );
+      if (threadSettings) {
+        return threadSettings;
+      }
+    }
+  }
+
+  return resolveCodexHostPermissionSettings(persistedState);
+}
+
+type CodexDesktopQueuedFollowUp = Record<string, unknown> & {
+  id: string;
+  text: string;
+};
+
+type CodexDesktopQueuedFollowUpsState = Record<string, unknown[]>;
+
+function readCodexDesktopQueuedFollowUpsState(
+  globalState: unknown,
+): CodexDesktopQueuedFollowUpsState {
+  if (!isRecord(globalState) || !isRecord(globalState["queued-follow-ups"])) {
+    return {};
+  }
+  const result: CodexDesktopQueuedFollowUpsState = {};
+  for (const [threadId, messages] of Object.entries(globalState["queued-follow-ups"])) {
+    if (Array.isArray(messages)) {
+      result[threadId] = structuredClone(messages);
+    }
+  }
+  return result;
+}
+
+function normalizeCodexDesktopQueuedFollowUp(
+  value: unknown,
+): CodexDesktopQueuedFollowUp | null {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    !value.id.trim() ||
+    typeof value.text !== "string"
+  ) {
+    return null;
+  }
+  return value as CodexDesktopQueuedFollowUp;
+}
+
+function codexDesktopQueuedFollowUpImageItems(
+  value: CodexDesktopQueuedFollowUp,
+): BridgeTurnInputItem[] {
+  if (!isRecord(value.context) || !Array.isArray(value.context.imageAttachments)) {
+    return [];
+  }
+  return value.context.imageAttachments.flatMap((attachment): BridgeTurnInputItem[] => {
+    if (!isRecord(attachment)) {
+      return [];
+    }
+    const localPath = typeof attachment.localPath === "string"
+      ? attachment.localPath.trim()
+      : "";
+    if (localPath) {
+      return [{ type: "localImage", path: localPath }];
+    }
+    const source = typeof attachment.src === "string" ? attachment.src.trim() : "";
+    if (!source) {
+      return [];
+    }
+    return /^data:image\//i.test(source)
+      ? [{ type: "image", url: source }]
+      : [{
+          type: "localImage",
+          path: source.replace(/^file:\/\//i, ""),
+        }];
+  });
+}
+
+export function extractCodexDesktopQueuedTaskInputs(
+  globalState: unknown,
+  threadId: string,
+): BridgeQueuedTaskInput[] {
+  const state = readCodexDesktopQueuedFollowUpsState(globalState);
+  return (state[threadId] ?? []).flatMap((value): BridgeQueuedTaskInput[] => {
+    const message = normalizeCodexDesktopQueuedFollowUp(value);
+    if (!message) {
+      return [];
+    }
+    const createdAtMs = typeof message.createdAt === "number" &&
+        Number.isFinite(message.createdAt)
+      ? message.createdAt
+      : undefined;
+    return [{
+      id: message.id,
+      text: message.text,
+      imageCount: codexDesktopQueuedFollowUpImageItems(message).length,
+      ...(createdAtMs !== undefined ? { createdAtMs } : {}),
+    }];
+  });
+}
+
+export function resolveCodexTaskOutcome(
+  status: string,
+): "completed" | "interrupted" | "failed" {
+  const normalizedStatus = status.trim().toLowerCase();
+  if (
+    normalizedStatus === "interrupted" ||
+    normalizedStatus === "cancelled" ||
+    normalizedStatus === "canceled"
+  ) {
+    return "interrupted";
+  }
+  return normalizedStatus === "failed" || normalizedStatus === "error"
+    ? "failed"
+    : "completed";
+}
+
+function codexDesktopTimestampToIso(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const timestampMs = Math.abs(value) < 1_000_000_000_000 ? value * 1_000 : value;
+    return new Date(timestampMs).toISOString();
+  }
+
+  if (typeof value === "string") {
+    const timestampMs = Date.parse(value);
+    if (Number.isFinite(timestampMs)) {
+      return new Date(timestampMs).toISOString();
+    }
+  }
+
+  return new Date(0).toISOString();
+}
+
+function extractCodexVisibleAgentMessageText(item: unknown): string | null {
+  if (!isRecord(item) || item.type !== "agentMessage") {
+    return null;
+  }
+
+  const phase = typeof item.phase === "string" ? item.phase : "";
+  if (phase !== "final_answer" && phase !== "commentary") {
+    return null;
+  }
+
+  const text = typeof item.text === "string" ? normalizeOutput(item.text).trim() : "";
+  return text || null;
+}
+
+function sanitizeCodexVisibleUserMessage(text: string): string | null {
+  const sanitized = sanitizeWechatInboundPromptForDisplay(
+    normalizeOutput(text)
+      .replace(
+        /<(in-app-browser-context|app-context|environment_context)\b[^>]*>[\s\S]*?<\/\1>/gi,
+        "",
+      ),
+  ).trim();
+  if (!sanitized) {
+    return null;
+  }
+  if (
+    /^#\s+Files mentioned by the user:/im.test(sanitized) ||
+    /^##\s+My request for Codex:/im.test(sanitized) ||
+    /<image\b[^>]*\bpath=/i.test(sanitized)
+  ) {
+    const compact = compactMirroredUserInputText(sanitized).trim();
+    return compact && compact !== "（空消息）" ? compact : null;
+  }
+  return sanitized;
+}
+
+function normalizeCodexSessionMessagePageLimit(limit: number | undefined): number {
+  const requested = Number.isFinite(limit)
+    ? Math.floor(limit ?? CODEX_SESSION_MESSAGE_PAGE_DEFAULT_LIMIT)
+    : CODEX_SESSION_MESSAGE_PAGE_DEFAULT_LIMIT;
+  return Math.min(
+    CODEX_SESSION_MESSAGE_PAGE_MAX_LIMIT,
+    Math.max(1, requested),
+  );
+}
+
+function encodeCodexSessionMessageByteCursor(offset: number): string {
+  return `byte:${Math.max(0, Math.floor(offset))}`;
+}
+
+function decodeCodexSessionMessageByteCursor(cursor: string): number | null {
+  const match = /^byte:(\d+)$/.exec(cursor.trim());
+  if (!match?.[1]) {
+    return null;
+  }
+  const offset = Number(match[1]);
+  return Number.isSafeInteger(offset) ? offset : null;
+}
+
+function normalizeCodexModelName(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function extractCodexTurnModel(value: Record<string, unknown>): string | undefined {
+  return normalizeCodexModelName(value.model) ??
+    normalizeCodexModelName(value.modelId) ??
+    normalizeCodexModelName(value.model_id);
+}
+
+function extractCodexRolloutTurnModel(
+  line: Buffer,
+): { turnId: string; model: string } | null {
+  if (line.length === 0) return null;
+  if (
+    !line.includes(CODEX_ROLLOUT_TURN_CONTEXT_MARKER) ||
+    !line.includes(CODEX_ROLLOUT_MODEL_MARKER)
+  ) {
+    return null;
+  }
+  const raw = line.toString("utf8").trim();
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed) || parsed.type !== "turn_context" || !isRecord(parsed.payload)) {
+      return null;
+    }
+    const turnId = normalizeCodexModelName(parsed.payload.turn_id);
+    const model = extractCodexTurnModel(parsed.payload);
+    return turnId && model ? { turnId, model } : null;
+  } catch {
+    return null;
+  }
+}
+
+function codexRolloutModelCacheEntry(
+  filePath: string,
+  stats: fs.Stats,
+): CodexRolloutModelCacheEntry {
+  const cached = codexRolloutModelCache.get(filePath);
+  if (
+    cached &&
+    cached.inode === stats.ino &&
+    (stats.size > cached.fileSize ||
+      (stats.size === cached.fileSize && stats.mtimeMs === cached.modifiedAtMs))
+  ) {
+    cached.fileSize = stats.size;
+    cached.modifiedAtMs = stats.mtimeMs;
+    return cached;
+  }
+  const created: CodexRolloutModelCacheEntry = {
+    inode: stats.ino,
+    fileSize: stats.size,
+    modifiedAtMs: stats.mtimeMs,
+    modelsByTurnId: new Map(),
+    missingTurnIds: new Set(),
+  };
+  codexRolloutModelCache.set(filePath, created);
+  if (codexRolloutModelCache.size > 256) {
+    const oldest = codexRolloutModelCache.keys().next().value;
+    if (typeof oldest === "string") codexRolloutModelCache.delete(oldest);
+  }
+  return created;
+}
+
+type CodexRolloutMessagePageOptions = BridgeSessionMessagePageOptions & {
+  imageCacheDir?: string;
+};
+
+const CODEX_INPUT_IMAGE_MAX_BYTES = 25 * 1024 * 1024;
+
+function materializeCodexInputImage(
+  imageUrl: string,
+  imageCacheDir: string | undefined,
+  alt: string,
+): BridgeMessageImage | null {
+  const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=\s]+)$/i.exec(
+    imageUrl.trim(),
+  );
+  if (!match?.[1] || !match[2] || !imageCacheDir) return null;
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(match[2].replace(/\s+/g, ""), "base64");
+  } catch {
+    return null;
+  }
+  if (bytes.length === 0 || bytes.length > CODEX_INPUT_IMAGE_MAX_BYTES) return null;
+
+  const mimeType = match[1].toLowerCase();
+  const valid = mimeType === "image/png"
+    ? bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    : mimeType === "image/jpeg"
+      ? bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+      : mimeType === "image/gif"
+        ? bytes.length >= 6 && ["GIF87a", "GIF89a"].includes(bytes.subarray(0, 6).toString("ascii"))
+        : bytes.length >= 12 &&
+          bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
+          bytes.subarray(8, 12).toString("ascii") === "WEBP";
+  if (!valid) return null;
+
+  const extension = mimeType === "image/png"
+    ? ".png"
+    : mimeType === "image/jpeg"
+      ? ".jpg"
+      : mimeType === "image/gif"
+        ? ".gif"
+        : ".webp";
+  const imagePath = path.join(
+    imageCacheDir,
+    `${crypto.createHash("sha256").update(bytes).digest("hex")}${extension}`,
+  );
+  try {
+    fs.mkdirSync(imageCacheDir, { recursive: true, mode: 0o700 });
+    if (!fs.existsSync(imagePath)) {
+      const tempPath = `${imagePath}.tmp-${process.pid}-${Date.now()}`;
+      fs.writeFileSync(tempPath, bytes, { mode: 0o600 });
+      try {
+        fs.renameSync(tempPath, imagePath);
+      } catch (error) {
+        fs.rmSync(tempPath, { force: true });
+        if (!fs.existsSync(imagePath)) throw error;
+      }
+    }
+    fs.chmodSync(imagePath, 0o600);
+    return { source: "local", path: imagePath, alt };
+  } catch {
+    return null;
+  }
+}
+
+function extractCodexRolloutVisibleMessage(
+  line: Buffer,
+  imageCacheDir?: string,
+): BridgeSessionMessage | null {
+  if (line.length === 0) {
+    return null;
+  }
+  if (
+    !line.includes(CODEX_ROLLOUT_RESPONSE_ITEM_MARKER) ||
+    !line.includes(CODEX_ROLLOUT_MESSAGE_MARKER)
+  ) {
+    return null;
+  }
+  const raw = line.toString("utf8").trim();
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed) || parsed.type !== "response_item") {
+      return null;
+    }
+    const payload = parsed.payload;
+    if (!isRecord(payload) || payload.type !== "message") {
+      return null;
+    }
+    const role = payload.role;
+    if (role !== "user" && role !== "assistant") {
+      return null;
+    }
+    if (!Array.isArray(payload.content)) {
+      return null;
+    }
+
+    const images: BridgeMessageImage[] = [];
+    const textParts = payload.content.map((entry) => {
+      if (!isRecord(entry) || typeof entry.type !== "string") {
+        return "";
+      }
+      if (
+        (entry.type === "input_text" || entry.type === "output_text") &&
+        typeof entry.text === "string"
+      ) {
+        return entry.text;
+      }
+      if (role === "user" && entry.type === "input_image") {
+        if (typeof entry.image_url === "string") {
+          const image = materializeCodexInputImage(
+            entry.image_url,
+            imageCacheDir,
+            `输入图片 ${images.length + 1}`,
+          );
+          if (image) images.push(image);
+        }
+        return "[image]";
+      }
+      return "";
+    }).filter(Boolean);
+    const rawText = normalizeOutput(textParts.join("\n")).trim();
+    const text = role === "user"
+      ? sanitizeCodexVisibleUserMessage(rawText)
+      : rawText;
+    if (!text) {
+      return null;
+    }
+
+    const phase = role === "assistant" &&
+        (payload.phase === "commentary" || payload.phase === "final_answer")
+      ? payload.phase
+      : undefined;
+    if (role === "assistant" && !phase) {
+      return null;
+    }
+    const id = typeof payload.id === "string" && payload.id.trim()
+      ? payload.id.trim()
+      : undefined;
+    const metadata = isRecord(payload.internal_chat_message_metadata_passthrough)
+      ? payload.internal_chat_message_metadata_passthrough
+      : null;
+    const turnId = metadata && typeof metadata.turn_id === "string" &&
+        metadata.turn_id.trim()
+      ? metadata.turn_id.trim()
+      : undefined;
+    return {
+      role,
+      text,
+      ...(id ? { id } : {}),
+      ...(turnId ? { turnId } : {}),
+      ...(phase ? { phase } : {}),
+      ...(images.length ? { images } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function readCodexSessionMessagePageFromRollout(
+  filePath: string,
+  options: CodexRolloutMessagePageOptions = {},
+): BridgeSessionMessagePage | null {
+  let stats: fs.Stats;
+  try {
+    stats = fs.statSync(filePath);
+  } catch {
+    return null;
+  }
+  const limit = normalizeCodexSessionMessagePageLimit(options.limit);
+  const requestedEnd = typeof options.before === "string"
+    ? decodeCodexSessionMessageByteCursor(options.before)
+    : stats.size;
+  if (
+    requestedEnd === null ||
+    requestedEnd < 0 ||
+    requestedEnd > stats.size
+  ) {
+    return null;
+  }
+
+  let fileDescriptor: number;
+  try {
+    fileDescriptor = fs.openSync(filePath, "r");
+  } catch {
+    return null;
+  }
+
+  const found: Array<{ message: BridgeSessionMessage; lineStart: number }> = [];
+  const modelCache = options.lightweight === true
+    ? null
+    : codexRolloutModelCacheEntry(filePath, stats);
+  try {
+    let endOffset = requestedEnd;
+    let rightFragment = Buffer.alloc(0);
+
+    while (endOffset > 0) {
+      const startOffset = Math.max(
+        0,
+        endOffset - CODEX_SESSION_MESSAGE_PAGE_SCAN_CHUNK_BYTES,
+      );
+      const buffer = Buffer.alloc(endOffset - startOffset);
+      const bytesRead = fs.readSync(
+        fileDescriptor,
+        buffer,
+        0,
+        buffer.length,
+        startOffset,
+      );
+      if (bytesRead !== buffer.length) {
+        return null;
+      }
+      const chunk = buffer.subarray(0, bytesRead);
+      const data = rightFragment.length > 0
+        ? Buffer.concat([chunk, rightFragment])
+        : chunk;
+      const newlineOffsets: number[] = [];
+      for (let index = 0; index < data.length; index += 1) {
+        if (data[index] === 0x0a) {
+          newlineOffsets.push(index);
+        }
+      }
+      const segmentStarts = [
+        0,
+        ...newlineOffsets.map((offset) => offset + 1),
+      ];
+      const segmentEnds = [...newlineOffsets, data.length];
+      const firstCompleteSegment = startOffset > 0 ? 1 : 0;
+
+      for (
+        let segmentIndex = segmentStarts.length - 1;
+        segmentIndex >= firstCompleteSegment;
+        segmentIndex -= 1
+      ) {
+        const segmentStart = segmentStarts[segmentIndex] ?? 0;
+        const segmentEnd = segmentEnds[segmentIndex] ?? segmentStart;
+        if (segmentEnd <= segmentStart) {
+          continue;
+        }
+        const line = data.subarray(segmentStart, segmentEnd);
+        const turnModel = modelCache ? extractCodexRolloutTurnModel(line) : null;
+        if (turnModel && modelCache && !modelCache.modelsByTurnId.has(turnModel.turnId)) {
+          modelCache.modelsByTurnId.set(turnModel.turnId, turnModel.model);
+          modelCache.missingTurnIds.delete(turnModel.turnId);
+        }
+        if (found.length > limit) continue;
+        const message = extractCodexRolloutVisibleMessage(line, options.imageCacheDir);
+        if (!message) {
+          continue;
+        }
+        found.push({
+          message,
+          lineStart: startOffset + segmentStart,
+        });
+      }
+
+      if (startOffset > 0) {
+        const firstNewline = newlineOffsets[0];
+        rightFragment = firstNewline === undefined
+          ? data
+          : data.subarray(0, firstNewline);
+      } else {
+        rightFragment = Buffer.alloc(0);
+      }
+      endOffset = startOffset;
+
+      if (found.length > limit) {
+        if (!modelCache) {
+          break;
+        }
+        const requiredTurnIds = new Set(
+          found.slice(0, limit)
+            .map((entry) => entry.message)
+            .filter((message) => message.role === "assistant" && message.turnId)
+            .map((message) => message.turnId!),
+        );
+        const unresolvedTurnIds = [...requiredTurnIds].filter((turnId) =>
+          !modelCache.modelsByTurnId.has(turnId) &&
+          !modelCache.missingTurnIds.has(turnId)
+        );
+        if (
+          unresolvedTurnIds.length === 0 ||
+          requestedEnd - startOffset >= CODEX_SESSION_MESSAGE_MODEL_SCAN_LIMIT_BYTES ||
+          startOffset === 0
+        ) {
+          for (const turnId of unresolvedTurnIds) {
+            modelCache.missingTurnIds.add(turnId);
+          }
+          break;
+        }
+      }
+    }
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fileDescriptor);
+  }
+
+  const pageEntries = found.slice(0, limit);
+  const hasMore = found.length > limit;
+  const oldestIncluded = pageEntries[pageEntries.length - 1];
+  return {
+    messages: [...pageEntries].reverse().map((entry) => {
+      const message = entry.message;
+      const model = modelCache && message.role === "assistant" && message.turnId
+        ? modelCache.modelsByTurnId.get(message.turnId)
+        : undefined;
+      return model ? { ...message, model } : message;
+    }),
+    hasMore,
+    nextBefore: hasMore && oldestIncluded
+      ? encodeCodexSessionMessageByteCursor(
+          oldestIncluded.lineStart,
+        )
+      : null,
+  };
+}
+
+function normalizeCodexMediaTargetText(text: string): string {
+  return text
+    .replace(/<\/?image\b[^>]*>/gi, "")
+    .replace(/\[local image:\s*[^\]]+\]/gi, "")
+    .replace(/^\s*\[image\]\s*$/gim, "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function paginateCodexSessionMessages(
+  messages: BridgeSessionMessage[],
+  options: BridgeSessionMessagePageOptions,
+): BridgeSessionMessagePage {
+  const limit = normalizeCodexSessionMessagePageLimit(options.limit);
+  const match = typeof options.before === "string"
+    ? /^index:(\d+)$/.exec(options.before.trim())
+    : null;
+  const requestedEnd = match?.[1] ? Number(match[1]) : messages.length;
+  const end = Math.min(messages.length, Math.max(0, requestedEnd));
+  const start = Math.max(0, end - limit);
+  return {
+    messages: messages.slice(start, end),
+    hasMore: start > 0,
+    nextBefore: start > 0 ? `index:${start}` : null,
+  };
+}
+
+export function extractLatestCodexThreadMessage(
+  response: unknown,
+): BridgeSessionMessage | null {
+  const messages = extractCodexThreadMessages(response);
+  const latest = messages[messages.length - 1];
+  return latest ? { role: latest.role, text: latest.text } : null;
+}
+
+export function extractCodexThreadMessages(
+  response: unknown,
+): BridgeSessionMessage[] {
+  if (!isRecord(response) || !isRecord(response.thread)) {
+    return [];
+  }
+
+  const messages: BridgeSessionMessage[] = [];
+  const turns = Array.isArray(response.thread.turns) ? response.thread.turns : [];
+  for (let turnIndex = 0; turnIndex < turns.length; turnIndex += 1) {
+    const turn = turns[turnIndex];
+    if (!isRecord(turn) || !Array.isArray(turn.items)) {
+      continue;
+    }
+    const turnId = typeof turn.id === "string" ? turn.id : undefined;
+    const model = extractCodexTurnModel(turn);
+
+    for (let itemIndex = 0; itemIndex < turn.items.length; itemIndex += 1) {
+      const item = turn.items[itemIndex];
+      const itemId = isRecord(item) && typeof item.id === "string"
+        ? item.id
+        : undefined;
+      const assistantText = extractCodexVisibleAgentMessageText(item);
+      if (assistantText) {
+        const phase = isRecord(item) &&
+            (item.phase === "commentary" || item.phase === "final_answer")
+          ? item.phase
+          : undefined;
+        messages.push({
+          role: "assistant",
+          text: assistantText,
+          ...(itemId ? { id: itemId } : {}),
+          ...(turnId ? { turnId } : {}),
+          ...(phase ? { phase } : {}),
+          ...(model ? { model } : {}),
+        });
+        continue;
+      }
+
+      const userText = extractCodexUserMessageText(item);
+      const visibleUserText = userText
+        ? sanitizeCodexVisibleUserMessage(userText)
+        : null;
+      if (visibleUserText) {
+        messages.push({
+          role: "user",
+          text: visibleUserText,
+          ...(itemId ? { id: itemId } : {}),
+          ...(turnId ? { turnId } : {}),
+        });
+      }
+    }
+  }
+
+  return messages;
+}
+
+function codexTimestampToMs(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return Math.abs(value) < 1_000_000_000_000 ? value * 1_000 : value;
+}
+
+function codexDurationToMs(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function normalizeCodexRunStatus(
+  value: unknown,
+  completedAtMs?: number,
+): BridgeSessionRunSummary["status"] {
+  const status = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (
+    status === "running" ||
+    status === "active" ||
+    status === "inprogress" ||
+    status === "in_progress" ||
+    status === "started"
+  ) {
+    return "running";
+  }
+  if (status === "interrupted" || status === "cancelled" || status === "canceled") {
+    return "interrupted";
+  }
+  if (status === "failed" || status === "error") {
+    return "failed";
+  }
+  if (status === "completed" || status === "complete" || completedAtMs !== undefined) {
+    return "completed";
+  }
+  return "unknown";
+}
+
+function isCodexDesktopTurnActiveStatus(value: unknown): boolean {
+  const normalized = typeof value === "string"
+    ? value.replace(/[_-]/g, "").trim().toLowerCase()
+    : "";
+  return normalized === "inprogress" || normalized === "active" || normalized === "running";
+}
+
+function codexDesktopTurnEntries(
+  state: unknown,
+): Array<[string, Record<string, unknown>]> {
+  if (
+    !isRecord(state) ||
+    !isRecord(state.turnHistory) ||
+    !isRecord(state.turnHistory.history) ||
+    !isRecord(state.turnHistory.history.entitiesByKey)
+  ) {
+    return [];
+  }
+  return Object.entries(state.turnHistory.history.entitiesByKey)
+    .filter((entry): entry is [string, Record<string, unknown>] => isRecord(entry[1]));
+}
+
+function codexDesktopRuntimeType(state: unknown): string | undefined {
+  return isRecord(state) &&
+      isRecord(state.threadRuntimeStatus) &&
+      typeof state.threadRuntimeStatus.type === "string"
+    ? state.threadRuntimeStatus.type
+    : undefined;
+}
+
+function codexDesktopLiveTurnEntries(
+  state: unknown,
+): Array<[string, Record<string, unknown>]> {
+  const entries = codexDesktopTurnEntries(state);
+  const tailEntries = entries.filter(([key]) => key.startsWith("tail:"));
+  if (tailEntries.length > 0) {
+    return tailEntries;
+  }
+  if (codexDesktopRuntimeType(state) === "idle") {
+    return [];
+  }
+  const latestActive = [...entries].reverse().find(([, entity]) =>
+    isCodexDesktopTurnActiveStatus(entity.status)
+  );
+  return latestActive ? [latestActive] : [];
+}
+
+export function extractCodexThreadRunSummary(
+  response: unknown,
+  nowMs = Date.now(),
+): BridgeSessionRunSummary | null {
+  if (!isRecord(response) || !isRecord(response.thread)) {
+    return null;
+  }
+  const turns = Array.isArray(response.thread.turns) ? response.thread.turns : [];
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    if (!isRecord(turn)) {
+      continue;
+    }
+    const turnId = typeof turn.id === "string" && turn.id.trim()
+      ? turn.id.trim()
+      : undefined;
+    const startedAtMs = codexTimestampToMs(turn.startedAt);
+    const completedAtMs = codexTimestampToMs(turn.completedAt);
+    const status = normalizeCodexRunStatus(turn.status, completedAtMs);
+    let durationMs = codexDurationToMs(turn.durationMs);
+    if (durationMs === undefined && startedAtMs !== undefined) {
+      if (completedAtMs !== undefined) {
+        durationMs = Math.max(0, completedAtMs - startedAtMs);
+      } else if (status === "running") {
+        durationMs = Math.max(0, nowMs - startedAtMs);
+      }
+    }
+    if (
+      !turnId &&
+      startedAtMs === undefined &&
+      completedAtMs === undefined &&
+      durationMs === undefined &&
+      status === "unknown"
+    ) {
+      continue;
+    }
+    return {
+      ...(turnId ? { turnId } : {}),
+      status,
+      ...(startedAtMs !== undefined ? { startedAtMs } : {}),
+      ...(completedAtMs !== undefined ? { completedAtMs } : {}),
+      ...(durationMs !== undefined ? { durationMs } : {}),
+    };
+  }
+  return null;
+}
+
+export function extractCodexDesktopThreadRunSummary(
+  state: unknown,
+  persisted: BridgeSessionRunSummary | null,
+  nowMs = Date.now(),
+  observedStartedAtMs?: number,
+): BridgeSessionRunSummary | null {
+  const entries = codexDesktopLiveTurnEntries(state);
+  const activeEntries = entries.filter(([, entity]) =>
+    isCodexDesktopTurnActiveStatus(entity.status)
+  );
+  const runtimeType = codexDesktopRuntimeType(state);
+  const latestTail = [...entries].reverse().find(([key, entity]) =>
+    key.startsWith("tail:") && typeof entity.turnId === "string"
+  );
+
+  if (runtimeType !== "active" && runtimeType !== "idle") {
+    return persisted;
+  }
+
+  const preferred = runtimeType === "active"
+    ? [...activeEntries].reverse().find(([key]) => key.startsWith("tail:")) ??
+      latestTail ??
+      activeEntries[activeEntries.length - 1]
+    : latestTail ?? activeEntries[activeEntries.length - 1];
+  const entity = preferred?.[1];
+  if (!entity) {
+    return runtimeType === "idle" && persisted?.status === "running"
+      ? { ...persisted, status: "unknown", durationMs: persisted.durationMs ?? 0 }
+      : persisted;
+  }
+  const turnId = typeof entity.turnId === "string" && entity.turnId.trim()
+    ? entity.turnId.trim()
+    : undefined;
+  const startedAtMs = codexTimestampToMs(entity.startedAt) ??
+    (turnId && persisted?.turnId === turnId ? persisted.startedAtMs : undefined) ??
+    observedStartedAtMs;
+  if (runtimeType === "idle") {
+    const entityCompletedAtMs = codexTimestampToMs(entity.completedAt);
+    const completedAtMs = entityCompletedAtMs ??
+      (isRecord(state) ? codexTimestampToMs(state.updatedAt) : undefined) ??
+      (turnId && persisted?.turnId === turnId ? persisted.completedAtMs : undefined);
+    const entityStatus = normalizeCodexRunStatus(entity.status, entityCompletedAtMs);
+    const hasFinalAnswer = Array.isArray(entity.items) && entity.items.some((item) =>
+      isRecord(item) &&
+      item.type === "agentMessage" &&
+      item.phase === "final_answer" &&
+      typeof item.text === "string" &&
+      Boolean(item.text.trim())
+    );
+    const persistedTerminalStatus = turnId && persisted?.turnId === turnId &&
+        persisted.status !== "running" && persisted.status !== "unknown"
+      ? persisted.status
+      : undefined;
+    const status = entityStatus !== "running" && entityStatus !== "unknown"
+      ? entityStatus
+      : hasFinalAnswer
+        ? "completed"
+        : persistedTerminalStatus ?? "unknown";
+    const entityDurationMs = codexDurationToMs(entity.durationMs);
+    const persistedDurationMs = turnId && persisted?.turnId === turnId &&
+        persisted.status !== "running"
+      ? persisted.durationMs
+      : undefined;
+    const durationMs = entityDurationMs ?? persistedDurationMs ??
+      (startedAtMs !== undefined && completedAtMs !== undefined
+        ? Math.max(0, completedAtMs - startedAtMs)
+        : 0);
+    return {
+      ...(turnId ? { turnId } : {}),
+      status,
+      ...(startedAtMs !== undefined ? { startedAtMs } : {}),
+      ...(completedAtMs !== undefined ? { completedAtMs } : {}),
+      durationMs,
+    };
+  }
+  return {
+    ...(turnId ? { turnId } : {}),
+    status: "running",
+    ...(startedAtMs !== undefined ? { startedAtMs } : {}),
+    durationMs: startedAtMs !== undefined ? Math.max(0, nowMs - startedAtMs) : 0,
+  };
+}
+
+export function extractCodexDesktopThreadMessages(
+  state: unknown,
+): BridgeSessionMessage[] {
+  const messages: BridgeSessionMessage[] = [];
+  for (const [, entity] of codexDesktopLiveTurnEntries(state)) {
+    if (!Array.isArray(entity.items)) {
+      continue;
+    }
+    const turnId = typeof entity.turnId === "string" ? entity.turnId : undefined;
+    const model = extractCodexTurnModel(entity);
+    for (const item of entity.items) {
+      const itemId = isRecord(item) && typeof item.id === "string"
+        ? item.id
+        : undefined;
+      const assistantText = extractCodexVisibleAgentMessageText(item);
+      if (assistantText) {
+        const phase = isRecord(item) &&
+            (item.phase === "commentary" || item.phase === "final_answer")
+          ? item.phase
+          : undefined;
+        messages.push({
+          role: "assistant",
+          text: assistantText,
+          ...(itemId ? { id: itemId } : {}),
+          ...(turnId ? { turnId } : {}),
+          ...(phase ? { phase } : {}),
+          ...(model ? { model } : {}),
+        });
+        continue;
+      }
+
+      const userText = extractCodexUserMessageText(item);
+      const visibleUserText = userText
+        ? sanitizeCodexVisibleUserMessage(userText)
+        : null;
+      if (visibleUserText) {
+        messages.push({
+          role: "user",
+          text: visibleUserText,
+          ...(itemId ? { id: itemId } : {}),
+          ...(turnId ? { turnId } : {}),
+        });
+      }
+    }
+  }
+  return messages;
+}
+
+
+const CODEX_SESSION_PROGRESS_ACTIVITY_LIMIT = 10;
+
+function normalizeCodexProgressStatus(
+  value: unknown,
+): BridgeSessionProgressItem["status"] {
+  const normalized = typeof value === "string"
+    ? value.replace(/[_-]/g, "").trim().toLowerCase()
+    : "";
+  if (normalized === "inprogress" || normalized === "running" || normalized === "active") {
+    return "running";
+  }
+  if (normalized === "failed" || normalized === "error" || normalized === "aborted") {
+    return "failed";
+  }
+  return "completed";
+}
+
+function normalizeCodexPlanStepStatus(
+  value: unknown,
+): "pending" | BridgeSessionProgressItem["status"] {
+  const normalized = typeof value === "string"
+    ? value.replace(/[_-]/g, "").trim().toLowerCase()
+    : "";
+  if (normalized === "inprogress" || normalized === "running" || normalized === "active") {
+    return "running";
+  }
+  if (normalized === "completed" || normalized === "complete" || normalized === "done") {
+    return "completed";
+  }
+  if (normalized === "failed" || normalized === "error" || normalized === "aborted") {
+    return "failed";
+  }
+  return "pending";
+}
+
+function codexProgressItemId(
+  item: Record<string, unknown>,
+  turnId: string | undefined,
+  itemIndex: number,
+): string {
+  return typeof item.id === "string" && item.id.trim()
+    ? item.id.trim()
+    : `${turnId ?? "turn"}:progress:${itemIndex}`;
+}
+
+function cleanCodexReasoningSummary(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const text = normalizeOutput(value)
+    .trim()
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^\*\*(.+)\*\*$/s, "$1")
+    .replace(/^__(.+)__$/s, "$1")
+    .trim();
+  if (!text) {
+    return null;
+  }
+  if (/\p{Script=Han}/u.test(text)) {
+    return truncatePreview(text, 220);
+  }
+  const lower = text.toLowerCase();
+  if (/\b(test|tests|testing|verify|verification|validat)/.test(lower)) {
+    return "运行并检查测试";
+  }
+  if (/\b(performance|latency|speed|benchmark|measur)/.test(lower)) {
+    return "测量读取性能";
+  }
+  if (/\b(debug|investigat|root cause|diagnos)/.test(lower)) {
+    return "定位问题原因";
+  }
+  if (/\b(implement|edit|patch|updat|refactor|fix)/.test(lower)) {
+    return "实现并调整代码";
+  }
+  if (/\b(plan|design|architect)/.test(lower)) {
+    return "规划下一步处理";
+  }
+  if (/\b(inspect|check|review|read|analy|explor|resolv)/.test(lower)) {
+    return "检查实现与运行状态";
+  }
+  return "继续分析任务";
+}
+
+function summarizeCodexPlanProgress(
+  item: Record<string, unknown>,
+  turnId: string | undefined,
+  itemIndex: number,
+): BridgeSessionProgressItem | null {
+  if (!Array.isArray(item.plan) || item.plan.length === 0) {
+    return null;
+  }
+  const steps = item.plan.filter((step): step is Record<string, unknown> => isRecord(step));
+  if (steps.length === 0) {
+    return null;
+  }
+  const statuses = steps.map((step) => normalizeCodexPlanStepStatus(step.status));
+  const runningIndex = statuses.indexOf("running");
+  const failedIndex = statuses.indexOf("failed");
+  const pendingIndex = statuses.indexOf("pending");
+  const currentIndex = runningIndex >= 0
+    ? runningIndex
+    : failedIndex >= 0
+      ? failedIndex
+      : pendingIndex >= 0
+        ? pendingIndex
+        : steps.length - 1;
+  const current = steps[currentIndex];
+  const stepText = current && typeof current.step === "string"
+    ? normalizeOutput(current.step).trim()
+    : "继续处理任务";
+  const status = runningIndex >= 0 || pendingIndex >= 0
+    ? "running"
+    : failedIndex >= 0
+      ? "failed"
+      : "completed";
+  return {
+    id: codexProgressItemId(item, turnId, itemIndex),
+    ...(turnId ? { turnId } : {}),
+    kind: "plan",
+    status,
+    text: `第 ${currentIndex + 1} / ${steps.length} 步 · ${truncatePreview(stepText, 120)}`,
+  };
+}
+
+function codexCommandActionPhrases(item: Record<string, unknown>): string[] {
+  const phrases: string[] = [];
+  const seen = new Set<string>();
+  const actions = Array.isArray(item.commandActions) ? item.commandActions : [];
+  for (const action of actions) {
+    const type = isRecord(action) && typeof action.type === "string"
+      ? action.type.trim().toLowerCase()
+      : "unknown";
+    const phrase = type === "read"
+      ? "读取文件"
+      : type === "search"
+        ? "搜索内容"
+        : type === "listfiles"
+          ? "查看文件"
+          : "运行命令";
+    if (!seen.has(phrase)) {
+      seen.add(phrase);
+      phrases.push(phrase);
+    }
+  }
+  return phrases.length > 0 ? phrases : ["运行命令"];
+}
+
+function progressActionText(
+  phrases: string[],
+  status: BridgeSessionProgressItem["status"],
+): string {
+  const action = phrases.join("并");
+  if (status === "running") {
+    return `正在${action}`;
+  }
+  if (status === "failed") {
+    return `${action}失败`;
+  }
+  return `已${action}`;
+}
+
+function summarizeCodexMcpTool(item: Record<string, unknown>): string {
+  const server = typeof item.server === "string" ? item.server.trim().toLowerCase() : "";
+  const tool = typeof item.tool === "string" ? item.tool.trim().toLowerCase() : "";
+  if (tool.includes("image") || tool.includes("view_image")) {
+    return "查看图像";
+  }
+  if (server.includes("browser") || tool.includes("browser") || server === "node_repl") {
+    return "检查页面与应用状态";
+  }
+  if (tool.includes("search")) {
+    return "搜索信息";
+  }
+  if (tool.includes("exec") || tool.includes("command")) {
+    return "运行命令";
+  }
+  return "调用工具";
+}
+
+function summarizeCodexProgressItem(
+  item: Record<string, unknown>,
+  turnId: string | undefined,
+  itemIndex: number,
+): BridgeSessionProgressItem | null {
+  const id = codexProgressItemId(item, turnId, itemIndex);
+  const base = { id, ...(turnId ? { turnId } : {}) };
+  if (item.type === "reasoning") {
+    const summaries = Array.isArray(item.summary) ? item.summary : [];
+    const text = [...summaries].reverse().map(cleanCodexReasoningSummary).find(Boolean);
+    return text
+      ? { ...base, kind: "reasoning", status: "completed", text }
+      : null;
+  }
+  if (item.type === "commandExecution") {
+    const status = normalizeCodexProgressStatus(item.status);
+    return {
+      ...base,
+      kind: "command",
+      status,
+      text: progressActionText(codexCommandActionPhrases(item), status),
+    };
+  }
+  if (item.type === "fileChange") {
+    const status = normalizeCodexProgressStatus(item.status);
+    const count = Array.isArray(item.changes) ? item.changes.length : 0;
+    const action = count > 0 ? `修改 ${count} 个文件` : "修改文件";
+    return { ...base, kind: "file", status, text: progressActionText([action], status) };
+  }
+  if (item.type === "webSearch") {
+    const status = normalizeCodexProgressStatus(item.status);
+    return { ...base, kind: "web", status, text: progressActionText(["搜索网页"], status) };
+  }
+  if (item.type === "mcpToolCall") {
+    const status = normalizeCodexProgressStatus(item.status);
+    return {
+      ...base,
+      kind: "tool",
+      status,
+      text: progressActionText([summarizeCodexMcpTool(item)], status),
+    };
+  }
+  if (item.type === "imageGeneration") {
+    const status = normalizeCodexProgressStatus(item.status);
+    return { ...base, kind: "image", status, text: progressActionText(["生成图像"], status) };
+  }
+  if (
+    item.type === "collabAgentToolCall" ||
+    item.type === "subAgentActivity" ||
+    item.type === "dynamicToolCall"
+  ) {
+    const status = normalizeCodexProgressStatus(item.status);
+    return { ...base, kind: "tool", status, text: progressActionText(["处理子任务"], status) };
+  }
+  if (item.type === "contextCompaction") {
+    const status = normalizeCodexProgressStatus(item.status);
+    return { ...base, kind: "tool", status, text: progressActionText(["整理上下文"], status) };
+  }
+  return null;
+}
+
+function extractCodexProgressFromTurn(
+  turn: Record<string, unknown>,
+): BridgeSessionProgressItem[] {
+  if (!Array.isArray(turn.items)) {
+    return [];
+  }
+  const turnId = typeof turn.turnId === "string" && turn.turnId.trim()
+    ? turn.turnId.trim()
+    : typeof turn.id === "string" && turn.id.trim()
+      ? turn.id.trim()
+      : undefined;
+  const activity: BridgeSessionProgressItem[] = [];
+  let latestPlan: BridgeSessionProgressItem | null = null;
+  for (let index = 0; index < turn.items.length; index += 1) {
+    const item = turn.items[index];
+    if (!isRecord(item)) {
+      continue;
+    }
+    if (item.type === "todo-list") {
+      latestPlan = summarizeCodexPlanProgress(item, turnId, index) ?? latestPlan;
+      continue;
+    }
+    if (item.type === "imageView") {
+      const ids: string[] = [];
+      let count = 0;
+      let cursor = index;
+      while (cursor < turn.items.length) {
+        const image = turn.items[cursor];
+        if (!isRecord(image) || image.type !== "imageView") {
+          break;
+        }
+        ids.push(codexProgressItemId(image, turnId, cursor));
+        count += 1;
+        cursor += 1;
+      }
+      activity.push({
+        id: ids.join(":"),
+        ...(turnId ? { turnId } : {}),
+        kind: "image",
+        status: "completed",
+        text: `已查看 ${count} 张图像`,
+      });
+      index = cursor - 1;
+      continue;
+    }
+    const progress = summarizeCodexProgressItem(item, turnId, index);
+    if (progress) {
+      activity.push(progress);
+    }
+  }
+  return [
+    ...(latestPlan ? [latestPlan] : []),
+    ...activity.slice(-CODEX_SESSION_PROGRESS_ACTIVITY_LIMIT),
+  ];
+}
+
+export function extractCodexThreadProgress(
+  response: unknown,
+): BridgeSessionProgressItem[] {
+  if (!isRecord(response) || !isRecord(response.thread)) {
+    return [];
+  }
+  const turns = Array.isArray(response.thread.turns) ? response.thread.turns : [];
+  const latest = [...turns].reverse().find((turn): turn is Record<string, unknown> =>
+    isRecord(turn) && Array.isArray(turn.items)
+  );
+  return latest ? extractCodexProgressFromTurn(latest) : [];
+}
+
+export function extractCodexDesktopThreadProgress(
+  state: unknown,
+): BridgeSessionProgressItem[] {
+  const entries = codexDesktopLiveTurnEntries(state);
+  const runtimeType = codexDesktopRuntimeType(state);
+  const preferred = runtimeType === "active"
+    ? [...entries].reverse().find(([, entity]) =>
+      isCodexDesktopTurnActiveStatus(entity.status)
+    )
+    : [...entries].reverse().find(([, entity]) => Array.isArray(entity.items));
+  return preferred ? extractCodexProgressFromTurn(preferred[1]) : [];
+}
+
+function extractCodexRolloutTurnId(payload: Record<string, unknown>): string | undefined {
+  if (typeof payload.turn_id === "string" && payload.turn_id.trim()) {
+    return payload.turn_id.trim();
+  }
+  const metadata = isRecord(payload.internal_chat_message_metadata_passthrough)
+    ? payload.internal_chat_message_metadata_passthrough
+    : null;
+  return metadata && typeof metadata.turn_id === "string" && metadata.turn_id.trim()
+    ? metadata.turn_id.trim()
+    : undefined;
+}
+
+function parseCodexRolloutFunctionArguments(value: unknown): Record<string, unknown> | null {
+  if (isRecord(value)) {
+    return value;
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractCodexRolloutReasoningText(payload: Record<string, unknown>): string | null {
+  const summaries = Array.isArray(payload.summary) ? payload.summary : [];
+  for (let index = summaries.length - 1; index >= 0; index -= 1) {
+    const summary = summaries[index];
+    const rawText = typeof summary === "string"
+      ? summary
+      : isRecord(summary) && typeof summary.text === "string"
+        ? summary.text
+        : null;
+    const text = cleanCodexReasoningSummary(rawText);
+    if (text) {
+      return text;
+    }
+  }
+  return null;
+}
+
+function rolloutToolProgress(
+  payload: Record<string, unknown>,
+  turnId: string | undefined,
+  status: BridgeSessionProgressItem["status"],
+): BridgeSessionProgressItem | null {
+  const name = typeof payload.name === "string"
+    ? payload.name.trim().toLowerCase()
+    : "";
+  if (!name || name.endsWith("update_plan") || name.endsWith("updateplan")) {
+    return null;
+  }
+  const id = typeof payload.id === "string" && payload.id.trim()
+    ? payload.id.trim()
+    : typeof payload.call_id === "string" && payload.call_id.trim()
+      ? payload.call_id.trim()
+      : `${turnId ?? "turn"}:rollout-tool`;
+  const base = { id, ...(turnId ? { turnId } : {}), status };
+  if (
+    name.includes("apply_patch") ||
+    name.includes("write_file") ||
+    name.includes("edit_file") ||
+    name.includes("replace_file")
+  ) {
+    return { ...base, kind: "file", text: progressActionText(["修改文件"], status) };
+  }
+  if (
+    name.includes("exec_command") ||
+    name.includes("write_stdin") ||
+    name.endsWith("shell") ||
+    name.endsWith("bash")
+  ) {
+    return { ...base, kind: "command", text: progressActionText(["运行命令"], status) };
+  }
+  if (name.includes("view_image") || name.includes("screenshot")) {
+    return { ...base, kind: "image", text: progressActionText(["查看图像"], status) };
+  }
+  if (name.includes("imagegen") || name.includes("image_gen")) {
+    return { ...base, kind: "image", text: progressActionText(["生成图像"], status) };
+  }
+  if (
+    name.includes("search_query") ||
+    name.includes("image_query") ||
+    name.includes("web_search")
+  ) {
+    return { ...base, kind: "web", text: progressActionText(["搜索网页"], status) };
+  }
+  if (
+    name.includes("browser") ||
+    name.includes("node_repl") ||
+    name.endsWith(".open") ||
+    name.endsWith(".click")
+  ) {
+    return {
+      ...base,
+      kind: "tool",
+      text: progressActionText(["检查页面与应用状态"], status),
+    };
+  }
+  if (name.includes("spawn_agent") || name.includes("wait_agent")) {
+    return { ...base, kind: "tool", text: progressActionText(["处理子任务"], status) };
+  }
+  return { ...base, kind: "tool", text: progressActionText(["调用工具"], status) };
+}
+
+type CodexRolloutProgressRecord = {
+  payload: Record<string, unknown>;
+  turnId?: string;
+};
+
+function parseCodexRolloutProgressRecord(line: string): CodexRolloutProgressRecord | null {
+  const trimmed = line.trim();
+  if (
+    !trimmed ||
+    !trimmed.includes('"response_item"') ||
+    !(
+      trimmed.includes('"reasoning"') ||
+      trimmed.includes('"function_call"') ||
+      trimmed.includes('"function_call_output"')
+    )
+  ) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!isRecord(parsed) || parsed.type !== "response_item" || !isRecord(parsed.payload)) {
+      return null;
+    }
+    const payloadType = parsed.payload.type;
+    if (
+      payloadType !== "reasoning" &&
+      payloadType !== "function_call" &&
+      payloadType !== "function_call_output"
+    ) {
+      return null;
+    }
+    const turnId = extractCodexRolloutTurnId(parsed.payload);
+    return { payload: parsed.payload, ...(turnId ? { turnId } : {}) };
+  } catch {
+    return null;
+  }
+}
+
+function codexRolloutProgressFromRecords(
+  records: CodexRolloutProgressRecord[],
+): BridgeSessionProgressItem[] {
+  const completedCallIds = new Set<string>();
+  for (const record of records) {
+    if (
+      record.payload.type === "function_call_output" &&
+      typeof record.payload.call_id === "string" &&
+      record.payload.call_id.trim()
+    ) {
+      completedCallIds.add(record.payload.call_id.trim());
+    }
+  }
+
+  const activity: BridgeSessionProgressItem[] = [];
+  let latestPlan: BridgeSessionProgressItem | null = null;
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]!;
+    const payload = record.payload;
+    if (payload.type === "reasoning") {
+      const text = extractCodexRolloutReasoningText(payload);
+      if (text) {
+        activity.push({
+          id: typeof payload.id === "string" && payload.id.trim()
+            ? payload.id.trim()
+            : `${record.turnId ?? "turn"}:rollout-reasoning:${index}`,
+          ...(record.turnId ? { turnId: record.turnId } : {}),
+          kind: "reasoning",
+          status: "completed",
+          text,
+        });
+      }
+      continue;
+    }
+    if (payload.type !== "function_call") {
+      continue;
+    }
+    const name = typeof payload.name === "string" ? payload.name.trim().toLowerCase() : "";
+    const callId = typeof payload.call_id === "string" && payload.call_id.trim()
+      ? payload.call_id.trim()
+      : undefined;
+    if (name.endsWith("update_plan") || name.endsWith("updateplan")) {
+      const args = parseCodexRolloutFunctionArguments(payload.arguments);
+      if (args && Array.isArray(args.plan)) {
+        latestPlan = summarizeCodexPlanProgress({
+          type: "todo-list",
+          id: typeof payload.id === "string" ? payload.id : callId,
+          plan: args.plan,
+        }, record.turnId, index) ?? latestPlan;
+      }
+      continue;
+    }
+    const progress = rolloutToolProgress(
+      payload,
+      record.turnId,
+      callId && completedCallIds.has(callId) ? "completed" : "running",
+    );
+    if (progress) {
+      activity.push(progress);
+    }
+  }
+  return [
+    ...(latestPlan ? [latestPlan] : []),
+    ...activity.slice(-CODEX_SESSION_PROGRESS_ACTIVITY_LIMIT),
+  ];
+}
+
+export function readCodexSessionProgressFromRolloutTail(
+  filePath: string,
+): BridgeSessionProgressItem[] {
+  let stats: fs.Stats;
+  try {
+    stats = fs.statSync(filePath);
+  } catch {
+    return [];
+  }
+  let fileDescriptor: number;
+  try {
+    fileDescriptor = fs.openSync(filePath, "r");
+  } catch {
+    return [];
+  }
+
+  const records: CodexRolloutProgressRecord[] = [];
+  let latestTurnId: string | undefined;
+  try {
+    let endOffset = stats.size;
+    let scannedBytes = 0;
+    let leadingLineFragment = "";
+    let reachedPreviousTurn = false;
+    while (
+      endOffset > 0 &&
+      scannedBytes < CODEX_SESSION_PROGRESS_SCAN_LIMIT_BYTES &&
+      !reachedPreviousTurn
+    ) {
+      const bytesToRead = Math.min(
+        CODEX_DESKTOP_RUNTIME_STATUS_SCAN_CHUNK_BYTES,
+        endOffset,
+        CODEX_SESSION_PROGRESS_SCAN_LIMIT_BYTES - scannedBytes,
+      );
+      const startOffset = endOffset - bytesToRead;
+      const buffer = Buffer.alloc(bytesToRead);
+      const bytesRead = fs.readSync(
+        fileDescriptor,
+        buffer,
+        0,
+        buffer.length,
+        startOffset,
+      );
+      const content = buffer.subarray(0, bytesRead).toString("utf8") + leadingLineFragment;
+      const lines = content.split(/\r?\n/);
+      leadingLineFragment = startOffset > 0 ? (lines.shift() ?? "") : "";
+      for (let index = lines.length - 1; index >= 0; index -= 1) {
+        const record = parseCodexRolloutProgressRecord(lines[index] ?? "");
+        if (!record?.turnId) {
+          continue;
+        }
+        if (!latestTurnId) {
+          latestTurnId = record.turnId;
+        } else if (record.turnId !== latestTurnId) {
+          reachedPreviousTurn = records.length > 0;
+          if (reachedPreviousTurn) {
+            break;
+          }
+          continue;
+        }
+        records.push(record);
+      }
+      endOffset = startOffset;
+      scannedBytes += bytesRead;
+    }
+    if (!reachedPreviousTurn && endOffset === 0 && leadingLineFragment) {
+      const record = parseCodexRolloutProgressRecord(leadingLineFragment);
+      if (record?.turnId && (!latestTurnId || record.turnId === latestTurnId)) {
+        records.push(record);
+      }
+    }
+  } catch {
+    return [];
+  } finally {
+    fs.closeSync(fileDescriptor);
+  }
+  records.reverse();
+  return codexRolloutProgressFromRecords(records);
+}
+
+export function mergeCodexSessionMessages(
+  persisted: BridgeSessionMessage[],
+  live: BridgeSessionMessage[],
+): BridgeSessionMessage[] {
+  const merged = persisted.map((message) => ({ ...message }));
+  const indexById = new Map<string, number>();
+  const indexBySemanticKey = new Map<string, number>();
+  const semanticKey = (message: BridgeSessionMessage): string =>
+    `${message.turnId ?? ""}:${message.role}:${message.phase ?? ""}:${message.text}`;
+
+  const rebuildIndexes = (): void => {
+    indexById.clear();
+    indexBySemanticKey.clear();
+    merged.forEach((message, index) => {
+      if (message.id) {
+        indexById.set(message.id, index);
+      }
+      indexBySemanticKey.set(semanticKey(message), index);
+    });
+  };
+  rebuildIndexes();
+
+  for (const message of live) {
+    const idMatch = message.id ? indexById.get(message.id) : undefined;
+    if (typeof idMatch === "number") {
+      merged[idMatch] = { ...merged[idMatch], ...message };
+      rebuildIndexes();
+      continue;
+    }
+
+    const semanticMatch = indexBySemanticKey.get(semanticKey(message));
+    if (typeof semanticMatch === "number") {
+      continue;
+    }
+
+    let insertAt = merged.length;
+    if (message.turnId) {
+      for (let index = merged.length - 1; index >= 0; index -= 1) {
+        if (merged[index]?.turnId === message.turnId) {
+          insertAt = index + 1;
+          break;
+        }
+      }
+    }
+    merged.splice(insertAt, 0, { ...message });
+    rebuildIndexes();
+  }
+  return merged;
+}
+
+export function parseCodexSessionTaskBoundary(
+  line: string,
+): BridgeResumeSessionRuntimeStatus | undefined {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      type?: string;
+      payload?: { type?: string };
+    };
+    if (parsed.type !== "event_msg") {
+      return undefined;
+    }
+    if (parsed.payload?.type === "task_started") {
+      return { type: "active", activeFlags: [] };
+    }
+    if (
+      parsed.payload?.type === "task_complete" ||
+      parsed.payload?.type === "turn_aborted"
+    ) {
+      return { type: "idle" };
+    }
+  } catch {
+    // Ignore partial or malformed JSONL records while reading a live session tail.
+  }
+
+  return undefined;
+}
+
+function parseCodexSessionRunSummary(
+  line: string,
+  nowMs = Date.now(),
+): BridgeSessionRunSummary | null {
+  const trimmed = line.trim();
+  if (!trimmed || !trimmed.includes('"event_msg"')) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!isRecord(parsed) || parsed.type !== "event_msg" || !isRecord(parsed.payload)) {
+      return null;
+    }
+    const payload = parsed.payload;
+    if (
+      payload.type !== "task_started" &&
+      payload.type !== "task_complete" &&
+      payload.type !== "turn_aborted"
+    ) {
+      return null;
+    }
+    const turnId = typeof payload.turn_id === "string" && payload.turn_id.trim()
+      ? payload.turn_id.trim()
+      : undefined;
+    const eventTimestampMs = typeof parsed.timestamp === "string"
+      ? Date.parse(parsed.timestamp)
+      : Number.NaN;
+    const startedAtMs = codexTimestampToMs(payload.started_at);
+    const completedAtMs = codexTimestampToMs(payload.completed_at) ??
+      (payload.type !== "task_started" && Number.isFinite(eventTimestampMs)
+        ? eventTimestampMs
+        : undefined);
+    const durationMs = codexDurationToMs(payload.duration_ms) ??
+      (startedAtMs !== undefined && completedAtMs !== undefined
+        ? Math.max(0, completedAtMs - startedAtMs)
+        : payload.type === "task_started" && startedAtMs !== undefined
+          ? Math.max(0, nowMs - startedAtMs)
+          : undefined);
+    return {
+      ...(turnId ? { turnId } : {}),
+      status: payload.type === "task_started"
+        ? "running"
+        : payload.type === "turn_aborted"
+          ? "interrupted"
+          : "completed",
+      ...(startedAtMs !== undefined ? { startedAtMs } : {}),
+      ...(completedAtMs !== undefined ? { completedAtMs } : {}),
+      ...(durationMs !== undefined ? { durationMs } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function readCodexSessionRunSummaryFromRolloutTail(
+  filePath: string,
+  nowMs = Date.now(),
+): BridgeSessionRunSummary | null {
+  let stats: fs.Stats;
+  try {
+    stats = fs.statSync(filePath);
+  } catch {
+    return null;
+  }
+
+  let fileDescriptor: number;
+  try {
+    fileDescriptor = fs.openSync(filePath, "r");
+  } catch {
+    return null;
+  }
+
+  try {
+    let endOffset = stats.size;
+    let scannedBytes = 0;
+    let leadingLineFragment = "";
+
+    while (
+      endOffset > 0 &&
+      scannedBytes < CODEX_SESSION_RUN_SUMMARY_SCAN_LIMIT_BYTES
+    ) {
+      const bytesToRead = Math.min(
+        CODEX_DESKTOP_RUNTIME_STATUS_SCAN_CHUNK_BYTES,
+        endOffset,
+        CODEX_SESSION_RUN_SUMMARY_SCAN_LIMIT_BYTES - scannedBytes,
+      );
+      const startOffset = endOffset - bytesToRead;
+      const buffer = Buffer.alloc(bytesToRead);
+      const bytesRead = fs.readSync(
+        fileDescriptor,
+        buffer,
+        0,
+        buffer.length,
+        startOffset,
+      );
+      const content =
+        buffer.subarray(0, bytesRead).toString("utf8") + leadingLineFragment;
+      const lines = content.split(/\r?\n/);
+      leadingLineFragment = startOffset > 0 ? (lines.shift() ?? "") : "";
+
+      for (let index = lines.length - 1; index >= 0; index -= 1) {
+        const summary = parseCodexSessionRunSummary(lines[index] ?? "", nowMs);
+        if (summary) {
+          return summary;
+        }
+      }
+
+      endOffset = startOffset;
+      scannedBytes += bytesRead;
+    }
+
+    if (endOffset === 0 && leadingLineFragment) {
+      return parseCodexSessionRunSummary(leadingLineFragment, nowMs);
+    }
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fileDescriptor);
+  }
+
+  return null;
+}
+
+function readCodexDesktopRuntimeStatusFromSessionTail(
+  filePath: string,
+): {
+  fileSize: number;
+  modifiedAtMs: number;
+  runtimeStatus: BridgeResumeSessionRuntimeStatus | undefined;
+} | null {
+  let stats: fs.Stats;
+  try {
+    stats = fs.statSync(filePath);
+  } catch {
+    return null;
+  }
+
+  let fileDescriptor: number;
+  try {
+    fileDescriptor = fs.openSync(filePath, "r");
+  } catch {
+    return null;
+  }
+
+  try {
+    let endOffset = stats.size;
+    let scannedBytes = 0;
+    let leadingLineFragment = "";
+
+    while (endOffset > 0 && scannedBytes < CODEX_DESKTOP_RUNTIME_STATUS_SCAN_LIMIT_BYTES) {
+      const bytesToRead = Math.min(
+        CODEX_DESKTOP_RUNTIME_STATUS_SCAN_CHUNK_BYTES,
+        endOffset,
+        CODEX_DESKTOP_RUNTIME_STATUS_SCAN_LIMIT_BYTES - scannedBytes,
+      );
+      const startOffset = endOffset - bytesToRead;
+      const buffer = Buffer.alloc(bytesToRead);
+      const bytesRead = fs.readSync(
+        fileDescriptor,
+        buffer,
+        0,
+        buffer.length,
+        startOffset,
+      );
+      const content =
+        buffer.subarray(0, bytesRead).toString("utf8") + leadingLineFragment;
+      const lines = content.split(/\r?\n/);
+      leadingLineFragment = startOffset > 0 ? (lines.shift() ?? "") : "";
+
+      for (let index = lines.length - 1; index >= 0; index -= 1) {
+        const runtimeStatus = parseCodexSessionTaskBoundary(lines[index] ?? "");
+        if (runtimeStatus) {
+          return {
+            fileSize: stats.size,
+            modifiedAtMs: stats.mtimeMs,
+            runtimeStatus,
+          };
+        }
+      }
+
+      endOffset = startOffset;
+      scannedBytes += bytesRead;
+    }
+
+    if (endOffset === 0 && leadingLineFragment) {
+      const runtimeStatus = parseCodexSessionTaskBoundary(leadingLineFragment);
+      if (runtimeStatus) {
+        return {
+          fileSize: stats.size,
+          modifiedAtMs: stats.mtimeMs,
+          runtimeStatus,
+        };
+      }
+    }
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fileDescriptor);
+  }
+
+  return {
+    fileSize: stats.size,
+    modifiedAtMs: stats.mtimeMs,
+    runtimeStatus: undefined,
+  };
+}
+
+function findCodexDesktopSessionFilesByThreadId(
+  threadIds: string[],
+): Map<
+  string,
+  { filePath: string; fileSize: number; modifiedAtMs: number }
+> {
+  const sessionsRoot = buildCodexSessionsRoot();
+  if (!sessionsRoot || threadIds.length === 0) {
+    return new Map();
+  }
+
+  const normalizedThreadIds = threadIds
+    .map((threadId) => threadId.trim())
+    .filter(Boolean);
+  const matches = new Map<
+    string,
+    { filePath: string; fileSize: number; modifiedAtMs: number }
+  >();
+
+  for (const filePath of listCodexSessionFilesRecursively(sessionsRoot)) {
+    const fileName = path.basename(filePath);
+    const threadId = normalizedThreadIds.find((candidate) =>
+      fileName.includes(candidate),
+    );
+    if (!threadId) {
+      continue;
+    }
+
+    let stats: fs.Stats;
+    try {
+      stats = fs.statSync(filePath);
+    } catch {
+      continue;
+    }
+
+    const previous = matches.get(threadId);
+    if (!previous || stats.mtimeMs > previous.modifiedAtMs) {
+      matches.set(threadId, {
+        filePath,
+        fileSize: stats.size,
+        modifiedAtMs: stats.mtimeMs,
+      });
+    }
+  }
+
+  return matches;
+}
+
+function mapCodexDesktopThreadRuntimeStatus(
+  value: unknown,
+): BridgeResumeSessionRuntimeStatus | undefined {
+  if (!isRecord(value) || typeof value.type !== "string") {
+    return undefined;
+  }
+
+  switch (value.type) {
+    case "notLoaded":
+    case "idle":
+    case "systemError":
+      return { type: value.type };
+    case "active": {
+      const activeFlags = Array.isArray(value.activeFlags)
+        ? value.activeFlags.filter(
+            (flag): flag is "waitingOnApproval" | "waitingOnUserInput" =>
+              flag === "waitingOnApproval" || flag === "waitingOnUserInput",
+          )
+        : [];
+      return {
+        type: "active",
+        activeFlags,
+      };
+    }
+    default:
+      return undefined;
+  }
+}
+
+export function mapCodexDesktopThreadListResponse(
+  response: unknown,
+  limit = 10,
+): BridgeResumeSessionCandidate[] {
+  if (!isRecord(response)) {
+    return [];
+  }
+
+  const rawThreads = Array.isArray(response.data)
+    ? response.data
+    : Array.isArray(response.threads)
+      ? response.threads
+      : [];
+
+  return rawThreads
+    .map((value): BridgeResumeSessionCandidate | null => {
+      if (!isRecord(value) || typeof value.id !== "string" || !value.id.trim()) {
+        return null;
+      }
+
+      const threadId = value.id.trim();
+      const name = typeof value.name === "string" ? value.name.trim() : "";
+      const preview = typeof value.preview === "string"
+        ? normalizeOutput(value.preview)
+            .split("\n")
+            .map((line) => line.trim())
+            .find(Boolean) ?? ""
+        : "";
+      const cwd = typeof value.cwd === "string" && value.cwd.trim()
+        ? value.cwd.trim()
+        : undefined;
+      const source = typeof value.source === "string" && value.source.trim()
+        ? value.source.trim()
+        : undefined;
+
+      return {
+        sessionId: threadId,
+        threadId,
+        title: truncatePreview(name || preview || threadId, 120),
+        lastUpdatedAt: codexDesktopTimestampToIso(value.recencyAt ?? value.updatedAt),
+        source,
+        cwd,
+        runtimeStatus: mapCodexDesktopThreadRuntimeStatus(value.status),
+      };
+    })
+    .filter((candidate): candidate is BridgeResumeSessionCandidate => Boolean(candidate))
+    .slice(0, Math.max(1, limit));
+}
+
+
+function normalizeDesktopProjectPath(value: string): string {
+  const normalized = path.resolve(value);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function isPathInsideDesktopProject(candidateCwd: string, rootPath: string): boolean {
+  const candidate = normalizeDesktopProjectPath(candidateCwd);
+  const root = normalizeDesktopProjectPath(rootPath);
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+export function applyCodexDesktopProjectMetadata(
+  candidates: BridgeResumeSessionCandidate[],
+  globalState: unknown,
+): BridgeResumeSessionCandidate[] {
+  for (const candidate of candidates) {
+    delete candidate.projectId;
+    delete candidate.projectName;
+    delete candidate.projectOrder;
+    delete candidate.projectThreadOrder;
+  }
+  if (!isRecord(globalState)) {
+    return candidates;
+  }
+
+  const rawProjects = globalState["local-projects"];
+  const rawAssignments = globalState["thread-project-assignments"];
+  const rawProjectlessThreadIds = globalState["projectless-thread-ids"];
+  const rawProjectOrder = globalState["project-order"];
+  const rawThreadOrders = globalState["sidebar-project-thread-orders"];
+  if (!isRecord(rawProjects)) {
+    return candidates;
+  }
+
+  const projects = new Map<string, { name: string; rootPaths: string[] }>();
+  for (const [projectId, value] of Object.entries(rawProjects)) {
+    if (!isRecord(value)) {
+      continue;
+    }
+    const name = typeof value.name === "string" ? value.name.trim() : "";
+    const rootPaths = Array.isArray(value.rootPaths)
+      ? value.rootPaths.filter(
+          (rootPath): rootPath is string =>
+            typeof rootPath === "string" && Boolean(rootPath.trim()),
+        )
+      : [];
+    if (name) {
+      projects.set(projectId, { name, rootPaths });
+    }
+  }
+
+  const projectOrder = new Map<string, number>();
+  if (Array.isArray(rawProjectOrder)) {
+    rawProjectOrder.forEach((projectId, index) => {
+      if (typeof projectId === "string") {
+        projectOrder.set(projectId, index);
+      }
+    });
+  }
+  const projectlessThreadIds = new Set(
+    Array.isArray(rawProjectlessThreadIds)
+      ? rawProjectlessThreadIds.filter(
+          (threadId): threadId is string => typeof threadId === "string",
+        )
+      : [],
+  );
+
+  const threadOrderByProject = new Map<string, Map<string, number>>();
+  if (isRecord(rawThreadOrders)) {
+    for (const [projectId, value] of Object.entries(rawThreadOrders)) {
+      if (!isRecord(value) || !Array.isArray(value.threadIds)) {
+        continue;
+      }
+      const threadOrder = new Map<string, number>();
+      value.threadIds.forEach((threadId, index) => {
+        if (typeof threadId === "string") {
+          threadOrder.set(threadId, index);
+        }
+      });
+      threadOrderByProject.set(projectId, threadOrder);
+    }
+  }
+
+  const resolveProjectId = (
+    candidate: BridgeResumeSessionCandidate,
+  ): string | null => {
+    const threadId = candidate.threadId ?? candidate.sessionId;
+    if (projectlessThreadIds.has(threadId)) {
+      return null;
+    }
+    if (isRecord(rawAssignments)) {
+      const assignment = rawAssignments[threadId];
+      if (
+        isRecord(assignment) &&
+        typeof assignment.projectId === "string" &&
+        projects.has(assignment.projectId)
+      ) {
+        return assignment.projectId;
+      }
+    }
+    if (!candidate.cwd) {
+      return null;
+    }
+    let matchedProjectId: string | null = null;
+    let matchedRootLength = -1;
+    for (const [projectId, project] of projects) {
+      for (const rootPath of project.rootPaths) {
+        if (
+          isPathInsideDesktopProject(candidate.cwd, rootPath) &&
+          rootPath.length > matchedRootLength
+        ) {
+          matchedProjectId = projectId;
+          matchedRootLength = rootPath.length;
+        }
+      }
+    }
+    return matchedProjectId;
+  };
+
+  for (const candidate of candidates) {
+    const projectId = resolveProjectId(candidate);
+    if (!projectId) {
+      continue;
+    }
+    const project = projects.get(projectId);
+    if (!project) {
+      continue;
+    }
+    candidate.projectId = projectId;
+    candidate.projectName = project.name;
+    const orderedProjectIndex = projectOrder.get(projectId);
+    if (orderedProjectIndex !== undefined) {
+      candidate.projectOrder = orderedProjectIndex;
+    }
+    const threadId = candidate.threadId ?? candidate.sessionId;
+    const orderedThreadIndex = threadOrderByProject.get(projectId)?.get(threadId);
+    if (orderedThreadIndex !== undefined) {
+      candidate.projectThreadOrder = orderedThreadIndex;
+    }
+  }
+  return candidates;
+}
+
+export class CodexPtyAdapter extends AbstractPtyAdapter {
+  readonly runtimeKind = "codex_runtime_host" as const;
+
+  private appServer: ChildProcessWithoutNullStreams | null = null;
+  private nativeProcess: ChildProcess | null = null;
+  private appServerPort: number | null = null;
+  private appServerShuttingDown = false;
+  private appServerLog = "";
+  private appServerAuthToken: string | null = null;
+  private appServerAuthTokenFilePath: string | null = null;
+  private rpcSocket: WebSocket | null = null;
+  private rpcShuttingDown = false;
+  private rpcReconnectPromise: Promise<boolean> | null = null;
+  private cleanPanelExitInProgress = false;
+  private rpcRequestCounter = 0;
+  private pendingRpcRequests = new Map<string, CodexRpcPendingRequest>();
+  private desktopIpcClient: CodexDesktopIpcClient | null = null;
+  private desktopTransportStarted = false;
+  private removeDesktopStateListener: (() => void) | null = null;
+  private removeDesktopConnectionListener: (() => void) | null = null;
+  private desktopInitializedThreadIds = new Set<string>();
+  private desktopSeenRequestKeys = new Set<string>();
+  private subscribedThreadIds = new Set<string>();
+  private sharedThreadId: string | null = null;
+  private announcedThreadId: string | null = null;
+  private pendingThreadAnnouncement: CodexPendingThreadAnnouncement | null = null;
+  private activeTurn: CodexActiveTurn | null = null;
+  private backgroundTurns = new Map<string, CodexActiveTurn>();
+  private bridgeOwnedTurnIds = new Set<string>();
+  private recentBridgeThreadSignalAtById = new Map<string, number>();
+  private pendingTurnStart = false;
+  private pendingTurnThreadId: string | null = null;
+  private pendingDesktopTurnThreadIds = new Set<string>();
+  private pendingDesktopTurnTextByThreadId = new Map<string, string>();
+  private desktopBootstrapThreadIds = new Set<string>();
+  private recentDesktopTurnTextByThreadId = new Map<
+    string,
+    { text: string; acceptedAtMs: number }
+  >();
+  private interruptPendingTurnStart = false;
+  private pendingThreadFollowId: string | null = null;
+  private pendingApprovalRequests: CodexPendingApprovalRequest[] = [];
+  private pendingUserInputRequests: CodexPendingUserInputRequest[] = [];
+  private queuedTurnNotifications: CodexQueuedNotification[] = [];
+  private queuedTurnServerRequests: Array<{
+    requestId: CodexRpcRequestId;
+    method: CodexPendingApprovalRequest["method"] | CodexPendingUserInputRequest["method"];
+    params: Record<string, unknown>;
+  }> = [];
+  private mirroredUserInputTurnIds = new Set<string>();
+  private turnFinalMessages = new Map<string, Map<string, string>>();
+  private turnDeltaByItem = new Map<string, Map<string, string>>();
+  private turnErrorById = new Map<string, string>();
+  private turnStartedAtMs = new Map<string, number>();
+  private turnLastActivityAtMs = new Map<string, number>();
+  private turnPreviewById = new Map<string, string>();
+  private startupBlocker: string | null = null;
+  private warmupUntilMs = 0;
+  private sessionFilePath: string | null = null;
+  private sessionPollTimer: ReturnType<typeof setInterval> | null = null;
+  private sessionReadOffset = 0;
+  private sessionPartialLine = "";
+  private sessionFinalText: string | null = null;
+  private sessionIgnoreBeforeMs: number | null = null;
+  private nextSessionFallbackScanAtMs = 0;
+  private nextSessionFileLookupAtMs = 0;
+  private desktopThreadCwdById = new Map<string, string>();
+  private desktopGlobalStateCache: {
+    filePath: string;
+    modifiedAtMs: number;
+    value: unknown;
+  } | null = null;
+  private desktopQueuedFollowUpMutationChain: Promise<void> = Promise.resolve();
+  private desktopThreadRuntimeStatusCache =
+    new Map<string, CodexDesktopRuntimeStatusCacheEntry>();
+  private desktopThreadSessionFilePathById = new Map<string, string>();
+  private desktopListedRuntimeStatusByThreadId =
+    new Map<string, BridgeResumeSessionRuntimeStatus>();
+  private completedTurnIds = new Set<string>();
+  private completedTurnOrder: string[] = [];
+  private pendingInjectedInputs: Array<{
+    text: string;
+    normalizedText: string;
+    createdAtMs: number;
+  }> = [];
+  private localInputListener: ((chunk: string | Buffer) => void) | null = null;
+  private interruptTimer: ReturnType<typeof setTimeout> | null = null;
+  private interruptFallbackTurn: CodexActiveTurn | null = null;
+  private finalReplyCompletionTimer: ReturnType<typeof setTimeout> | null = null;
+  private finalReplyCompletionTurnId: string | null = null;
+  private resumeThreadId: string | null;
+  private readonly localClientInstanceId = `${process.pid}-${Date.now().toString(36)}`;
+
+  constructor(options: AdapterOptions) {
+    super(options);
+    this.resumeThreadId = options.sessionStartMode === "new"
+      ? null
+      : options.initialSharedSessionId ?? options.initialSharedThreadId ?? null;
+    if (this.resumeThreadId && options.renderMode !== "panel") {
+      this.state.sharedSessionId = this.resumeThreadId;
+      this.state.sharedThreadId = this.resumeThreadId;
+    }
+  }
+
+  private getDesktopGlobalStateFilePath(): string {
+    return this.options.codexDesktopGlobalStateFile ??
+      (process.env.CODEX_HOME
+        ? path.join(process.env.CODEX_HOME, ".codex-global-state.json")
+        : path.join(os.homedir(), ".codex", ".codex-global-state.json"));
+  }
+
+  private readDesktopGlobalState(): unknown | null {
+    const filePath = this.getDesktopGlobalStateFilePath();
+    try {
+      const modifiedAtMs = fs.statSync(filePath).mtimeMs;
+      if (
+        this.desktopGlobalStateCache?.filePath === filePath &&
+        this.desktopGlobalStateCache.modifiedAtMs === modifiedAtMs
+      ) {
+        return this.desktopGlobalStateCache.value;
+      }
+      const raw = fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "").trim();
+      if (!raw) {
+        return null;
+      }
+      const value = JSON.parse(raw) as unknown;
+      this.desktopGlobalStateCache = { filePath, modifiedAtMs, value };
+      return value;
+    } catch {
+      return null;
+    }
+  }
+
+  private updateDesktopQueuedFollowUpsCache(
+    state: CodexDesktopQueuedFollowUpsState,
+  ): void {
+    const filePath = this.getDesktopGlobalStateFilePath();
+    const current = this.readDesktopGlobalState();
+    const next = isRecord(current) ? structuredClone(current) : {};
+    next["queued-follow-ups"] = structuredClone(state);
+    let modifiedAtMs = Date.now();
+    try {
+      modifiedAtMs = fs.statSync(filePath).mtimeMs;
+    } catch {
+      // Tests and first-run setups may not have a persisted global-state file yet.
+    }
+    this.desktopGlobalStateCache = { filePath, modifiedAtMs, value: next };
+  }
+
+  private async writeDesktopQueuedFollowUpsState(
+    threadId: string,
+    state: CodexDesktopQueuedFollowUpsState,
+  ): Promise<void> {
+    const client = this.desktopIpcClient;
+    if (!client) {
+      throw new Error("无法连接 Codex 桌面端，请确认应用正在运行。");
+    }
+    await client.setQueuedFollowUpsState(threadId, state);
+    this.updateDesktopQueuedFollowUpsCache(state);
+  }
+
+  private withDesktopQueuedFollowUpMutation<T>(
+    action: () => Promise<T>,
+  ): Promise<T> {
+    const run = this.desktopQueuedFollowUpMutationChain.then(action);
+    this.desktopQueuedFollowUpMutationChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private buildDesktopQueuedFollowUp(
+    threadId: string,
+    items: BridgeTurnInputItem[],
+  ): CodexDesktopQueuedFollowUp {
+    const text = items
+      .filter((item): item is Extract<BridgeTurnInputItem, { type: "text" }> =>
+        item.type === "text"
+      )
+      .map((item) => item.text)
+      .join("\n");
+    const cwd = this.desktopThreadCwdById.get(threadId) ?? this.options.cwd;
+    const imageAttachments = items.flatMap((item) => {
+      if (item.type === "localImage") {
+        return [{
+          src: item.path,
+          localPath: item.path,
+          filename: path.basename(item.path),
+        }];
+      }
+      if (item.type === "image") {
+        return [{ src: item.url }];
+      }
+      return [];
+    });
+    return {
+      id: crypto.randomUUID(),
+      text,
+      context: {
+        addedFiles: [],
+        chatGptConversationContexts: [],
+        ideContext: null,
+        imageAttachments,
+        imageCommentDrafts: [],
+        prompt: text,
+        appshotContexts: [],
+        fileAttachments: [],
+        pastedTextAttachments: [],
+        commentAttachments: [],
+        mcpAppModelContextAttachments: [],
+        selectedTextAttachments: [],
+        responseTextAnnotations: [],
+        pullRequestChecks: [],
+        pullRequestMergeConflict: null,
+        existingWorkspaceRoot: null,
+        localProjectId: null,
+        workspaceRoots: [cwd],
+        threadReferences: [],
+      },
+      cwd,
+      createdAt: Date.now(),
+    };
+  }
+
+  private desktopQueuedFollowUpExists(
+    threadId: string,
+    messageId: string,
+  ): boolean {
+    this.desktopGlobalStateCache = null;
+    const state = readCodexDesktopQueuedFollowUpsState(
+      this.readDesktopGlobalState(),
+    );
+    return (state[threadId] ?? []).some(
+      (value) => normalizeCodexDesktopQueuedFollowUp(value)?.id === messageId,
+    );
+  }
+
+  private async waitForDesktopQueuedFollowUp(
+    threadId: string,
+    messageId: string,
+    timeoutMs = 2_000,
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    do {
+      if (this.desktopQueuedFollowUpExists(threadId, messageId)) {
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } while (Date.now() < deadline);
+    return this.desktopQueuedFollowUpExists(threadId, messageId);
+  }
+
+  private async enqueueDesktopQueuedFollowUp(
+    threadId: string,
+    items: BridgeTurnInputItem[],
+  ): Promise<BridgeSessionSendResult> {
+    return await this.withDesktopQueuedFollowUpMutation(async () => {
+      const state = readCodexDesktopQueuedFollowUpsState(
+        this.readDesktopGlobalState(),
+      );
+      const message = this.buildDesktopQueuedFollowUp(threadId, items);
+      const queue = state[threadId] ?? [];
+      queue.push(message);
+      state[threadId] = queue;
+      try {
+        await this.writeDesktopQueuedFollowUpsState(threadId, state);
+      } catch (error) {
+        const messageText = error instanceof Error ? error.message : String(error);
+        const timedOut = messageText.includes(
+          "请求超时：thread-follower-set-queued-follow-ups-state",
+        );
+        if (!timedOut || !await this.waitForDesktopQueuedFollowUp(threadId, message.id)) {
+          if (timedOut) {
+            throw new Error(
+              "Codex 暂未确认待发送消息是否已加入队列，请先查看任务状态，避免重复发送。",
+              { cause: error },
+            );
+          }
+          throw error;
+        }
+        this.updateDesktopQueuedFollowUpsCache(state);
+      }
+      return {
+        queued: true,
+        queuedMessageId: message.id,
+        queuePosition: queue.length,
+      };
+    });
+  }
+
+  getQueuedTaskInputs(threadId: string): BridgeQueuedTaskInput[] {
+    return extractCodexDesktopQueuedTaskInputs(
+      this.readDesktopGlobalState(),
+      threadId,
+    );
+  }
+
+  async updateQueuedTaskInput(
+    threadId: string,
+    messageId: string,
+    text: string,
+  ): Promise<boolean> {
+    return await this.withDesktopQueuedFollowUpMutation(async () => {
+      const state = readCodexDesktopQueuedFollowUpsState(
+        this.readDesktopGlobalState(),
+      );
+      const queue = state[threadId] ?? [];
+      const index = queue.findIndex(
+        (value) => normalizeCodexDesktopQueuedFollowUp(value)?.id === messageId,
+      );
+      if (index < 0) {
+        return false;
+      }
+      const message = normalizeCodexDesktopQueuedFollowUp(queue[index]);
+      if (!message) {
+        return false;
+      }
+      const imageCount = codexDesktopQueuedFollowUpImageItems(message).length;
+      if (!text.trim() && imageCount === 0) {
+        throw new Error("消息内容不能为空。");
+      }
+      const context = isRecord(message.context)
+        ? { ...message.context, prompt: text }
+        : { prompt: text };
+      queue[index] = { ...message, text, context };
+      state[threadId] = queue;
+      await this.writeDesktopQueuedFollowUpsState(threadId, state);
+      return true;
+    });
+  }
+
+  async deleteQueuedTaskInput(
+    threadId: string,
+    messageId: string,
+  ): Promise<boolean> {
+    return await this.withDesktopQueuedFollowUpMutation(async () => {
+      const state = readCodexDesktopQueuedFollowUpsState(
+        this.readDesktopGlobalState(),
+      );
+      const queue = state[threadId] ?? [];
+      const index = queue.findIndex(
+        (value) => normalizeCodexDesktopQueuedFollowUp(value)?.id === messageId,
+      );
+      if (index < 0) {
+        return false;
+      }
+      queue.splice(index, 1);
+      if (queue.length > 0) {
+        state[threadId] = queue;
+      } else {
+        delete state[threadId];
+      }
+      await this.writeDesktopQueuedFollowUpsState(threadId, state);
+      return true;
+    });
+  }
+
+  async steerQueuedTaskInput(
+    threadId: string,
+    messageId: string,
+  ): Promise<boolean> {
+    return await this.withDesktopQueuedFollowUpMutation(async () => {
+      const client = this.desktopIpcClient;
+      if (!client) {
+        throw new Error("无法连接 Codex 桌面端，请确认应用正在运行。");
+      }
+      const state = readCodexDesktopQueuedFollowUpsState(
+        this.readDesktopGlobalState(),
+      );
+      const queue = state[threadId] ?? [];
+      const index = queue.findIndex(
+        (value) => normalizeCodexDesktopQueuedFollowUp(value)?.id === messageId,
+      );
+      if (index < 0) {
+        return false;
+      }
+      const message = normalizeCodexDesktopQueuedFollowUp(queue[index]);
+      if (!message) {
+        return false;
+      }
+      const input: BridgeTurnInputItem[] = [
+        ...(message.text.trim()
+          ? [{ type: "text" as const, text: message.text }]
+          : []),
+        ...codexDesktopQueuedFollowUpImageItems(message),
+      ];
+      if (input.length === 0) {
+        throw new Error("这条待发送消息没有可用内容。");
+      }
+      queue.splice(index, 1);
+      if (queue.length > 0) {
+        state[threadId] = queue;
+      } else {
+        delete state[threadId];
+      }
+      await this.writeDesktopQueuedFollowUpsState(threadId, state);
+      try {
+        await client.steerTurn(threadId, input, message);
+        return true;
+      } catch (error) {
+        const restoreState = readCodexDesktopQueuedFollowUpsState(
+          this.readDesktopGlobalState(),
+        );
+        const restoreQueue = restoreState[threadId] ?? [];
+        restoreQueue.splice(Math.min(index, restoreQueue.length), 0, message);
+        restoreState[threadId] = restoreQueue;
+        await this.writeDesktopQueuedFollowUpsState(threadId, restoreState);
+        throw error;
+      }
+    });
+  }
+
+  private resolveDesktopPermissionSettings(
+    threadId?: string,
+  ): CodexDesktopPermissionSettings {
+    if (this.options.inheritCodexDesktopPermissions !== true) {
+      return cloneCodexPermissionSettings(DEFAULT_CODEX_PERMISSION_SETTINGS);
+    }
+
+    return resolveCodexDesktopPermissionSettings(
+      this.readDesktopGlobalState(),
+      threadId,
+    ) ?? cloneCodexPermissionSettings(DEFAULT_CODEX_PERMISSION_SETTINGS);
+  }
+
+  override async start(): Promise<void> {
+    if (this.isCodexClientRunning()) {
+      return;
+    }
+
+    if (this.usesDesktopTransport()) {
+      await this.startDesktopRuntime();
+      return;
+    }
+
+    if (this.isHeadlessRuntimeMode()) {
+      this.setStatus("starting", `Starting ${this.options.kind} runtime host...`);
+    }
+
+    await this.startAppServer();
+    await this.connectRpcClient();
+    await this.restoreInitialSharedThreadIfNeeded();
+
+    try {
+      if (this.isNativePanelMode()) {
+        await this.startNativeClient();
+      } else if (this.isHeadlessRuntimeMode()) {
+        this.shuttingDown = false;
+        this.cleanPanelExitInProgress = false;
+        this.hasAcceptedInput = true;
+        this.state.pid = this.appServer?.pid ?? undefined;
+        this.state.startedAt = nowIso();
+        this.state.pendingApproval = null;
+        this.afterStart();
+        this.setStatus("idle", `${this.options.kind} adapter is ready.`);
+      } else {
+        await super.start();
+      }
+    } catch (err) {
+      await this.disconnectRpcClient();
+      await this.stopAppServer();
+      throw err;
+    }
+  }
+
+  protected buildSpawnArgs(): string[] {
+    if (!this.appServerPort) {
+      throw new Error("Codex app-server is not ready.");
+    }
+
+    return buildCodexCliArgs(`ws://${CODEX_APP_SERVER_HOST}:${this.appServerPort}`, {
+      inlineMode: this.options.renderMode !== "panel",
+      profile: this.options.profile,
+      extraCliArgs: this.options.extraCliArgs,
+    });
+  }
+
+  protected override afterStart(): void {
+    this.warmupUntilMs = this.usesRpcTurnTransport()
+      ? 0
+      : Date.now() + CODEX_STARTUP_WARMUP_MS;
+    if (this.isEmbeddedCliMode()) {
+      this.attachLocalInputForwarding();
+    }
+    this.startSessionPolling();
+  }
+
+  override async sendInput(text: string): Promise<void> {
+    if (this.usesDesktopTransport()) {
+      await this.sendDesktopTurn(text);
+      return;
+    }
+    if (this.usesRpcTurnTransport()) {
+      await this.sendPanelTurn(text);
+      return;
+    }
+
+    if (!this.pty) {
+      throw new Error("codex adapter is not running.");
+    }
+    if (this.state.status === "busy") {
+      throw new Error("codex is still working. Wait for the current reply or use /stop.");
+    }
+    if (this.pendingApproval) {
+      throw new Error("Codex 有操作等待确认，请回复 1 允许本次，回复 2 拒绝，或回复 3 本任务始终允许。");
+    }
+    if (this.startupBlocker) {
+      throw new Error("Codex is waiting for local terminal input before the session can continue.");
+    }
+
+    await delay(this.warmupUntilMs - Date.now());
+    if (!this.pty) {
+      throw new Error("codex adapter is not running.");
+    }
+    if (this.startupBlocker) {
+      throw new Error("Codex is waiting for local terminal input before the session can continue.");
+    }
+
+    this.clearInterruptTimer();
+    this.hasAcceptedInput = true;
+    this.currentPreview = truncatePreview(text);
+    this.state.lastInputAt = nowIso();
+    this.rememberInjectedInput(text);
+    this.setStatus("busy");
+    this.state.activeTurnOrigin = "wechat";
+    await this.typeIntoPty(text.replace(/\r?\n/g, "\r"));
+    await delay(40);
+    this.writeToPty("\r");
+  }
+
+  async sendInputToSession(
+    threadId: string,
+    text: string,
+  ): Promise<BridgeSessionSendResult> {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) {
+      throw new Error("请选择一个 Codex 任务。");
+    }
+    if (this.usesDesktopTransport()) {
+      return await this.sendDesktopTurnToThread(normalizedThreadId, text);
+    }
+    if (normalizedThreadId !== this.sharedThreadId) {
+      await this.resumeSession(normalizedThreadId);
+    }
+    await this.sendInput(text);
+    return { queued: false };
+  }
+
+  async sendInputItemsToSession(
+    threadId: string,
+    items: BridgeTurnInputItem[],
+  ): Promise<BridgeSessionSendResult> {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) {
+      throw new Error("请选择一个 Codex 任务。");
+    }
+    const normalizedItems = items.flatMap((item): BridgeTurnInputItem[] => {
+      if (item.type === "text") {
+        return item.text.trim() ? [{ type: "text", text: item.text }] : [];
+      }
+      if (item.type === "localImage") {
+        return item.path.trim()
+          ? [{ type: "localImage", path: item.path.trim() }]
+          : [];
+      }
+      return item.url.trim() ? [{ type: "image", url: item.url.trim() }] : [];
+    });
+    if (normalizedItems.length === 0) {
+      throw new Error("请输入文字或添加图片。");
+    }
+    if (!this.usesDesktopTransport()) {
+      if (normalizedItems.some((item) => item.type !== "text")) {
+        throw new Error("当前 Codex 连接暂不支持发送图片。");
+      }
+      return await this.sendInputToSession(
+        normalizedThreadId,
+        normalizedItems
+          .filter((item): item is Extract<BridgeTurnInputItem, { type: "text" }> =>
+            item.type === "text"
+          )
+          .map((item) => item.text)
+          .join("\n"),
+      );
+    }
+    return await this.sendDesktopTurnItemsToThread(normalizedThreadId, normalizedItems);
+  }
+
+  private overlayPersistedDesktopRuntimeStatuses(
+    candidates: BridgeResumeSessionCandidate[],
+  ): void {
+    const candidateThreadIds = candidates
+      .filter(
+        (candidate) =>
+          !candidate.runtimeStatus ||
+          candidate.runtimeStatus.type === "notLoaded" ||
+          (
+            candidate.runtimeStatus.type === "active" &&
+            candidate.runtimeStatus.activeFlags.length === 0
+          ),
+      )
+      .map((candidate) => candidate.threadId ?? candidate.sessionId);
+    if (candidateThreadIds.length === 0) {
+      return;
+    }
+
+    const sessionFilesByThreadId =
+      findCodexDesktopSessionFilesByThreadId(candidateThreadIds);
+    const now = Date.now();
+
+    for (const candidate of candidates) {
+      const useAsFallback =
+        !candidate.runtimeStatus || candidate.runtimeStatus.type === "notLoaded";
+      const canReconcileStaleActive =
+        candidate.runtimeStatus?.type === "active" &&
+        candidate.runtimeStatus.activeFlags.length === 0;
+      if (!useAsFallback && !canReconcileStaleActive) {
+        continue;
+      }
+
+      const threadId = candidate.threadId ?? candidate.sessionId;
+      const sessionFile = sessionFilesByThreadId.get(threadId);
+      if (!sessionFile) {
+        continue;
+      }
+      this.desktopThreadSessionFilePathById.set(threadId, sessionFile.filePath);
+
+      const applyInferredStatus = (
+        runtimeStatus: BridgeResumeSessionRuntimeStatus,
+        modifiedAtMs: number,
+      ): void => {
+        if (useAsFallback) {
+          candidate.runtimeStatus = runtimeStatus;
+          return;
+        }
+        if (runtimeStatus.type !== "idle") {
+          return;
+        }
+        const desktopState = this.getDesktopThreadStateView(threadId);
+        const desktopUpdatedAtMs = desktopState
+          ? codexTimestampToMs(desktopState.updatedAt)
+          : undefined;
+        const hasPendingDesktopRequest = Boolean(
+          desktopState &&
+          Array.isArray(desktopState.requests) &&
+          desktopState.requests.length > 0,
+        );
+        if (
+          desktopUpdatedAtMs !== undefined &&
+          modifiedAtMs >= desktopUpdatedAtMs &&
+          !hasPendingDesktopRequest
+        ) {
+          candidate.runtimeStatus = runtimeStatus;
+        }
+      };
+
+      const cached = this.desktopThreadRuntimeStatusCache.get(threadId);
+      if (
+        cached?.filePath === sessionFile.filePath &&
+        (now - cached.scannedAtMs < CODEX_DESKTOP_RUNTIME_STATUS_CACHE_TTL_MS ||
+          (cached.fileSize === sessionFile.fileSize &&
+            cached.modifiedAtMs === sessionFile.modifiedAtMs))
+      ) {
+        applyInferredStatus(cached.runtimeStatus, cached.modifiedAtMs);
+        continue;
+      }
+
+      const inferred = readCodexDesktopRuntimeStatusFromSessionTail(
+        sessionFile.filePath,
+      );
+      if (!inferred?.runtimeStatus) {
+        continue;
+      }
+
+      if (
+        cached?.filePath === sessionFile.filePath &&
+        cached.fileSize === inferred.fileSize &&
+        cached.modifiedAtMs === inferred.modifiedAtMs
+      ) {
+        cached.scannedAtMs = now;
+        applyInferredStatus(cached.runtimeStatus, cached.modifiedAtMs);
+        continue;
+      }
+
+      this.desktopThreadRuntimeStatusCache.set(threadId, {
+        filePath: sessionFile.filePath,
+        fileSize: inferred.fileSize,
+        modifiedAtMs: inferred.modifiedAtMs,
+        scannedAtMs: now,
+        runtimeStatus: inferred.runtimeStatus,
+      });
+      applyInferredStatus(inferred.runtimeStatus, inferred.modifiedAtMs);
+    }
+  }
+
+  override async listResumeSessions(limit = 10): Promise<BridgeResumeSessionCandidate[]> {
+    try {
+      const response = await this.sendRpcRequest("thread/list", {
+        sourceKinds: ["vscode"],
+        archived: false,
+        limit,
+        useStateDbOnly: true,
+        sortKey: "recency_at",
+        sortDirection: "desc",
+      });
+      const candidates = mapCodexDesktopThreadListResponse(response, limit);
+      applyCodexDesktopProjectMetadata(candidates, this.readDesktopGlobalState());
+      for (const candidate of candidates) {
+        if (candidate.cwd) {
+          this.desktopThreadCwdById.set(candidate.sessionId, candidate.cwd);
+        }
+        const desktopState = this.getDesktopThreadStateView(candidate.sessionId);
+        if (desktopState) {
+          candidate.runtimeStatus = this.mapDesktopConversationRuntimeStatus(desktopState);
+        }
+      }
+      this.overlayPersistedDesktopRuntimeStatuses(candidates);
+      for (const candidate of candidates) {
+        if (candidate.runtimeStatus) {
+          this.desktopListedRuntimeStatusByThreadId.set(
+            candidate.sessionId,
+            candidate.runtimeStatus,
+          );
+        }
+      }
+      return candidates;
+    } catch (error) {
+      throw new Error(
+        `无法读取 Codex 桌面端任务列表：${describeUnknownError(error)}`,
+        { cause: error },
+      );
+    }
+  }
+
+  private mapDesktopConversationRuntimeStatus(
+    state: CodexDesktopConversationState,
+  ): BridgeResumeSessionRuntimeStatus {
+    if (!isRecord(state.threadRuntimeStatus)) {
+      return { type: "notLoaded" };
+    }
+    const type = typeof state.threadRuntimeStatus.type === "string"
+      ? state.threadRuntimeStatus.type
+      : "notLoaded";
+    if (type === "idle") {
+      return { type: "idle" };
+    }
+    if (type === "systemError") {
+      return { type: "systemError" };
+    }
+    if (type !== "active") {
+      return { type: "notLoaded" };
+    }
+
+    const rawFlags = Array.isArray(state.threadRuntimeStatus.activeFlags)
+      ? state.threadRuntimeStatus.activeFlags
+      : [];
+    const flags: Array<"waitingOnApproval" | "waitingOnUserInput"> = [];
+    if (rawFlags.includes("waitingOnApproval")) {
+      flags.push("waitingOnApproval");
+    }
+    if (rawFlags.includes("waitingOnUserInput")) {
+      flags.push("waitingOnUserInput");
+    }
+    if (Array.isArray(state.requests)) {
+      if (
+        state.requests.some(
+          (request) =>
+            isRecord(request) &&
+            request.method === "item/tool/requestUserInput",
+        ) &&
+        !flags.includes("waitingOnUserInput")
+      ) {
+        flags.push("waitingOnUserInput");
+      }
+      if (
+        state.requests.some(
+          (request) =>
+            isRecord(request) &&
+            typeof request.method === "string" &&
+            (
+              request.method.endsWith("/requestApproval") ||
+              request.method === "mcpServer/elicitation/request"
+            ),
+        ) &&
+        !flags.includes("waitingOnApproval")
+      ) {
+        flags.push("waitingOnApproval");
+      }
+    }
+    return { type: "active", activeFlags: flags };
+  }
+
+  async renameSession(threadId: string, title: string): Promise<void> {
+    const normalizedThreadId = threadId.trim();
+    const normalizedTitle = title.trim();
+    if (!normalizedThreadId) {
+      throw new Error("请选择一个 Codex 任务。");
+    }
+    if (!normalizedTitle) {
+      throw new Error("任务名不能为空。");
+    }
+    await this.sendRpcRequest("thread/name/set", {
+      threadId: normalizedThreadId,
+      name: normalizedTitle,
+    });
+  }
+
+  override async resumeSession(threadId: string): Promise<void> {
+    if (this.usesDesktopTransport()) {
+      await this.resumeDesktopThread(threadId);
+      return;
+    }
+    const cwd = await this.resolveDesktopThreadCwd(threadId);
+    await this.resumeSharedThread(threadId, { cwd });
+  }
+
+  async createSession(): Promise<void> {
+    if (!this.usesDesktopTransport()) {
+      if (this.state.status === "busy" || this.state.status === "awaiting_approval") {
+        throw new Error("Codex 正在处理当前任务，请先等待完成或停止。");
+      }
+      this.updateSharedThread(null);
+      await this.ensureThreadStarted();
+      return;
+    }
+
+    const permissionSettings = this.resolveDesktopPermissionSettings();
+    const response = await this.sendRpcRequest(
+      "thread/start",
+      {
+        cwd: this.options.cwd,
+        approvalPolicy: permissionSettings.approvalPolicy,
+        approvalsReviewer: permissionSettings.approvalsReviewer,
+        sandbox: permissionSettings.sandbox,
+        serviceName: "deskrelay-bridge",
+        experimentalRawEvents: false,
+        persistExtendedHistory: true,
+      },
+      { allowDesktopBootstrapWrite: true },
+    );
+    const threadId = this.extractThreadIdFromResponse(response);
+    if (!threadId) {
+      throw new Error("Codex 没有返回新任务编号，请稍后重试。");
+    }
+
+    this.desktopBootstrapThreadIds.add(threadId);
+    if (this.activeTurn) {
+      this.moveActiveTurnToBackground();
+    }
+    this.rememberBridgeOwnedThreadSignal(threadId);
+    this.subscribedThreadIds.add(threadId);
+    this.updateSharedThread(threadId, {
+      source: "wechat",
+      reason: "wechat_resume",
+      notify: true,
+    });
+    await this.tryHandoffDesktopBootstrapThread(threadId, 1_200);
+    this.syncSelectedThreadState();
+  }
+
+  private async tryHandoffDesktopBootstrapThread(
+    threadId: string,
+    timeoutMs = 1_200,
+  ): Promise<boolean> {
+    if (!this.desktopBootstrapThreadIds.has(threadId)) return true;
+    const client = this.desktopIpcClient;
+    if (!client) return false;
+    try {
+      await client.openAndFollowThread(threadId, { timeoutMs });
+      await this.sendRpcRequest(
+        "thread/unsubscribe",
+        { threadId },
+        { allowDesktopBootstrapWrite: true },
+      ).catch(() => undefined);
+      this.desktopBootstrapThreadIds.delete(threadId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async followSession(threadId: string): Promise<void> {
+    if (!this.usesDesktopTransport()) {
+      return;
+    }
+    await this.desktopIpcClient?.followThread(threadId, { retention: "summary" });
+  }
+
+  async unfollowSession(threadId: string): Promise<void> {
+    if (!this.usesDesktopTransport()) {
+      return;
+    }
+    await this.desktopIpcClient?.unfollowThread(threadId);
+  }
+
+  private getDesktopThreadStateView(
+    threadId: string,
+  ): CodexDesktopConversationState | null {
+    const client = this.desktopIpcClient;
+    if (!client) {
+      return null;
+    }
+    const clientWithView = client as CodexDesktopIpcClient & {
+      getThreadStateView?: (candidateThreadId: string) => CodexDesktopConversationState | null;
+    };
+    return clientWithView.getThreadStateView?.(threadId) ?? client.getThreadState?.(threadId) ?? null;
+  }
+
+  private async getDesktopThreadStateViewWithRefresh(
+    threadId: string,
+  ): Promise<CodexDesktopConversationState | null> {
+    const client = this.desktopIpcClient;
+    if (!client) {
+      return null;
+    }
+    const cached = this.getDesktopThreadStateView(threadId);
+    if (cached) {
+      return cached;
+    }
+    try {
+      await client.followThread(threadId, { retention: "summary" });
+    } catch {
+      return null;
+    }
+    return this.getDesktopThreadStateView(threadId);
+  }
+
+  private resolveDesktopSessionFilePath(threadId: string): string | null {
+    const remembered = this.desktopThreadSessionFilePathById.get(threadId);
+    if (remembered && fs.existsSync(remembered)) {
+      return remembered;
+    }
+    if (remembered) {
+      this.desktopThreadSessionFilePathById.delete(threadId);
+    }
+
+    const runtimeStatusFile = this.desktopThreadRuntimeStatusCache.get(threadId)?.filePath;
+    if (runtimeStatusFile && fs.existsSync(runtimeStatusFile)) {
+      this.desktopThreadSessionFilePathById.set(threadId, runtimeStatusFile);
+      return runtimeStatusFile;
+    }
+
+    const discovered = findCodexDesktopSessionFilesByThreadId([threadId])
+      .get(threadId)?.filePath ?? null;
+    if (discovered) {
+      this.desktopThreadSessionFilePathById.set(threadId, discovered);
+    }
+    return discovered;
+  }
+
+  async getLatestSessionMessage(threadId: string): Promise<BridgeSessionMessage | null> {
+    const page = await this.getSessionMessagePage(threadId, { limit: 1 });
+    const latest = page.messages[page.messages.length - 1];
+    return latest ? { ...latest } : null;
+  }
+
+  async getSessionRunSummary(
+    threadId: string,
+    options: BridgeSessionReadOptions = {},
+  ): Promise<BridgeSessionRunSummary | null> {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) {
+      return null;
+    }
+    const client = this.desktopIpcClient;
+    let liveState: CodexDesktopConversationState | null = null;
+    if (client) {
+      liveState = options.lightweight
+        ? this.getDesktopThreadStateView(normalizedThreadId)
+        : await this.getDesktopThreadStateViewWithRefresh(normalizedThreadId);
+      if (liveState) {
+        const nowMs = Date.now();
+        const liveWithoutObservedStart = extractCodexDesktopThreadRunSummary(
+          liveState,
+          null,
+          nowMs,
+        );
+        if (liveWithoutObservedStart) {
+          const observedStartedAtMs = liveWithoutObservedStart.turnId
+            ? this.turnStartedAtMs.get(liveWithoutObservedStart.turnId)
+            : undefined;
+          return extractCodexDesktopThreadRunSummary(
+            liveState,
+            null,
+            nowMs,
+            observedStartedAtMs,
+          );
+        }
+      }
+    }
+    const rolloutFilePath = this.resolveDesktopSessionFilePath(normalizedThreadId);
+    if (rolloutFilePath) {
+      const rolloutSummary = readCodexSessionRunSummaryFromRolloutTail(
+        rolloutFilePath,
+      );
+      if (rolloutSummary) {
+        return rolloutSummary;
+      }
+    }
+    if (options.lightweight) {
+      return null;
+    }
+    const response = await this.sendRpcRequest("thread/read", {
+      threadId: normalizedThreadId,
+      includeTurns: true,
+    });
+    const persisted = extractCodexThreadRunSummary(response);
+    if (!client) {
+      return persisted;
+    }
+    if (!liveState) {
+      liveState = await this.getDesktopThreadStateViewWithRefresh(
+        normalizedThreadId,
+      );
+    }
+    if (!liveState) {
+      return persisted;
+    }
+    const nowMs = Date.now();
+    const liveWithoutObservedStart = extractCodexDesktopThreadRunSummary(
+      liveState,
+      persisted,
+      nowMs,
+    );
+    const observedStartedAtMs = liveWithoutObservedStart?.turnId
+      ? this.turnStartedAtMs.get(liveWithoutObservedStart.turnId)
+      : undefined;
+    return extractCodexDesktopThreadRunSummary(
+      liveState,
+      persisted,
+      nowMs,
+      observedStartedAtMs,
+    );
+  }
+
+  async getSessionMessageMedia(
+    threadId: string,
+    options: BridgeSessionMessagePageOptions = {},
+    targetMessages: BridgeSessionMessage[] = [],
+  ): Promise<BridgeSessionMessage[]> {
+    const filePath = this.resolveDesktopSessionFilePath(threadId.trim());
+    if (!filePath) return [];
+    const imageCacheDir = path.join(
+      ensureWorkspaceChannelDir(this.options.cwd).workspaceDir,
+      "message-images",
+      "codex",
+    );
+    const targetUserCounts = new Map<string, number>();
+    for (const message of targetMessages) {
+      if (message.role !== "user") continue;
+      const key = normalizeCodexMediaTargetText(message.text);
+      targetUserCounts.set(key, (targetUserCounts.get(key) ?? 0) + 1);
+    }
+
+    const usesNativeCursor = typeof options.before === "string" &&
+      options.before.startsWith("byte:");
+    let before = usesNativeCursor ? options.before : undefined;
+    const collected: BridgeSessionMessage[] = [];
+    const batchLimit = Math.max(100, Math.min(250, options.limit ?? 100));
+    for (let scanned = 0; scanned < 2_000;) {
+      const page = readCodexSessionMessagePageFromRollout(filePath, {
+        ...options,
+        ...(before ? { before } : { before: undefined }),
+        limit: batchLimit,
+        lightweight: true,
+        imageCacheDir,
+      });
+      if (!page) break;
+      scanned += page.messages.length;
+      collected.unshift(...page.messages);
+      for (const message of page.messages) {
+        if (message.role !== "user") continue;
+        const key = normalizeCodexMediaTargetText(message.text);
+        const remaining = targetUserCounts.get(key) ?? 0;
+        if (remaining <= 1) targetUserCounts.delete(key);
+        else targetUserCounts.set(key, remaining - 1);
+      }
+      if (targetUserCounts.size === 0 || !page.hasMore || !page.nextBefore) break;
+      before = page.nextBefore;
+    }
+    return collected.filter((message) => Boolean(message.images?.length));
+  }
+
+  async getSessionMessagePage(
+    threadId: string,
+    options: BridgeSessionMessagePageOptions = {},
+  ): Promise<BridgeSessionMessagePage> {
+    const normalizedThreadId = threadId.trim();
+    const usesIndexCursor = typeof options.before === "string" &&
+      options.before.startsWith("index:");
+    if (!usesIndexCursor) {
+      const filePath = this.resolveDesktopSessionFilePath(normalizedThreadId);
+      if (filePath) {
+        const persistedPage = readCodexSessionMessagePageFromRollout(
+          filePath,
+          {
+            ...options,
+            imageCacheDir: path.join(
+              ensureWorkspaceChannelDir(this.options.cwd).workspaceDir,
+              "message-images",
+              "codex",
+            ),
+          },
+        );
+        if (persistedPage) {
+          if (options.before || options.historyOnly) {
+            return persistedPage;
+          }
+          const client = this.desktopIpcClient;
+          if (!client) {
+            return persistedPage;
+          }
+          const liveState = options.lightweight
+            ? this.getDesktopThreadStateView(normalizedThreadId)
+            : await this.getDesktopThreadStateViewWithRefresh(normalizedThreadId);
+          return liveState
+            ? {
+                ...persistedPage,
+                messages: mergeCodexSessionMessages(
+                  persistedPage.messages,
+                  extractCodexDesktopThreadMessages(liveState),
+                ),
+              }
+            : persistedPage;
+        }
+      }
+      if (typeof options.before === "string" && options.before.startsWith("byte:")) {
+        throw new Error("Codex 历史消息文件暂时不可读，请稍后重试。");
+      }
+    }
+
+    if (options.lightweight) {
+      const liveState = this.getDesktopThreadStateView(normalizedThreadId);
+      return liveState
+        ? paginateCodexSessionMessages(
+            extractCodexDesktopThreadMessages(liveState),
+            options,
+          )
+        : { messages: [], hasMore: false, nextBefore: null };
+    }
+
+    const messages = await this.getSessionMessages(normalizedThreadId);
+    return paginateCodexSessionMessages(messages, options);
+  }
+
+  async getSessionProgress(
+    threadId: string,
+    options: BridgeSessionReadOptions = {},
+  ): Promise<BridgeSessionProgressItem[]> {
+    const normalizedThreadId = threadId.trim();
+    const client = this.desktopIpcClient;
+    if (client) {
+      const liveState = options.lightweight
+        ? this.getDesktopThreadStateView(normalizedThreadId)
+        : await this.getDesktopThreadStateViewWithRefresh(normalizedThreadId);
+      if (liveState) {
+        const liveProgress = extractCodexDesktopThreadProgress(liveState);
+        if (liveProgress.length > 0) {
+          return liveProgress;
+        }
+      }
+    }
+    const rolloutFilePath = this.resolveDesktopSessionFilePath(normalizedThreadId);
+    if (rolloutFilePath) {
+      const rolloutProgress = readCodexSessionProgressFromRolloutTail(rolloutFilePath);
+      if (rolloutProgress.length > 0 || options.lightweight) {
+        return rolloutProgress;
+      }
+    }
+    if (options.lightweight) {
+      return [];
+    }
+    const response = await this.sendRpcRequest("thread/read", {
+      threadId: normalizedThreadId,
+      includeTurns: true,
+    });
+    return extractCodexThreadProgress(response);
+  }
+
+  async getSessionMessages(threadId: string): Promise<BridgeSessionMessage[]> {
+    const normalizedThreadId = threadId.trim();
+    const response = await this.sendRpcRequest("thread/read", {
+      threadId: normalizedThreadId,
+      includeTurns: true,
+    });
+    const persisted = extractCodexThreadMessages(response);
+    const client = this.desktopIpcClient;
+    if (!client) {
+      return persisted;
+    }
+
+    const liveState = this.getDesktopThreadStateView(normalizedThreadId);
+    return liveState
+      ? mergeCodexSessionMessages(
+          persisted,
+          extractCodexDesktopThreadMessages(liveState),
+        )
+      : persisted;
+  }
+
+  async interruptSession(threadId: string): Promise<boolean> {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) {
+      return false;
+    }
+    if (this.usesDesktopTransport()) {
+      return await this.interruptDesktopThread(normalizedThreadId);
+    }
+    if (normalizedThreadId !== this.sharedThreadId) {
+      return false;
+    }
+    return await this.interrupt();
+  }
+
+  override async interrupt(): Promise<boolean> {
+    if (this.usesDesktopTransport()) {
+      return await this.interruptDesktopTurn();
+    }
+    if (this.usesRpcTurnTransport()) {
+      return await this.interruptPanelTurn();
+    }
+
+    if (!this.pty) {
+      return false;
+    }
+
+    if (this.state.status !== "busy" && this.state.status !== "awaiting_approval") {
+      return false;
+    }
+
+    this.clearPendingApprovalState();
+    this.writeToPty("\u0003");
+    this.armInterruptFallback();
+    return true;
+  }
+
+  override async resolveApproval(action: "confirm" | "deny"): Promise<boolean> {
+    return await this.resolveApprovalAction(action);
+  }
+
+  async resolveApprovalForSession(): Promise<boolean> {
+    return await this.resolveApprovalAction("confirm_session");
+  }
+
+  override async resolveAllApprovals(action: "confirm" | "deny"): Promise<number> {
+    return await this.resolveAllApprovalActions(action);
+  }
+
+  async resolveAllApprovalsForSession(): Promise<number> {
+    return await this.resolveAllApprovalActions("confirm_session");
+  }
+
+  private async resolveApprovalAction(
+    action: CodexApprovalResolutionAction,
+  ): Promise<boolean> {
+    if (this.pendingApprovalRequests.length > 0) {
+      const threadId =
+        this.sharedThreadId ?? this.pendingApprovalRequests[0]?.threadId ?? null;
+      if (!threadId) {
+        return false;
+      }
+      return (await this.resolveTaskApprovals(threadId, action)) > 0;
+    }
+
+    if (!this.pendingApproval) {
+      return false;
+    }
+    return await super.resolveApproval(action === "deny" ? "deny" : "confirm");
+  }
+
+  private async resolveAllApprovalActions(
+    action: CodexApprovalResolutionAction,
+  ): Promise<number> {
+    if (this.pendingApprovalRequests.length > 0) {
+      const threadId =
+        this.sharedThreadId ?? this.pendingApprovalRequests[0]?.threadId ?? null;
+      return threadId ? await this.resolveTaskApprovals(threadId, action) : 0;
+    }
+
+    if (!this.pendingApproval) {
+      return 0;
+    }
+    const ok = await super.resolveApproval(action === "deny" ? "deny" : "confirm");
+    return ok ? 1 : 0;
+  }
+
+  async resolveTaskApprovals(
+    threadId: string,
+    action: CodexApprovalResolutionAction,
+  ): Promise<number> {
+    const requests = this.getPendingApprovalRequestsForThread(threadId);
+    if (requests.length === 0) {
+      return 0;
+    }
+
+    for (const request of requests) {
+      await this.respondToApprovalRequest(request, action);
+    }
+    const requestIds = new Set(requests.map((request) => request.requestId));
+    this.pendingApprovalRequests = this.pendingApprovalRequests.filter(
+      (request) => !requestIds.has(request.requestId),
+    );
+    this.syncSelectedThreadState(
+      threadId === this.sharedThreadId ? "Codex approval resolved." : undefined,
+    );
+    return requests.length;
+  }
+
+  getPendingTaskApprovals(threadId: string): ApprovalRequest[] {
+    return this.getPendingApprovalRequestsForThread(threadId).map(
+      (request) => ({ ...request.request }),
+    );
+  }
+
+  override async submitUserInput(answers: Record<string, string[]>): Promise<boolean> {
+    const threadId =
+      this.sharedThreadId ?? this.pendingUserInputRequests[0]?.threadId ?? null;
+    if (!threadId) {
+      return false;
+    }
+    return await this.submitTaskUserInput(threadId, answers);
+  }
+
+  async submitTaskUserInput(
+    threadId: string,
+    answers: Record<string, string[]>,
+  ): Promise<boolean> {
+    const request = this.getPendingUserInputRequestsForThread(threadId)[0];
+    if (!request) {
+      return false;
+    }
+
+    const responseAnswers: Record<string, { answers: string[] }> = {};
+    for (const [questionId, values] of Object.entries(answers)) {
+      responseAnswers[questionId] = {
+        answers: values,
+      };
+    }
+
+    if (
+      this.usesDesktopTransport() &&
+      !this.desktopBootstrapThreadIds.has(request.threadId)
+    ) {
+      const client = this.desktopIpcClient;
+      if (!client) {
+        throw new Error("Codex 桌面端连接不可用。");
+      }
+      await client.submitUserInput(
+        request.threadId,
+        request.requestId,
+        responseAnswers,
+      );
+    } else {
+      this.sendRpcMessage({
+        id: request.requestId,
+        result: {
+          answers: responseAnswers,
+        },
+      });
+    }
+    this.pendingUserInputRequests = this.pendingUserInputRequests.filter(
+      (candidate) => candidate.requestId !== request.requestId,
+    );
+    this.syncSelectedThreadState(
+      threadId === this.sharedThreadId ? "Codex user input submitted." : undefined,
+    );
+    return true;
+  }
+
+  override async dispose(): Promise<void> {
+    this.resetTurnTracking({ preserveThread: false });
+    if (this.isEmbeddedCliMode()) {
+      this.detachLocalInputForwarding();
+    }
+    this.stopSessionPolling();
+    if (this.usesDesktopTransport()) {
+      this.desktopTransportStarted = false;
+      await this.stopDesktopIpcClient();
+    }
+    if (this.isNativePanelMode()) {
+      this.cleanPanelExitInProgress = true;
+    }
+    await this.disconnectRpcClient();
+    if (this.isNativePanelMode()) {
+      await this.stopNativeClient();
+      this.clearCompletionTimer();
+      this.pendingApproval = null;
+      this.state.pendingApproval = null;
+      this.state.status = "stopped";
+      this.state.pid = undefined;
+      this.state.startedAt = undefined;
+    } else if (this.isHeadlessRuntimeMode()) {
+      this.clearCompletionTimer();
+      this.clearInterruptTimer();
+      this.clearPendingApprovalState();
+      this.state.status = "stopped";
+      this.state.pid = undefined;
+      this.state.startedAt = undefined;
+    } else {
+      await super.dispose();
+    }
+    await this.stopAppServer();
+  }
+
+  getLocalClientEndpoint(): LocalClientEndpoint | null {
+    if (
+      this.usesDesktopTransport() ||
+      !this.isHeadlessRuntimeMode() ||
+      !this.appServerPort ||
+      !this.appServerAuthToken
+    ) {
+      return null;
+    }
+
+    return {
+      protocolVersion: LOCAL_CLIENT_PROTOCOL_VERSION,
+      runtimeKind: this.runtimeKind,
+      instanceId: this.localClientInstanceId,
+      kind: this.options.kind,
+      port: this.appServerPort,
+      token: this.appServerAuthToken,
+      renderMode: "headless",
+      bridgeOwnerPid: process.pid,
+      serverPort: this.appServerPort,
+      serverUrl: `ws://${CODEX_APP_SERVER_HOST}:${this.appServerPort}`,
+      remoteAuthTokenEnv: CODEX_REMOTE_AUTH_TOKEN_ENV,
+      cwd: this.options.cwd,
+      command: this.options.command,
+      profile: this.options.profile,
+      sharedSessionId: this.state.sharedSessionId,
+      sharedThreadId: this.state.sharedThreadId,
+      resumeConversationId: this.state.resumeConversationId,
+      transcriptPath: this.state.transcriptPath,
+      startedAt: this.state.startedAt ?? nowIso(),
+    };
+  }
+
+  protected override handleData(rawText: string): void {
+    this.renderLocalOutput(rawText);
+
+    const text = normalizeOutput(rawText);
+    if (!text) {
+      return;
+    }
+
+    this.state.lastOutputAt = nowIso();
+    const approval = detectCliApproval(text);
+
+    if (this.hasAcceptedInput) {
+      if (approval && !this.pendingApproval) {
+        this.pendingApproval = approval;
+        this.state.pendingApproval = approval;
+        this.state.pendingApprovalOrigin = this.state.activeTurnOrigin;
+        this.setStatus("awaiting_approval", "Codex approval is required.");
+        this.emit({
+          type: "approval_required",
+          request: approval,
+          timestamp: nowIso(),
+        });
+      }
+      return;
+    }
+
+    if (approval) {
+      this.startupBlocker = approval.commandPreview;
+      if (this.state.status !== "awaiting_approval") {
+        this.setStatus("awaiting_approval", "Codex is waiting for local terminal input.");
+      }
+      return;
+    }
+
+    if (this.startupBlocker) {
+      this.startupBlocker = null;
+      if (this.state.status === "awaiting_approval") {
+        this.setStatus("idle", "codex adapter is ready.");
+      }
+    }
+  }
+
+  protected override handleExit(exitCode: number | undefined): void {
+    this.resetTurnTracking({ preserveThread: false });
+    this.detachLocalInputForwarding();
+    this.stopSessionPolling();
+    void this.disconnectRpcClient();
+    void this.stopAppServer();
+    super.handleExit(exitCode);
+  }
+
+  private isNativePanelMode(): boolean {
+    return this.options.renderMode === "panel";
+  }
+
+  private isHeadlessRuntimeMode(): boolean {
+    return this.options.renderMode === "headless";
+  }
+
+  private usesDesktopTransport(): boolean {
+    return (
+      this.isHeadlessRuntimeMode() &&
+      this.options.codexTransport === "desktop"
+    );
+  }
+
+  private isEmbeddedCliMode(): boolean {
+    return !this.isNativePanelMode() && !this.isHeadlessRuntimeMode();
+  }
+
+  private usesRpcTurnTransport(): boolean {
+    return this.isNativePanelMode() || this.isHeadlessRuntimeMode();
+  }
+
+  private isCodexClientRunning(): boolean {
+    if (this.usesDesktopTransport()) {
+      return this.desktopTransportStarted;
+    }
+    if (this.isHeadlessRuntimeMode()) {
+      return Boolean(this.appServer);
+    }
+    return this.isNativePanelMode() ? Boolean(this.nativeProcess) : Boolean(this.pty);
+  }
+
+  private shouldPollSessionLog(): boolean {
+    return (
+      this.isCodexClientRunning() ||
+      this.pendingTurnStart ||
+      Boolean(this.activeTurn) ||
+      Boolean(this.state.activeTurnId) ||
+      Boolean(this.sessionFilePath)
+    );
+  }
+
+  private async startDesktopRuntime(): Promise<void> {
+    this.setStatus("starting", "正在连接 Codex 桌面端...");
+
+    try {
+      // The private app-server remains metadata-only in desktop mode. It is
+      // used for thread/list and thread/read; all mutating operations go
+      // through the desktop application's owner IPC below.
+      await this.startAppServer();
+      await this.connectRpcClient();
+      await this.startDesktopIpcClient();
+      await this.restoreInitialSharedThreadIfNeeded();
+
+      this.shuttingDown = false;
+      this.cleanPanelExitInProgress = false;
+      this.hasAcceptedInput = true;
+      this.desktopTransportStarted = true;
+      this.state.pid = this.appServer?.pid ?? undefined;
+      this.state.startedAt = nowIso();
+      this.state.pendingApproval = null;
+      this.afterStart();
+      this.state.status = "idle";
+      this.syncSelectedThreadState("Codex 桌面端已连接。");
+    } catch (error) {
+      await this.stopDesktopIpcClient();
+      await this.disconnectRpcClient();
+      await this.stopAppServer();
+      this.desktopTransportStarted = false;
+      this.state.status = "error";
+      throw error;
+    }
+  }
+
+  private async startDesktopIpcClient(): Promise<void> {
+    if (this.desktopIpcClient) {
+      await this.desktopIpcClient.connect();
+      return;
+    }
+
+    const client = new CodexDesktopIpcClient();
+    this.desktopIpcClient = client;
+    this.removeDesktopStateListener = client.onStateChanged(
+      (threadId, state, previousState) => {
+        this.handleDesktopThreadStateChanged(threadId, state, previousState);
+      },
+    );
+    this.removeDesktopConnectionListener = client.onConnectionChanged((connected) => {
+      if (!this.desktopTransportStarted || this.shuttingDown) {
+        return;
+      }
+      if (connected) {
+        this.syncSelectedThreadState("Codex 桌面端已重新连接。", {
+          recoverConnectionError: true,
+        });
+        return;
+      }
+      this.setStatus("error", "Codex 桌面端连接已断开，正在重连。");
+    });
+    try {
+      await client.connect();
+    } catch (initialError) {
+      if (process.platform !== "darwin") {
+        throw initialError;
+      }
+      try {
+        const launcher = spawnChild("/usr/bin/open", ["-g", "-a", "ChatGPT"], {
+          detached: true,
+          stdio: "ignore",
+        });
+        launcher.unref();
+      } catch {
+        throw initialError;
+      }
+
+      const deadline = Date.now() + 15_000;
+      let lastError: unknown = initialError;
+      while (Date.now() < deadline) {
+        await delay(300);
+        try {
+          await client.connect();
+          return;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw new Error(
+        `无法连接 Codex 桌面端：${describeUnknownError(lastError)}`,
+        { cause: initialError },
+      );
+    }
+  }
+
+  private async stopDesktopIpcClient(): Promise<void> {
+    this.removeDesktopStateListener?.();
+    this.removeDesktopStateListener = null;
+    this.removeDesktopConnectionListener?.();
+    this.removeDesktopConnectionListener = null;
+    const client = this.desktopIpcClient;
+    this.desktopIpcClient = null;
+    this.desktopInitializedThreadIds.clear();
+    this.desktopSeenRequestKeys.clear();
+    if (client) {
+      await client.dispose();
+    }
+  }
+
+  private handleDesktopThreadStateChanged(
+    threadId: string,
+    state: CodexDesktopConversationState,
+    previousState: CodexDesktopConversationState | null,
+  ): void {
+    const initialSnapshot = !this.desktopInitializedThreadIds.has(threadId);
+    this.desktopInitializedThreadIds.add(threadId);
+
+    if (typeof state.cwd === "string" && state.cwd.trim()) {
+      this.desktopThreadCwdById.set(threadId, state.cwd.trim());
+    }
+
+    const trackedTurnIds = new Set<string>();
+    if (this.activeTurn?.threadId === threadId) {
+      trackedTurnIds.add(this.activeTurn.turnId);
+    }
+    for (const turn of this.backgroundTurns.values()) {
+      if (turn.threadId === threadId) {
+        trackedTurnIds.add(turn.turnId);
+      }
+    }
+    const previousTurns = this.extractDesktopTurns(previousState, trackedTurnIds);
+    const currentTurns = this.extractDesktopTurns(state, trackedTurnIds);
+    for (const turn of currentTurns.values()) {
+      const previousTurn = previousTurns.get(turn.turnId) ?? null;
+      this.handleDesktopTurnState(threadId, turn, previousTurn, initialSnapshot);
+    }
+
+    this.handleDesktopRequests(threadId, state);
+    if (threadId === this.sharedThreadId) {
+      this.syncSelectedThreadState();
+    }
+  }
+
+  private extractDesktopTurns(
+    state: CodexDesktopConversationState | null,
+    trackedTurnIds: ReadonlySet<string> = new Set(),
+  ): Map<string, CodexDesktopTurnState> {
+    const turns = new Map<string, CodexDesktopTurnState>();
+    if (!state) {
+      return turns;
+    }
+
+    const entries = codexDesktopLiveTurnEntries(state);
+    const includedTurnIds = new Set(
+      entries.flatMap(([, entity]) =>
+        typeof entity.turnId === "string" ? [entity.turnId] : []
+      ),
+    );
+    if (trackedTurnIds.size > 0) {
+      for (const entry of codexDesktopTurnEntries(state)) {
+        const turnId = typeof entry[1].turnId === "string" ? entry[1].turnId : null;
+        if (turnId && trackedTurnIds.has(turnId) && !includedTurnIds.has(turnId)) {
+          entries.push(entry);
+          includedTurnIds.add(turnId);
+        }
+      }
+    }
+
+    const ownerIdle = codexDesktopRuntimeType(state) === "idle";
+    for (const [, entity] of entries) {
+      if (typeof entity.turnId !== "string") {
+        continue;
+      }
+      const errorMessage = isRecord(entity.error) && typeof entity.error.message === "string"
+        ? entity.error.message
+        : null;
+      const rawStatus = typeof entity.status === "string" ? entity.status : "unknown";
+      turns.set(entity.turnId, {
+        turnId: entity.turnId,
+        status: ownerIdle && this.isDesktopTurnActive(rawStatus) ? "completed" : rawStatus,
+        errorMessage,
+        items: Array.isArray(entity.items) ? entity.items : [],
+      });
+    }
+    return turns;
+  }
+
+  private handleDesktopTurnState(
+    threadId: string,
+    turn: CodexDesktopTurnState,
+    previousTurn: CodexDesktopTurnState | null,
+    initialSnapshot: boolean,
+  ): void {
+    const existingTurn = this.activeTurn?.turnId === turn.turnId
+      ? this.activeTurn
+      : this.backgroundTurns.get(turn.turnId) ?? null;
+    const origin: BridgeTurnOrigin = existingTurn?.origin ??
+      (this.bridgeOwnedTurnIds.has(turn.turnId) ||
+      (this.pendingTurnStart && this.pendingTurnThreadId === threadId) ||
+      this.pendingDesktopTurnThreadIds.has(threadId)
+        ? "wechat"
+        : "local");
+    const trackedTurn: CodexActiveTurn = { threadId, turnId: turn.turnId, origin };
+    const activeNow = this.isDesktopTurnActive(turn.status);
+    const wasActive = previousTurn
+      ? this.isDesktopTurnActive(previousTurn.status)
+      : Boolean(existingTurn || this.bridgeOwnedTurnIds.has(turn.turnId));
+    if (!activeNow && !wasActive) {
+      return;
+    }
+
+    const userMessageItem = turn.items.find((item) => Boolean(extractCodexUserMessageText(item)));
+    const userText = extractCodexUserMessageText(userMessageItem);
+    if (userText) {
+      this.turnPreviewById.set(turn.turnId, truncatePreview(userText));
+    }
+    for (const item of turn.items) {
+      if (!isRecord(item) || typeof item.id !== "string") {
+        continue;
+      }
+      const finalText = extractCodexFinalTextFromItem(item);
+      if (finalText) {
+        this.getTurnFinalMessageMap(turn.turnId).set(item.id, finalText);
+      }
+    }
+    if (turn.errorMessage) {
+      this.turnErrorById.set(turn.turnId, turn.errorMessage);
+    }
+
+    if (activeNow) {
+      if (!this.turnStartedAtMs.has(turn.turnId)) {
+        this.turnStartedAtMs.set(turn.turnId, Date.now());
+      }
+      if (origin === "wechat" && this.pendingTurnStart && !existingTurn) {
+        this.bindActiveTurn(trackedTurn);
+      } else {
+        this.handleTrackedTurnStarted(trackedTurn);
+      }
+      if (
+        origin === "local" &&
+        userMessageItem &&
+        !initialSnapshot &&
+        !previousTurn
+      ) {
+        this.maybeMirrorLocalUserInput(trackedTurn, userMessageItem);
+      }
+      return;
+    }
+
+    if (!wasActive || this.hasCompletedTurn(turn.turnId)) {
+      return;
+    }
+
+    this.handleTurnCompleted(trackedTurn, {
+      turn: {
+        id: turn.turnId,
+        status: this.normalizeDesktopTurnCompletionStatus(turn.status),
+        ...(turn.errorMessage ? { error: { message: turn.errorMessage } } : {}),
+      },
+    });
+  }
+
+  private isDesktopTurnActive(status: string): boolean {
+    const normalized = status.replace(/[_-]/g, "").toLowerCase();
+    return normalized === "inprogress" || normalized === "active" || normalized === "running";
+  }
+
+  private normalizeDesktopTurnCompletionStatus(status: string): string {
+    const normalized = status.replace(/[_-]/g, "").toLowerCase();
+    if (normalized === "interrupted" || normalized === "cancelled" || normalized === "canceled") {
+      return "interrupted";
+    }
+    if (normalized === "failed" || normalized === "error") {
+      return "failed";
+    }
+    return "completed";
+  }
+
+  private handleDesktopRequests(
+    threadId: string,
+    state: CodexDesktopConversationState,
+  ): void {
+    const requests = Array.isArray(state.requests)
+      ? state.requests.filter(isRecord)
+      : [];
+    const currentKeys = new Set<string>();
+    for (const request of requests) {
+      const requestId = getCodexRpcRequestId(request.id);
+      const method = typeof request.method === "string" ? request.method : null;
+      if (requestId === null || !method || !isRecord(request.params)) {
+        continue;
+      }
+      const key = this.desktopRequestKey(threadId, requestId);
+      currentKeys.add(key);
+      if (this.desktopSeenRequestKeys.has(key)) {
+        continue;
+      }
+      this.desktopSeenRequestKeys.add(key);
+      void this.handleDesktopRequest(
+        threadId,
+        requestId,
+        method,
+        request.params,
+      ).catch((error) => {
+        this.emit({
+          type: "notice",
+          level: "warning",
+          text: `处理 Codex 桌面端请求失败：${describeUnknownError(error)}`,
+          timestamp: nowIso(),
+        });
+      });
+    }
+
+    const prefix = `${threadId}\u0000`;
+    for (const key of this.desktopSeenRequestKeys) {
+      if (key.startsWith(prefix) && !currentKeys.has(key)) {
+        this.desktopSeenRequestKeys.delete(key);
+      }
+    }
+    this.pendingApprovalRequests = this.pendingApprovalRequests.filter(
+      (request) =>
+        request.threadId !== threadId ||
+        currentKeys.has(this.desktopRequestKey(threadId, request.requestId)),
+    );
+    this.pendingUserInputRequests = this.pendingUserInputRequests.filter(
+      (request) =>
+        request.threadId !== threadId ||
+        currentKeys.has(this.desktopRequestKey(threadId, request.requestId)),
+    );
+  }
+
+  private desktopRequestKey(threadId: string, requestId: CodexRpcRequestId): string {
+    return `${threadId}\u0000${typeof requestId}:${String(requestId)}`;
+  }
+
+  private async handleDesktopRequest(
+    fallbackThreadId: string,
+    requestId: CodexRpcRequestId,
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<void> {
+    if (
+      method !== "item/commandExecution/requestApproval" &&
+      method !== "item/fileChange/requestApproval" &&
+      method !== "item/permissions/requestApproval" &&
+      method !== "mcpServer/elicitation/request" &&
+      method !== "item/tool/requestUserInput"
+    ) {
+      return;
+    }
+
+    const threadId = getNotificationThreadId(params) ?? fallbackThreadId;
+    const turnId = getNotificationTurnId(params) ??
+      (this.activeTurn?.threadId === threadId ? this.activeTurn.turnId : null) ??
+      this.getBackgroundTurnForThread(threadId)?.turnId ?? null;
+    if (!turnId) {
+      return;
+    }
+    const origin: BridgeTurnOrigin = this.bridgeOwnedTurnIds.has(turnId) ? "wechat" : "local";
+    const trackedTurn = { threadId, turnId, origin } satisfies CodexActiveTurn;
+    this.handleTrackedTurnStarted(trackedTurn);
+
+    if (method === "item/tool/requestUserInput") {
+      const request = buildCodexUserInputRequest(params);
+      if (!request) {
+        return;
+      }
+      const contextualRequest = {
+        ...request,
+        threadId,
+        turnId,
+        origin,
+      };
+      this.pendingUserInputRequests.push({
+        requestId,
+        method,
+        threadId,
+        turnId,
+        origin,
+        request: contextualRequest,
+      });
+      if (threadId === this.sharedThreadId) {
+        this.syncSelectedThreadState("Codex 正在等待补充输入。");
+      }
+      this.emit({
+        type: "user_input_required",
+        request: contextualRequest,
+        timestamp: nowIso(),
+        threadId,
+        turnId,
+        origin,
+      });
+      return;
+    }
+
+    const approvalMethod = method as CodexPendingApprovalRequest["method"];
+    const pendingRequest: CodexPendingApprovalRequest = {
+      requestId,
+      method: approvalMethod,
+      threadId,
+      turnId,
+      origin,
+      params,
+      request: {
+        source: "cli",
+        summary: "Codex 请求操作确认",
+        commandPreview: "",
+      },
+    };
+    const denyMessage = getCodexWechatOutboundAttachmentDenyMessage(approvalMethod, params);
+    if (denyMessage) {
+      await this.respondToApprovalRequest(pendingRequest, "deny");
+      return;
+    }
+    const autoResponse = getCodexApprovalAutoResponse(approvalMethod, params);
+    if (autoResponse) {
+      await this.respondToDesktopApprovalResult(pendingRequest, autoResponse.result);
+      return;
+    }
+
+    const request = buildCodexApprovalRequest(approvalMethod, params);
+    if (!request) {
+      return;
+    }
+    const contextualRequest = {
+      ...request,
+      requestId: String(requestId),
+      threadId,
+      turnId,
+      origin,
+    };
+    pendingRequest.request = contextualRequest;
+    this.pendingApprovalRequests.push(pendingRequest);
+    if (threadId === this.sharedThreadId) {
+      this.syncSelectedThreadState("Codex 有操作等待确认。");
+    }
+    this.emit({
+      type: "approval_required",
+      request: contextualRequest,
+      timestamp: nowIso(),
+      threadId,
+      turnId,
+      origin,
+    });
+  }
+
+  private async startNativeClient(): Promise<void> {
+    this.setStatus("starting", `Starting ${this.options.kind} adapter...`);
+
+    let spawnTarget: SpawnTarget | null = null;
+    try {
+      spawnTarget = resolveSpawnTarget(this.options.command, this.options.kind);
+      const child = spawnChild(
+        spawnTarget.file,
+        [...spawnTarget.args, ...this.buildSpawnArgs()],
+        {
+          cwd: this.options.cwd,
+          env: this.buildEnv(),
+          stdio: "inherit",
+          windowsHide: false,
+        },
+      );
+
+      this.nativeProcess = child;
+      this.shuttingDown = false;
+      this.cleanPanelExitInProgress = false;
+      this.hasAcceptedInput = false;
+      this.state.pid = child.pid ?? undefined;
+      this.state.startedAt = nowIso();
+      this.state.status = "idle";
+      this.state.pendingApproval = null;
+
+      child.once("error", (error) => {
+        if (this.nativeProcess === child) {
+          this.handleNativeExit(undefined, undefined, error);
+        }
+      });
+      child.once("exit", (exitCode, signal) => {
+        if (this.nativeProcess === child) {
+          this.handleNativeExit(exitCode ?? undefined, signal ?? undefined);
+        }
+      });
+
+      this.afterStart();
+      this.setStatus("idle", `${this.options.kind} adapter is ready.`);
+    } catch (err) {
+      this.state.status = "error";
+      this.emit({
+        type: "fatal_error",
+        message: `Failed to start ${this.options.kind}${spawnTarget ? ` (${spawnTarget.file})` : ""}: ${String(err)}`,
+        timestamp: nowIso(),
+      });
+      throw err;
+    }
+  }
+
+  private handleNativeExit(
+    exitCode: number | undefined,
+    signal?: NodeJS.Signals,
+    startupError?: Error,
+  ): void {
+    const expectedShutdown = shouldTreatCodexNativeExitAsExpected({
+      renderMode: this.options.renderMode,
+      shuttingDown: this.shuttingDown,
+      exitCode,
+      signal,
+      startupError,
+    });
+    if (expectedShutdown && this.isNativePanelMode()) {
+      this.cleanPanelExitInProgress = true;
+    }
+
+    this.clearCompletionTimer();
+    this.resetTurnTracking({ preserveThread: false });
+    this.stopSessionPolling();
+    void this.disconnectRpcClient();
+    void this.stopAppServer();
+
+    this.shuttingDown = false;
+    this.nativeProcess = null;
+    this.state.status = "stopped";
+    this.state.pid = undefined;
+    this.pendingApproval = null;
+    this.state.pendingApproval = null;
+
+    if (expectedShutdown) {
+      this.emit({
+        type: "status",
+        status: "stopped",
+        message: `${this.options.kind} worker stopped.`,
+        timestamp: nowIso(),
+      });
+      return;
+    }
+
+    const exitLabel = startupError
+      ? startupError.message
+      : signal
+        ? `signal ${signal}`
+        : typeof exitCode === "number"
+          ? `code ${exitCode}`
+          : "an unknown code";
+    this.emit({
+      type: "fatal_error",
+      message: `${this.options.kind} worker exited unexpectedly with ${exitLabel}.`,
+      timestamp: nowIso(),
+    });
+  }
+
+  private async stopNativeClient(): Promise<void> {
+    if (!this.nativeProcess) {
+      this.state.pid = undefined;
+      return;
+    }
+
+    const child = this.nativeProcess;
+    this.shuttingDown = true;
+    this.nativeProcess = null;
+
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve();
+      };
+      child.once("exit", () => finish());
+      try {
+        if (child.pid) {
+          killProcessTreeSync(child.pid);
+        } else {
+          child.kill();
+        }
+      } catch {
+        finish();
+      }
+      const timer = setTimeout(() => finish(), 1_500);
+      timer.unref?.();
+    });
+  }
+
+  private startSessionPolling(): void {
+    this.stopSessionPolling();
+    const poll = () => {
+      void this.pollSessionLog();
+    };
+    this.sessionPollTimer = setInterval(poll, CODEX_SESSION_POLL_INTERVAL_MS);
+    this.sessionPollTimer.unref?.();
+    poll();
+  }
+
+  private stopSessionPolling(): void {
+    if (this.sessionPollTimer) {
+      clearInterval(this.sessionPollTimer);
+      this.sessionPollTimer = null;
+    }
+    this.sessionFilePath = null;
+    this.sessionReadOffset = 0;
+    this.sessionPartialLine = "";
+    this.sessionFinalText = null;
+    this.sessionIgnoreBeforeMs = null;
+    this.nextSessionFallbackScanAtMs = 0;
+    this.nextSessionFileLookupAtMs = 0;
+  }
+
+  private async pollSessionLog(): Promise<void> {
+    if (!this.shouldPollSessionLog()) {
+      return;
+    }
+
+    this.maybeApplyRecentSessionFallback();
+
+    if (!this.sessionFilePath) {
+      const now = Date.now();
+      if (now < this.nextSessionFileLookupAtMs) {
+        return;
+      }
+      this.nextSessionFileLookupAtMs = now + CODEX_SESSION_FALLBACK_SCAN_INTERVAL_MS;
+      const startedAtMs = this.state.startedAt ? Date.parse(this.state.startedAt) : now;
+      this.sessionFilePath = findCodexSessionFile(
+        this.getKnownThreadCwd(this.sharedThreadId),
+        startedAtMs,
+        { threadId: this.sharedThreadId ?? undefined },
+      );
+      if (!this.sessionFilePath) {
+        return;
+      }
+      this.sessionReadOffset = 0;
+      this.sessionPartialLine = "";
+      this.seedSessionReplayCutoff(startedAtMs);
+    }
+
+    let chunk: string;
+    try {
+      const stat = fs.statSync(this.sessionFilePath);
+      if (stat.size < this.sessionReadOffset) {
+        this.sessionReadOffset = 0;
+        this.sessionPartialLine = "";
+      }
+      if (stat.size === this.sessionReadOffset) {
+        return;
+      }
+      const fd = fs.openSync(this.sessionFilePath, "r");
+      try {
+        const bytesToRead = stat.size - this.sessionReadOffset;
+        const buf = Buffer.alloc(bytesToRead);
+        fs.readSync(fd, buf, 0, bytesToRead, this.sessionReadOffset);
+        chunk = buf.toString("utf8");
+        this.sessionReadOffset = stat.size;
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch {
+      this.sessionFilePath = null;
+      this.sessionReadOffset = 0;
+      this.sessionPartialLine = "";
+      return;
+    }
+
+    const lines = `${this.sessionPartialLine}${chunk}`.split(/\r?\n/);
+    this.sessionPartialLine = lines.pop() ?? "";
+
+    for (const line of lines) {
+      this.handleSessionLogLine(line);
+    }
+  }
+
+  private seedSessionReplayCutoff(startedAtMs: number): void {
+    if (this.sessionIgnoreBeforeMs !== null) {
+      return;
+    }
+
+    if (Number.isFinite(startedAtMs)) {
+      this.sessionIgnoreBeforeMs = startedAtMs;
+    }
+  }
+
+  private maybeApplyRecentSessionFallback(): void {
+    if (!this.isNativePanelMode()) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now < this.nextSessionFallbackScanAtMs) {
+      return;
+    }
+    this.nextSessionFallbackScanAtMs = now + CODEX_SESSION_FALLBACK_SCAN_INTERVAL_MS;
+
+    const startedAtMs = this.state.startedAt ? Date.parse(this.state.startedAt) : now;
+    const candidate = findRecentCodexSessionFileForCwd(
+      this.getKnownThreadCwd(this.sharedThreadId),
+      startedAtMs,
+    );
+    if (!candidate) {
+      return;
+    }
+
+    let currentSessionModifiedAtMs = Number.NEGATIVE_INFINITY;
+    if (this.sessionFilePath) {
+      try {
+        currentSessionModifiedAtMs = fs.statSync(this.sessionFilePath).mtimeMs;
+      } catch {
+        currentSessionModifiedAtMs = Number.NEGATIVE_INFINITY;
+      }
+    }
+
+    if (candidate.threadId !== this.sharedThreadId) {
+      if (this.sessionFilePath && candidate.modifiedAtMs <= currentSessionModifiedAtMs) {
+        return;
+      }
+
+      if (!this.activeTurn || this.activeTurn.threadId === candidate.threadId) {
+        this.trackLocalSharedThread(candidate.threadId, {
+          reason: "local_session_fallback",
+          signal: "session_fallback",
+        });
+        this.pendingThreadFollowId = null;
+      } else {
+        this.pendingThreadFollowId = candidate.threadId;
+      }
+    }
+
+    if (this.sessionFilePath !== candidate.filePath) {
+      this.sessionFilePath = candidate.filePath;
+      this.sessionReadOffset = 0;
+      this.sessionPartialLine = "";
+      this.sessionFinalText = null;
+      this.seedSessionReplayCutoff(startedAtMs);
+    }
+  }
+
+  private handleSessionLogLine(line: string): void {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return;
+    }
+
+    if (!isRecord(parsed) || !isRecord(parsed.payload) || typeof parsed.payload.type !== "string") {
+      return;
+    }
+
+    if (shouldIgnoreCodexSessionReplayEntry(parsed.timestamp, this.sessionIgnoreBeforeMs)) {
+      return;
+    }
+
+    const payload = parsed.payload;
+    const timestamp = typeof parsed.timestamp === "string" ? parsed.timestamp : nowIso();
+    if (this.sessionIgnoreBeforeMs !== null) {
+      this.sessionIgnoreBeforeMs = null;
+    }
+
+    switch (payload.type) {
+      case "task_started": {
+        if (typeof payload.turn_id === "string") {
+          this.recordTurnActivity(payload.turn_id, timestamp);
+          this.hasAcceptedInput = true;
+          this.state.activeTurnId = payload.turn_id;
+          const hasTrackedTurnContext =
+            this.pendingTurnStart ||
+            Boolean(this.activeTurn) ||
+            this.state.activeTurnOrigin === "local" ||
+            this.state.activeTurnOrigin === "wechat";
+          if (
+            hasTrackedTurnContext &&
+            this.state.status !== "busy" &&
+            this.state.status !== "awaiting_approval"
+          ) {
+            const message =
+              this.state.activeTurnOrigin === "local"
+                ? "Codex is busy with a local terminal turn."
+                : undefined;
+            this.setStatus("busy", message);
+          }
+        }
+        return;
+      }
+
+      case "user_message": {
+        if (typeof payload.message !== "string") {
+          return;
+        }
+
+        const message = normalizeOutput(payload.message).trim();
+        if (!message) {
+          return;
+        }
+
+        this.hasAcceptedInput = true;
+        this.state.lastInputAt = timestamp;
+        const origin = this.consumeInjectedInput(message) ? "wechat" : "local";
+        this.state.activeTurnOrigin = origin;
+
+        if (origin === "local") {
+          const turnId = this.activeTurn?.turnId ?? this.state.activeTurnId ?? null;
+          const threadId =
+            this.activeTurn?.threadId ??
+            this.sharedThreadId ??
+            this.state.sharedThreadId ??
+            this.state.sharedSessionId ??
+            null;
+          if (turnId && !this.mirroredUserInputTurnIds.has(turnId)) {
+            this.mirroredUserInputTurnIds.add(turnId);
+            this.emit({
+              type: "mirrored_user_input",
+              text: message,
+              timestamp,
+              origin: "local",
+              ...(threadId ? { threadId } : {}),
+              turnId,
+            });
+          }
+
+          if (this.state.status !== "busy" && this.state.status !== "awaiting_approval") {
+            this.setStatus("busy", "Codex is busy with a local terminal turn.");
+          }
+
+          if (
+            !turnId &&
+            !this.isRpcSocketOpen() &&
+            isRecentIsoTimestamp(timestamp, CODEX_SESSION_LOCAL_MIRROR_FALLBACK_WINDOW_MS)
+          ) {
+            this.emit({
+              type: "mirrored_user_input",
+              text: message,
+              timestamp,
+              origin: "local",
+              ...(threadId ? { threadId } : {}),
+            });
+          }
+        }
+        return;
+      }
+
+      case "agent_message": {
+        if (payload.phase !== "final_answer" || typeof payload.message !== "string") {
+          return;
+        }
+
+        const message = normalizeOutput(payload.message).trim();
+        if (message) {
+          this.sessionFinalText = message;
+          this.state.lastOutputAt = timestamp;
+          const activeTurnId = this.activeTurn?.turnId ?? this.state.activeTurnId ?? null;
+          if (activeTurnId) {
+            this.recordTurnActivity(activeTurnId, timestamp);
+            this.scheduleFinalReplyCompletionIfEligible(activeTurnId);
+          }
+        }
+        return;
+      }
+
+      case "task_complete": {
+        if (typeof payload.turn_id !== "string") {
+          return;
+        }
+        const turnId = payload.turn_id;
+        this.clearFinalReplyCompletionTimerForTurn(turnId);
+        this.clearInterruptTimerForTurn(turnId);
+
+        if (this.hasCompletedTurn(turnId)) {
+          this.sessionFinalText = null;
+          if (this.activeTurn?.turnId === turnId) {
+            this.setActiveTurn(null, { followPendingThread: false });
+          }
+          this.backgroundTurns.delete(turnId);
+          this.cleanupTurnArtifacts(turnId);
+          this.syncSelectedThreadState();
+          return;
+        }
+
+        const finalText =
+          this.sessionFinalText ||
+          (typeof payload.last_agent_message === "string"
+            ? normalizeOutput(payload.last_agent_message).trim()
+            : "");
+        this.sessionFinalText = null;
+        const trackedTurn =
+          this.activeTurn?.turnId === turnId
+            ? this.activeTurn
+            : this.backgroundTurns.get(turnId) ??
+              (this.sharedThreadId
+                ? {
+                    threadId: this.sharedThreadId,
+                    turnId,
+                    origin: this.state.activeTurnOrigin ?? "local",
+                  }
+                : null);
+        if (!trackedTurn) {
+          return;
+        }
+        if (finalText) {
+          this.getTurnFinalMessageMap(turnId).set("session-final", finalText);
+        }
+        this.handleTurnCompleted(trackedTurn, {
+          turn: { id: turnId, status: "completed" },
+        });
+        return;
+      }
+    }
+  }
+
+  private rememberInjectedInput(text: string): void {
+    const normalizedText = normalizeOutput(text).trim();
+    if (!normalizedText) {
+      return;
+    }
+
+    const cutoff = Date.now() - 60_000;
+    this.pendingInjectedInputs = this.pendingInjectedInputs.filter(
+      (entry) => entry.createdAtMs >= cutoff,
+    );
+    this.pendingInjectedInputs.push({
+      text,
+      normalizedText,
+      createdAtMs: Date.now(),
+    });
+    if (this.pendingInjectedInputs.length > 8) {
+      this.pendingInjectedInputs.splice(0, this.pendingInjectedInputs.length - 8);
+    }
+  }
+
+  private consumeInjectedInput(message: string): boolean {
+    const normalizedMessage = normalizeOutput(message).trim();
+    if (!normalizedMessage) {
+      return false;
+    }
+
+    const cutoff = Date.now() - 60_000;
+    this.pendingInjectedInputs = this.pendingInjectedInputs.filter(
+      (entry) => entry.createdAtMs >= cutoff,
+    );
+
+    const index = this.pendingInjectedInputs.findIndex(
+      (entry) => entry.normalizedText === normalizedMessage,
+    );
+    if (index < 0) {
+      return false;
+    }
+
+    this.pendingInjectedInputs.splice(index, 1);
+    return true;
+  }
+
+  private async typeIntoPty(text: string): Promise<void> {
+    for (const character of text) {
+      this.writeToPty(character);
+      await delay(4);
+    }
+  }
+
+  private async sendPanelTurn(
+    text: string,
+    options: { allowDesktopBootstrapWrite?: boolean } = {},
+  ): Promise<void> {
+    if (this.isNativePanelMode() && !this.nativeProcess) {
+      throw new Error("codex panel is not running.");
+    }
+    this.recoverStaleBusyStateIfNeeded();
+    this.recoverStaleActiveTurnStateIfNeeded();
+    if (this.pendingApproval) {
+      throw new Error("Codex 有操作等待确认，请回复 1 允许本次，回复 2 拒绝，或回复 3 本任务始终允许。");
+    }
+    if (this.getPendingUserInputRequestsForThread(this.sharedThreadId).length > 0) {
+      throw new Error("Codex is waiting for user input. Reply with /answer and your response, or use /stop.");
+    }
+    if (this.pendingTurnStart || this.activeTurn || this.state.status === "busy") {
+      const origin = this.state.activeTurnOrigin;
+      if (origin === "local") {
+        throw new Error("The local Codex panel is still working. Wait for the current reply or use /stop.");
+      }
+      throw new Error("codex is still working. Wait for the current reply or use /stop.");
+    }
+
+    this.clearInterruptTimer();
+    this.hasAcceptedInput = true;
+    this.currentPreview = truncatePreview(text);
+    this.state.lastInputAt = nowIso();
+    this.rememberInjectedInput(text);
+
+    const threadId = await this.ensureThreadStarted();
+    const subscribedBeforeTurnStart = await this.tryEnsureSharedThreadSubscribed(threadId);
+    this.pendingTurnStart = true;
+    this.pendingTurnThreadId = threadId;
+    this.interruptPendingTurnStart = false;
+    this.state.activeTurnOrigin = "wechat";
+    this.setStatus("busy");
+
+    try {
+      const permissionSettings = this.resolveDesktopPermissionSettings(threadId);
+      const response = await this.sendRpcRequest(
+        "turn/start",
+        {
+          threadId,
+          cwd: this.getKnownThreadCwd(threadId),
+          approvalPolicy: permissionSettings.approvalPolicy,
+          approvalsReviewer: permissionSettings.approvalsReviewer,
+          sandboxPolicy: permissionSettings.sandboxPolicy,
+          input: [
+            {
+              type: "text",
+              text,
+            },
+          ],
+        },
+        { allowDesktopBootstrapWrite: options.allowDesktopBootstrapWrite },
+      );
+
+      const turnId = this.extractTurnIdFromResponse(response);
+      if (!turnId) {
+        throw new Error("Codex did not return a turn id for the requested turn.");
+      }
+
+      this.bindActiveTurn({
+        threadId,
+        turnId,
+        origin: "wechat",
+      });
+      if (!subscribedBeforeTurnStart) {
+        await this.tryEnsureSharedThreadSubscribed(threadId);
+      }
+
+      if (this.interruptPendingTurnStart) {
+        await this.requestActiveTurnInterrupt();
+        this.armInterruptFallback();
+      }
+    } catch (error) {
+      this.pendingTurnStart = false;
+      this.pendingTurnThreadId = null;
+      this.interruptPendingTurnStart = false;
+      this.state.activeTurnOrigin = undefined;
+      if (!this.activeTurn && this.getState().status === "busy") {
+        this.setStatus("idle");
+      }
+      throw error;
+    }
+  }
+
+  private async sendDesktopTurn(text: string): Promise<void> {
+    const threadId = this.sharedThreadId;
+    if (!threadId) {
+      throw new Error("请先用 /tasks 选择 Codex 任务。");
+    }
+    await this.sendDesktopTurnToThread(threadId, text);
+  }
+
+  private async sendDesktopTurnToThread(
+    threadId: string,
+    text: string,
+  ): Promise<BridgeSessionSendResult> {
+    return await this.sendDesktopTurnItemsToThread(threadId, [{ type: "text", text }]);
+  }
+
+  private async isDuplicateDesktopTurnInput(params: {
+    threadId: string;
+    text: string;
+    imageCount: number;
+    taskActive: boolean;
+    queuedInputs: BridgeQueuedTaskInput[];
+  }): Promise<boolean> {
+    if (params.imageCount > 0) {
+      return false;
+    }
+    const normalizedText = normalizeOutput(params.text).trim();
+    if (!normalizedText) {
+      return false;
+    }
+    if (this.pendingDesktopTurnTextByThreadId.get(params.threadId) === normalizedText) {
+      return true;
+    }
+    const latestQueued = params.queuedInputs.at(-1);
+    if (
+      latestQueued &&
+      latestQueued.imageCount === 0 &&
+      normalizeOutput(latestQueued.text).trim() === normalizedText
+    ) {
+      return true;
+    }
+    const recentAccepted = this.recentDesktopTurnTextByThreadId.get(params.threadId);
+    if (
+      params.taskActive &&
+      recentAccepted?.text === normalizedText &&
+      Date.now() - recentAccepted.acceptedAtMs <= CODEX_DUPLICATE_INPUT_RECENT_WINDOW_MS
+    ) {
+      return true;
+    }
+
+    try {
+      const page = await this.getSessionMessagePage(params.threadId, {
+        limit: CODEX_SESSION_MESSAGE_PAGE_MAX_LIMIT,
+      });
+      const comparison = params.taskActive
+        ? [...page.messages].reverse().find((message) => message.role === "user")
+        : page.messages.at(-1);
+      return comparison?.role === "user" &&
+        normalizeOutput(comparison.text).trim() === normalizedText;
+    } catch {
+      // Duplicate detection must fail open when history is temporarily unavailable.
+      return false;
+    }
+  }
+
+  private async sendDesktopTurnItemsToThread(
+    threadId: string,
+    items: BridgeTurnInputItem[],
+  ): Promise<BridgeSessionSendResult> {
+    if (this.desktopBootstrapThreadIds.has(threadId)) {
+      const handedOff = await this.tryHandoffDesktopBootstrapThread(threadId);
+      if (!handedOff) {
+        const unsupportedItem = items.find((item) => item.type !== "text");
+        if (unsupportedItem) {
+          throw new Error("电脑锁定时，新建 Codex 任务暂时只能发送文字；解锁后可继续发送图片。");
+        }
+        const text = items
+          .filter((item): item is Extract<BridgeTurnInputItem, { type: "text" }> =>
+            item.type === "text"
+          )
+          .map((item) => item.text)
+          .join("\n")
+          .trim();
+        await this.sendPanelTurn(text, { allowDesktopBootstrapWrite: true });
+        return { queued: false };
+      }
+    }
+    const client = this.desktopIpcClient;
+    if (!client) {
+      throw new Error("无法连接 Codex 桌面端，请确认应用正在运行。");
+    }
+    const isSelectedThread = threadId === this.sharedThreadId;
+    const text = items
+      .filter((item): item is Extract<BridgeTurnInputItem, { type: "text" }> =>
+        item.type === "text"
+      )
+      .map((item) => item.text)
+      .join("\n")
+      .trim();
+    const imageCount = items.filter((item) => item.type !== "text").length;
+    const queuedInputs = this.getQueuedTaskInputs(threadId);
+    const queued = this.activeTurn?.threadId === threadId ||
+      Array.from(this.backgroundTurns.values()).some(
+        (trackedTurn) => trackedTurn.threadId === threadId,
+      ) ||
+      this.pendingDesktopTurnThreadIds.has(threadId) ||
+      this.getPendingApprovalRequestsForThread(threadId).length > 0 ||
+      this.getPendingUserInputRequestsForThread(threadId).length > 0 ||
+      queuedInputs.length > 0 ||
+      codexDesktopRuntimeType(this.getDesktopThreadStateView(threadId)) === "active" ||
+      this.desktopListedRuntimeStatusByThreadId.get(threadId)?.type === "active";
+    if (await this.isDuplicateDesktopTurnInput({
+      threadId,
+      text,
+      imageCount,
+      taskActive: queued,
+      queuedInputs,
+    })) {
+      return { duplicate: true };
+    }
+    if (queued) {
+      return await this.enqueueDesktopQueuedFollowUp(threadId, items);
+    }
+    if (this.getPendingApprovalRequestsForThread(threadId).length > 0) {
+      throw new Error(
+        isSelectedThread
+          ? "当前任务有操作等待确认，请回复 1、2 或 3。"
+          : "这个任务有操作等待确认。",
+      );
+    }
+    if (this.getPendingUserInputRequestsForThread(threadId).length > 0) {
+      throw new Error(
+        isSelectedThread
+          ? "当前任务正在等待你的补充输入。"
+          : "这个任务正在等待你的补充输入。",
+      );
+    }
+    if (this.pendingDesktopTurnThreadIds.has(threadId)) {
+      throw new Error("上一条消息正在提交，请稍后重试。");
+    }
+
+    this.clearInterruptTimer();
+    this.hasAcceptedInput = true;
+    const preview = text || (imageCount > 0 ? `图片 ${imageCount} 张` : "");
+    this.currentPreview = truncatePreview(preview);
+    this.state.lastInputAt = nowIso();
+    if (text) {
+      this.rememberInjectedInput(text);
+    }
+    const normalizedText = imageCount === 0 ? normalizeOutput(text).trim() : "";
+    this.pendingDesktopTurnThreadIds.add(threadId);
+    if (normalizedText) {
+      this.pendingDesktopTurnTextByThreadId.set(threadId, normalizedText);
+    }
+    if (isSelectedThread) {
+      this.syncSelectedThreadState();
+    }
+
+    try {
+      const startInput = imageCount === 0 && items.length === 1 && items[0]?.type === "text"
+        ? items[0].text
+        : items;
+      const turn = await client.startTurn(threadId, startInput);
+      const turnId = typeof turn.id === "string" ? turn.id : null;
+      if (!turnId) {
+        throw new Error("Codex 桌面端没有返回任务编号。");
+      }
+      if (normalizedText) {
+        this.recentDesktopTurnTextByThreadId.set(threadId, {
+          text: normalizedText,
+          acceptedAtMs: Date.now(),
+        });
+      }
+      this.bridgeOwnedTurnIds.add(turnId);
+      this.turnStartedAtMs.set(turnId, Date.now());
+      this.turnPreviewById.set(turnId, truncatePreview(preview));
+      if (
+        !this.hasCompletedTurn(turnId) &&
+        this.activeTurn?.turnId !== turnId &&
+        !this.backgroundTurns.has(turnId)
+      ) {
+        const trackedTurn = {
+          threadId,
+          turnId,
+          origin: "wechat" as const,
+        };
+        if (isSelectedThread && !this.activeTurn) {
+          this.setActiveTurn(trackedTurn);
+        } else {
+          this.backgroundTurns.set(turnId, trackedTurn);
+        }
+      }
+      if (isSelectedThread) {
+        this.syncSelectedThreadState();
+      }
+      return { turnId, queued: false };
+    } finally {
+      this.pendingDesktopTurnThreadIds.delete(threadId);
+      if (
+        normalizedText &&
+        this.pendingDesktopTurnTextByThreadId.get(threadId) === normalizedText
+      ) {
+        this.pendingDesktopTurnTextByThreadId.delete(threadId);
+      }
+      if (isSelectedThread) {
+        this.syncSelectedThreadState();
+      }
+    }
+  }
+
+  private async resumeDesktopThread(
+    threadId: string,
+    options: { startup?: boolean } = {},
+  ): Promise<void> {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) {
+      throw new Error("请选择一个 Codex 任务。");
+    }
+    const client = this.desktopIpcClient;
+    if (!client) {
+      throw new Error("无法连接 Codex 桌面端，请确认应用正在运行。");
+    }
+
+    await client.openThread(normalizedThreadId);
+    this.subscribedThreadIds.add(normalizedThreadId);
+    this.sessionFilePath = null;
+    this.sessionReadOffset = 0;
+    this.sessionPartialLine = "";
+    this.sessionFinalText = null;
+    this.pendingThreadFollowId = null;
+    if (this.activeTurn && this.activeTurn.threadId !== normalizedThreadId) {
+      this.moveActiveTurnToBackground();
+    }
+    this.updateSharedThread(normalizedThreadId, {
+      source: options.startup ? "restore" : "wechat",
+      reason: options.startup ? "startup_restore" : "wechat_resume",
+      notify: true,
+    });
+    this.syncSelectedThreadState();
+  }
+
+  private async interruptDesktopTurn(): Promise<boolean> {
+    if (!this.sharedThreadId) {
+      return false;
+    }
+    return await this.interruptDesktopThread(this.sharedThreadId);
+  }
+
+  private async interruptDesktopThread(threadId: string): Promise<boolean> {
+    const client = this.desktopIpcClient;
+    if (!client) {
+      return false;
+    }
+    let interruptedTurn = this.activeTurn?.threadId === threadId
+      ? this.activeTurn
+      : this.getBackgroundTurnForThread(threadId);
+    if (!interruptedTurn) {
+      const summary = await this.getSessionRunSummary(threadId);
+      if (summary?.status !== "running" || !summary.turnId) {
+        return false;
+      }
+      interruptedTurn = {
+        threadId,
+        turnId: summary.turnId,
+        origin: "local",
+      };
+      if (threadId === this.sharedThreadId && !this.activeTurn) {
+        this.setActiveTurn(interruptedTurn, { followPendingThread: false });
+      } else {
+        this.backgroundTurns.set(interruptedTurn.turnId, interruptedTurn);
+      }
+    }
+
+    this.pendingApprovalRequests = this.pendingApprovalRequests.filter(
+      (request) => request.turnId !== interruptedTurn.turnId,
+    );
+    this.pendingUserInputRequests = this.pendingUserInputRequests.filter(
+      (request) => request.turnId !== interruptedTurn.turnId,
+    );
+    if (threadId === this.sharedThreadId) {
+      this.syncSelectedThreadState();
+    }
+    await client.interruptTurn(interruptedTurn.threadId, interruptedTurn.turnId);
+    this.armInterruptFallback(interruptedTurn);
+    return true;
+  }
+
+  private async interruptPanelTurn(): Promise<boolean> {
+    if (this.isNativePanelMode() && !this.nativeProcess) {
+      return false;
+    }
+
+    const turnPending =
+      this.pendingTurnStart ||
+      this.state.status === "busy" ||
+      this.state.status === "awaiting_approval" ||
+      this.state.status === "awaiting_input";
+    if (!turnPending) {
+      return false;
+    }
+
+    if (this.pendingTurnStart && !this.activeTurn) {
+      this.interruptPendingTurnStart = true;
+      return true;
+    }
+
+    const interruptedTurn = this.activeTurn;
+    if (!interruptedTurn) {
+      return false;
+    }
+
+    this.pendingApprovalRequests = this.pendingApprovalRequests.filter(
+      (request) => request.turnId !== interruptedTurn.turnId,
+    );
+    this.pendingUserInputRequests = this.pendingUserInputRequests.filter(
+      (request) => request.turnId !== interruptedTurn.turnId,
+    );
+    this.syncSelectedThreadState();
+    await this.requestActiveTurnInterrupt();
+    this.armInterruptFallback(interruptedTurn);
+    return true;
+  }
+
+  private async startAppServer(): Promise<void> {
+    if (this.appServer) {
+      return;
+    }
+
+    const port = await reserveLocalPort();
+    const env = this.buildEnv();
+    const workspacePaths = ensureWorkspaceChannelDir(this.options.cwd);
+    const token = crypto.randomBytes(24).toString("hex");
+    const tokenFilePath = path.join(
+      workspacePaths.workspaceDir,
+      `codex-app-server-token-${this.localClientInstanceId}.txt`,
+    );
+    fs.writeFileSync(tokenFilePath, `${token}\n`, "utf8");
+    const spawnTarget = resolveSpawnTarget(this.options.command, "codex");
+    const child = spawnChild(
+      spawnTarget.file,
+      [
+        ...spawnTarget.args,
+        "app-server",
+        "--listen",
+        `ws://${CODEX_APP_SERVER_HOST}:${port}`,
+        "--ws-auth",
+        "capability-token",
+        "--ws-token-file",
+        tokenFilePath,
+      ],
+      {
+        // The app-server only coordinates persisted threads; each thread/turn RPC
+        // carries its real project cwd. Keep this helper process in Bridge-owned
+        // state so a macOS LaunchAgent does not block on a protected Documents cwd.
+        cwd: workspacePaths.workspaceDir,
+        env,
+        stdio: "pipe",
+        windowsHide: true,
+      },
+    );
+
+    this.appServer = child;
+    this.appServerPort = port;
+    this.appServerShuttingDown = false;
+    this.appServerLog = "";
+    this.appServerAuthToken = token;
+    this.appServerAuthTokenFilePath = tokenFilePath;
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      this.appServerLog = appendBoundedLog(this.appServerLog, chunk);
+    });
+    child.stderr.on("data", (chunk: string) => {
+      this.appServerLog = appendBoundedLog(this.appServerLog, chunk);
+    });
+    child.once("error", (error: Error) => {
+      // spawn itself failed (ENOENT/EACCES/EMFILE). Without this listener the
+      // 'error' event is unhandled and crashes the bridge. Mirror the exit
+      // handler's cleanup so the failure surfaces as a fatal_error instead.
+      const expectedShutdown = shouldSuppressCodexTransportFatalError({
+        transportShuttingDown: this.appServerShuttingDown,
+        shuttingDown: this.shuttingDown,
+        cleanPanelExitInProgress: this.cleanPanelExitInProgress,
+      });
+      this.appServer = null;
+      this.appServerPort = null;
+      this.appServerShuttingDown = false;
+      this.deleteAppServerAuthTokenFile();
+      this.appServerAuthToken = null;
+      if (expectedShutdown) {
+        return;
+      }
+      const details = this.describeAppServerLog();
+      this.emit({
+        type: "fatal_error",
+        message: `codex app-server failed to start: ${String(error)}${details}`,
+        timestamp: nowIso(),
+      });
+      this.terminateCodexClient();
+    });
+    child.on("exit", (code, signal) => {
+      const expectedShutdown = shouldSuppressCodexTransportFatalError({
+        transportShuttingDown: this.appServerShuttingDown,
+        shuttingDown: this.shuttingDown,
+        cleanPanelExitInProgress: this.cleanPanelExitInProgress,
+      });
+      this.appServer = null;
+      this.appServerPort = null;
+      this.appServerShuttingDown = false;
+      this.deleteAppServerAuthTokenFile();
+      this.appServerAuthToken = null;
+
+      if (expectedShutdown) {
+        return;
+      }
+
+      const exitLabel =
+        signal ? `signal ${signal}` : `code ${typeof code === "number" ? code : "unknown"}`;
+      const details = this.describeAppServerLog();
+      this.emit({
+        type: "fatal_error",
+        message: `codex app-server exited unexpectedly with ${exitLabel}.${details}`,
+        timestamp: nowIso(),
+      });
+
+      this.terminateCodexClient();
+    });
+
+    try {
+      await waitForTcpPort(
+        CODEX_APP_SERVER_HOST,
+        port,
+        CODEX_APP_SERVER_READY_TIMEOUT_MS,
+      );
+    } catch (err) {
+      await this.stopAppServer();
+      const details = this.describeAppServerLog();
+      throw new Error(`Failed to start Codex app-server: ${String(err)}${details}`, {
+        cause: err,
+      });
+    }
+  }
+
+  private async connectRpcClient(): Promise<void> {
+    if (this.rpcSocket) {
+      return;
+    }
+    if (!this.appServerPort) {
+      throw new Error("Codex app-server is not ready.");
+    }
+    if (typeof WebSocket !== "function") {
+      throw new Error("Global WebSocket is unavailable in this runtime.");
+    }
+
+    const url = `ws://${CODEX_APP_SERVER_HOST}:${this.appServerPort}`;
+    const deadline = Date.now() + CODEX_APP_SERVER_READY_TIMEOUT_MS;
+    let lastError = "Timed out before the websocket became ready.";
+
+    while (Date.now() < deadline) {
+      try {
+        const socket = await this.openRpcSocket(
+          url,
+          this.appServerAuthToken,
+          deadline - Date.now(),
+        );
+        this.attachRpcSocket(socket);
+        await this.initializeRpcClient();
+        return;
+      } catch (err) {
+        lastError = describeUnknownError(err);
+        await this.disconnectRpcClient();
+        await delay(CODEX_RPC_CONNECT_RETRY_MS);
+      }
+    }
+
+    throw new Error(`Failed to connect to Codex app-server websocket: ${lastError}`);
+  }
+
+  private async openRpcSocket(
+    url: string,
+    authToken: string | null,
+    timeoutMs: number,
+  ): Promise<WebSocket> {
+    if (!authToken) {
+      throw new Error("Codex app-server websocket auth token is unavailable.");
+    }
+
+    return await new Promise<WebSocket>((resolve, reject) => {
+      const socket = new WebSocket(url, {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
+      });
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        try {
+          socket.close();
+        } catch {
+          // Best effort cleanup after timeout.
+        }
+        reject(new Error(`Timed out opening Codex websocket ${url}.`));
+      }, Math.max(500, timeoutMs));
+
+      const cleanup = () => {
+        clearTimeout(timer);
+      };
+
+      socket.addEventListener(
+        "open",
+        () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          cleanup();
+          resolve(socket);
+        },
+        { once: true },
+      );
+
+      socket.addEventListener(
+        "error",
+        () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          cleanup();
+          reject(new Error(`Failed to open Codex websocket ${url}.`));
+        },
+        { once: true },
+      );
+    });
+  }
+
+  private attachRpcSocket(socket: WebSocket): void {
+    this.rpcSocket = socket;
+    this.rpcShuttingDown = false;
+    this.subscribedThreadIds.clear();
+
+    socket.addEventListener("message", (event) => {
+      this.handleRpcMessageData(event.data);
+    });
+    socket.addEventListener("close", () => {
+      this.handleRpcSocketClosed();
+    });
+  }
+
+  private async disconnectRpcClient(): Promise<void> {
+    const socket = this.rpcSocket;
+    this.rpcSocket = null;
+    this.rpcShuttingDown = true;
+    this.subscribedThreadIds.clear();
+    this.rejectPendingRpcRequests("Codex websocket connection closed.");
+
+    if (!socket) {
+      this.rpcShuttingDown = false;
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      if (socket.readyState === WebSocket.CLOSED) {
+        resolve();
+        return;
+      }
+
+      let settled = false;
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve();
+      };
+
+      socket.addEventListener("close", () => finish(), { once: true });
+      const timer = setTimeout(() => finish(), 1_000);
+      timer.unref?.();
+
+      try {
+        socket.close();
+      } catch {
+        finish();
+      }
+    });
+
+    this.rpcShuttingDown = false;
+  }
+
+  private handleRpcSocketClosed(): void {
+    const expectedShutdown = shouldSuppressCodexTransportFatalError({
+      transportShuttingDown: this.rpcShuttingDown,
+      shuttingDown: this.shuttingDown,
+      cleanPanelExitInProgress: this.cleanPanelExitInProgress,
+    });
+    this.rpcSocket = null;
+    this.subscribedThreadIds.clear();
+    this.rejectPendingRpcRequests("Codex websocket connection closed.");
+    this.rpcShuttingDown = false;
+
+    if (expectedShutdown) {
+      return;
+    }
+
+    void this.reconnectRpcClientAfterUnexpectedClose();
+  }
+
+  private async reconnectRpcClientAfterUnexpectedClose(): Promise<boolean> {
+    if (this.rpcReconnectPromise) {
+      return await this.rpcReconnectPromise;
+    }
+
+    this.rpcReconnectPromise = (async () => {
+      if (
+        shouldSuppressCodexTransportFatalError({
+          transportShuttingDown: this.rpcShuttingDown,
+          shuttingDown: this.shuttingDown,
+          cleanPanelExitInProgress: this.cleanPanelExitInProgress,
+        })
+      ) {
+        return false;
+      }
+
+      if (!this.appServer || !this.appServerPort) {
+        if (
+          shouldSuppressCodexTransportFatalError({
+            transportShuttingDown: this.appServerShuttingDown,
+            shuttingDown: this.shuttingDown,
+            cleanPanelExitInProgress: this.cleanPanelExitInProgress,
+          })
+        ) {
+          return false;
+        }
+        const details = this.describeAppServerLog();
+        this.emit({
+          type: "fatal_error",
+          message: `codex app-server websocket closed unexpectedly.${details}`,
+          timestamp: nowIso(),
+        });
+        this.terminateCodexClient();
+        return false;
+      }
+
+      const reconnectDeadline = Date.now() + CODEX_RPC_RECONNECT_TIMEOUT_MS;
+      let lastError = "Codex websocket connection closed.";
+
+      while (
+        !this.shuttingDown &&
+        !this.cleanPanelExitInProgress &&
+        Date.now() < reconnectDeadline
+      ) {
+        try {
+          await this.connectRpcClient();
+          return true;
+        } catch (error) {
+          lastError = describeUnknownError(error);
+          await delay(CODEX_RPC_CONNECT_RETRY_MS);
+        }
+      }
+
+      const details = this.describeAppServerLog();
+      if (
+        shouldSuppressCodexTransportFatalError({
+          transportShuttingDown: this.appServerShuttingDown,
+          shuttingDown: this.shuttingDown,
+          cleanPanelExitInProgress: this.cleanPanelExitInProgress,
+        })
+      ) {
+        return false;
+      }
+      this.emit({
+        type: "fatal_error",
+        message: `codex app-server websocket closed unexpectedly and could not reconnect: ${lastError}.${details}`,
+        timestamp: nowIso(),
+      });
+      this.terminateCodexClient();
+      return false;
+    })();
+
+    try {
+      return await this.rpcReconnectPromise;
+    } finally {
+      this.rpcReconnectPromise = null;
+    }
+  }
+
+  private rejectPendingRpcRequests(message: string): void {
+    for (const pending of this.pendingRpcRequests.values()) {
+      pending.reject(new Error(message));
+    }
+    this.pendingRpcRequests.clear();
+  }
+
+  private async initializeRpcClient(): Promise<void> {
+    await this.sendRpcRequest("initialize", {
+      clientInfo: {
+        name: "deskrelay-bridge",
+        title: "DeskRelay",
+        version: "0.1.0",
+      },
+      capabilities: {
+        experimentalApi: true,
+      },
+    });
+  }
+
+  private async restoreInitialSharedThreadIfNeeded(): Promise<void> {
+    if (!this.resumeThreadId || this.isNativePanelMode()) {
+      return;
+    }
+
+    const threadId = this.resumeThreadId;
+    this.resumeThreadId = null;
+
+    try {
+      await this.resumeSharedThread(threadId, { startup: true });
+    } catch (error) {
+      this.updateSharedThread(null);
+      this.emit({
+        type: "status",
+        status: "starting",
+        message: `Failed to restore the previous Codex thread ${threadId.slice(0, 12)}. Starting without resume: ${describeUnknownError(error)}`,
+        timestamp: nowIso(),
+      });
+    }
+  }
+
+  private async ensureThreadStarted(): Promise<string> {
+    if (this.sharedThreadId) {
+      return this.sharedThreadId;
+    }
+
+    const permissionSettings = this.resolveDesktopPermissionSettings();
+    const response = await this.sendRpcRequest("thread/start", {
+      cwd: this.options.cwd,
+      approvalPolicy: permissionSettings.approvalPolicy,
+      approvalsReviewer: permissionSettings.approvalsReviewer,
+      sandbox: permissionSettings.sandbox,
+      serviceName: "deskrelay-bridge",
+      experimentalRawEvents: false,
+      persistExtendedHistory: true,
+    });
+
+    const threadId = this.extractThreadIdFromResponse(response);
+    if (!threadId) {
+      throw new Error("Codex did not return a thread id for the bridge session.");
+    }
+
+    this.rememberBridgeOwnedThreadSignal(threadId);
+    this.subscribedThreadIds.add(threadId);
+    this.updateSharedThread(threadId);
+    return threadId;
+  }
+
+  private async tryEnsureSharedThreadSubscribed(threadId: string): Promise<boolean> {
+    if (this.subscribedThreadIds.has(threadId)) {
+      return true;
+    }
+
+    try {
+      await this.ensureSharedThreadSubscribed(threadId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async ensureSharedThreadSubscribed(threadId: string): Promise<void> {
+    if (this.subscribedThreadIds.has(threadId)) {
+      return;
+    }
+
+    const cwd = this.getKnownThreadCwd(threadId);
+    const permissionSettings = this.resolveDesktopPermissionSettings(threadId);
+    const response = await this.sendRpcRequest("thread/resume", {
+      threadId,
+      cwd,
+      approvalPolicy: permissionSettings.approvalPolicy,
+      approvalsReviewer: permissionSettings.approvalsReviewer,
+      sandbox: permissionSettings.sandbox,
+      excludeTurns: true,
+    });
+
+    const resumedThreadId = this.extractThreadIdFromResponse(response);
+    if (!resumedThreadId) {
+      throw new Error("Codex did not return a thread id while subscribing the bridge client.");
+    }
+
+    this.rememberBridgeOwnedThreadSignal(resumedThreadId);
+    this.subscribedThreadIds.add(resumedThreadId);
+    if (resumedThreadId !== this.sharedThreadId) {
+      this.updateSharedThread(resumedThreadId);
+    }
+  }
+
+  private async resumeSharedThread(
+    threadId: string,
+    options: { startup?: boolean; cwd?: string } = {},
+  ): Promise<void> {
+    const trimmedThreadId = threadId.trim();
+    if (!trimmedThreadId) {
+      throw new Error("A thread id is required to resume a Codex thread.");
+    }
+
+    if (this.usesDesktopTransport()) {
+      await this.resumeDesktopThread(trimmedThreadId, {
+        startup: options.startup,
+      });
+      return;
+    }
+
+    if (!this.usesRpcTurnTransport()) {
+      if (this.pendingApproval) {
+        throw new Error("Codex 有操作等待确认，请回复 1 允许本次，回复 2 拒绝，或回复 3 本任务始终允许。");
+      }
+
+      if (
+        !options.startup &&
+        (this.pendingTurnStart ||
+          this.activeTurn ||
+          this.pendingUserInputRequests.length > 0 ||
+          this.state.status === "busy" ||
+          this.state.status === "awaiting_approval" ||
+          this.state.status === "awaiting_input")
+      ) {
+        throw new Error("codex is still working. Wait for the current reply or use /stop.");
+      }
+    }
+
+    const cwd = options.cwd ?? await this.resolveDesktopThreadCwd(trimmedThreadId);
+    const permissionSettings = this.resolveDesktopPermissionSettings(trimmedThreadId);
+    const response = await this.sendRpcRequest("thread/resume", {
+      threadId: trimmedThreadId,
+      cwd,
+      approvalPolicy: permissionSettings.approvalPolicy,
+      approvalsReviewer: permissionSettings.approvalsReviewer,
+      sandbox: permissionSettings.sandbox,
+      excludeTurns: true,
+    });
+
+    const resumedThreadId = this.extractThreadIdFromResponse(response);
+    if (!resumedThreadId) {
+      throw new Error("Codex did not return a thread id while resuming the saved thread.");
+    }
+
+    if (cwd) {
+      this.desktopThreadCwdById.set(resumedThreadId, cwd);
+    }
+    this.rememberBridgeOwnedThreadSignal(resumedThreadId);
+    this.subscribedThreadIds.add(resumedThreadId);
+    this.sessionFilePath = null;
+    this.sessionReadOffset = 0;
+    this.sessionPartialLine = "";
+    this.sessionFinalText = null;
+    this.pendingThreadFollowId = null;
+    if (
+      this.usesRpcTurnTransport() &&
+      this.activeTurn &&
+      this.activeTurn.threadId !== resumedThreadId
+    ) {
+      this.moveActiveTurnToBackground();
+    }
+    this.updateSharedThread(resumedThreadId, {
+      source: options.startup ? "restore" : "wechat",
+      reason: options.startup ? "startup_restore" : "wechat_resume",
+      notify: true,
+    });
+    if (this.usesRpcTurnTransport()) {
+      this.syncSelectedThreadState();
+    }
+  }
+
+  private getKnownThreadCwd(threadId: string | null | undefined): string {
+    return (threadId ? this.desktopThreadCwdById.get(threadId) : undefined) ?? this.options.cwd;
+  }
+
+  private async resolveDesktopThreadCwd(threadId: string): Promise<string> {
+    const trimmedThreadId = threadId.trim();
+    const knownCwd = this.desktopThreadCwdById.get(trimmedThreadId);
+    if (knownCwd) {
+      return knownCwd;
+    }
+
+    try {
+      const response = await this.sendRpcRequest("thread/read", {
+        threadId: trimmedThreadId,
+        includeTurns: false,
+      });
+      const cwd = this.extractThreadCwdFromResponse(response);
+      if (cwd) {
+        this.desktopThreadCwdById.set(trimmedThreadId, cwd);
+        return cwd;
+      }
+    } catch {
+      // Preserve the previous same-workspace behavior when thread/read is unavailable.
+    }
+
+    return this.options.cwd;
+  }
+
+  private extractThreadCwdFromResponse(response: unknown): string | null {
+    if (!isRecord(response) || !isRecord(response.thread)) {
+      return null;
+    }
+    return typeof response.thread.cwd === "string" && response.thread.cwd.trim()
+      ? response.thread.cwd.trim()
+      : null;
+  }
+
+  private extractThreadIdFromResponse(response: unknown): string | null {
+    if (!isRecord(response) || !isRecord(response.thread)) {
+      return null;
+    }
+    return typeof response.thread.id === "string" ? response.thread.id : null;
+  }
+
+  private extractTurnIdFromResponse(response: unknown): string | null {
+    if (!isRecord(response) || !isRecord(response.turn)) {
+      return null;
+    }
+    return typeof response.turn.id === "string" ? response.turn.id : null;
+  }
+
+  private bindActiveTurn(activeTurn: CodexActiveTurn): void {
+    this.pendingTurnStart = false;
+    this.pendingTurnThreadId = null;
+    this.bridgeOwnedTurnIds.add(activeTurn.turnId);
+    if (!this.turnStartedAtMs.has(activeTurn.turnId)) {
+      this.turnStartedAtMs.set(activeTurn.turnId, Date.now());
+    }
+    this.turnPreviewById.set(activeTurn.turnId, this.currentPreview);
+    this.setActiveTurn(activeTurn);
+
+    const queuedNotifications = this.queuedTurnNotifications;
+    this.queuedTurnNotifications = [];
+    for (const notification of queuedNotifications) {
+      this.handleRpcNotification(notification.method, notification.params);
+    }
+
+    const queuedRequests = this.queuedTurnServerRequests;
+    this.queuedTurnServerRequests = [];
+    for (const request of queuedRequests) {
+      this.handleRpcServerRequest(request.requestId, request.method, request.params);
+    }
+  }
+
+  private async requestActiveTurnInterrupt(): Promise<void> {
+    if (!this.activeTurn) {
+      return;
+    }
+
+    await this.sendRpcRequest(
+      "turn/interrupt",
+      {
+        threadId: this.activeTurn.threadId,
+        turnId: this.activeTurn.turnId,
+      },
+      {
+        allowDesktopBootstrapWrite: this.desktopBootstrapThreadIds.has(
+          this.activeTurn.threadId,
+        ),
+      },
+    );
+  }
+
+  private armInterruptFallback(turn: CodexActiveTurn | null = this.activeTurn): void {
+    this.clearInterruptTimer();
+    this.interruptFallbackTurn = turn;
+    this.interruptTimer = setTimeout(() => {
+      this.interruptTimer = null;
+      const interruptedTurn = this.interruptFallbackTurn;
+      this.interruptFallbackTurn = null;
+      if (!interruptedTurn) {
+        return;
+      }
+
+      const stillTracked =
+        this.activeTurn?.turnId === interruptedTurn.turnId ||
+        this.backgroundTurns.has(interruptedTurn.turnId);
+      if (!stillTracked) {
+        return;
+      }
+
+      this.pendingApprovalRequests = this.pendingApprovalRequests.filter(
+        (request) => request.turnId !== interruptedTurn.turnId,
+      );
+      this.pendingUserInputRequests = this.pendingUserInputRequests.filter(
+        (request) => request.turnId !== interruptedTurn.turnId,
+      );
+      if (this.activeTurn?.turnId === interruptedTurn.turnId) {
+        this.setActiveTurn(null, { followPendingThread: false });
+      }
+      this.backgroundTurns.delete(interruptedTurn.turnId);
+      this.cleanupTurnArtifacts(interruptedTurn.turnId);
+      this.syncSelectedThreadState(
+        interruptedTurn.threadId === this.sharedThreadId
+          ? "Codex task interrupted."
+          : undefined,
+      );
+      this.emit({
+        type: "task_complete",
+        summary: "Interrupted",
+        outcome: "interrupted",
+        timestamp: nowIso(),
+        threadId: interruptedTurn.threadId,
+        turnId: interruptedTurn.turnId,
+        origin: interruptedTurn.origin,
+      });
+      this.rememberCompletedTurn(interruptedTurn.turnId);
+    }, INTERRUPT_SETTLE_DELAY_MS);
+  }
+
+  private clearInterruptTimer(): void {
+    if (this.interruptTimer) {
+      clearTimeout(this.interruptTimer);
+      this.interruptTimer = null;
+    }
+    this.interruptFallbackTurn = null;
+  }
+
+  private clearInterruptTimerForTurn(turnId: string): void {
+    if (this.interruptFallbackTurn?.turnId === turnId) {
+      this.clearInterruptTimer();
+    }
+  }
+
+  private recoverStaleBusyStateIfNeeded(): void {
+    if (
+      !shouldRecoverCodexStaleBusyState({
+        status: this.state.status,
+        pendingTurnStart: this.pendingTurnStart,
+        hasActiveTurn: Boolean(this.activeTurn),
+        hasPendingApproval: Boolean(
+          this.getPendingApprovalRequestsForThread(this.sharedThreadId).length,
+        ),
+        hasPendingUserInput: Boolean(
+          this.getPendingUserInputRequestsForThread(this.sharedThreadId).length,
+        ),
+        activeTurnId: this.state.activeTurnId,
+      })
+    ) {
+      return;
+    }
+
+    this.pendingTurnStart = false;
+    this.pendingTurnThreadId = null;
+    this.interruptPendingTurnStart = false;
+    this.state.activeTurnId = undefined;
+    this.state.activeTurnOrigin = undefined;
+    this.clearInterruptTimer();
+    this.setStatus("idle", "Recovered stale busy state.");
+  }
+
+  private recoverStaleActiveTurnStateIfNeeded(): void {
+    if (
+      !this.activeTurn ||
+      this.pendingTurnStart ||
+      this.getPendingApprovalRequestsForThread(this.sharedThreadId).length > 0 ||
+      this.state.status === "busy" ||
+      this.state.status === "awaiting_approval" ||
+      this.state.activeTurnId
+    ) {
+      return;
+    }
+
+    this.cleanupTurnArtifacts(this.activeTurn.turnId);
+    this.setActiveTurn(null);
+    this.clearInterruptTimer();
+  }
+
+  private resetTurnTracking(options: { preserveThread: boolean }): void {
+    this.clearInterruptTimer();
+    this.clearFinalReplyCompletionTimer();
+    if (this.activeTurn) {
+      this.cleanupTurnArtifacts(this.activeTurn.turnId);
+    }
+    for (const backgroundTurn of this.backgroundTurns.values()) {
+      this.cleanupTurnArtifacts(backgroundTurn.turnId);
+    }
+    this.backgroundTurns.clear();
+    this.setActiveTurn(null);
+    this.pendingTurnStart = false;
+    this.pendingTurnThreadId = null;
+    this.pendingDesktopTurnThreadIds.clear();
+    this.interruptPendingTurnStart = false;
+    this.pendingThreadFollowId = null;
+    this.clearPendingApprovalState();
+    this.clearPendingUserInputState();
+    this.queuedTurnNotifications = [];
+    this.queuedTurnServerRequests = [];
+    this.turnFinalMessages.clear();
+    this.turnDeltaByItem.clear();
+    this.turnErrorById.clear();
+    this.turnLastActivityAtMs.clear();
+    this.turnPreviewById.clear();
+    this.mirroredUserInputTurnIds.clear();
+    this.bridgeOwnedTurnIds.clear();
+    this.completedTurnIds.clear();
+    this.completedTurnOrder = [];
+    this.pendingInjectedInputs = [];
+    this.recentBridgeThreadSignalAtById.clear();
+    this.sessionFinalText = null;
+    this.nextSessionFallbackScanAtMs = 0;
+    this.nextSessionFileLookupAtMs = 0;
+    this.state.activeTurnId = undefined;
+    this.state.activeTurnOrigin = undefined;
+    if (!options.preserveThread) {
+      this.clearPendingThreadAnnouncement();
+      this.announcedThreadId = null;
+    }
+    if (!options.preserveThread) {
+      this.updateSharedThread(null);
+    }
+  }
+
+  private updateSharedThread(
+    threadId: string | null,
+    options: {
+      source?: BridgeThreadSwitchSource;
+      reason?: BridgeThreadSwitchReason;
+      notify?: boolean;
+    } = {},
+  ): void {
+    const previousThreadId = this.sharedThreadId;
+    this.sharedThreadId = threadId;
+    this.state.sharedSessionId = threadId ?? undefined;
+    this.state.sharedThreadId = threadId ?? undefined;
+    if (!threadId) {
+      this.clearPendingThreadAnnouncement();
+      this.announcedThreadId = null;
+    } else if (
+      previousThreadId !== threadId &&
+      this.pendingThreadAnnouncement &&
+      this.pendingThreadAnnouncement.threadId !== threadId
+    ) {
+      this.clearPendingThreadAnnouncement();
+    }
+    if (threadId && options.source && options.reason) {
+      const switchedAt = nowIso();
+      this.state.lastSessionSwitchAt = switchedAt;
+      this.state.lastSessionSwitchSource = options.source;
+      this.state.lastSessionSwitchReason = options.reason;
+      this.state.lastThreadSwitchAt = switchedAt;
+      this.state.lastThreadSwitchSource = options.source;
+      this.state.lastThreadSwitchReason = options.reason;
+      if (options.notify) {
+        this.emitThreadSwitched(threadId, options.source, options.reason);
+      }
+    }
+    if (previousThreadId !== threadId) {
+      this.sessionFilePath = null;
+      this.sessionReadOffset = 0;
+      this.sessionPartialLine = "";
+      this.sessionFinalText = null;
+      this.sessionIgnoreBeforeMs = threadId ? Date.now() : null;
+      this.nextSessionFallbackScanAtMs = 0;
+      this.nextSessionFileLookupAtMs = 0;
+      this.emit({
+        type: "status",
+        status: this.state.status,
+        timestamp: nowIso(),
+      });
+    }
+  }
+
+  private setActiveTurn(
+    activeTurn: CodexActiveTurn | null,
+    options: { followPendingThread?: boolean } = {},
+  ): void {
+    this.activeTurn = activeTurn;
+    this.state.activeTurnId = activeTurn?.turnId;
+    this.state.activeTurnOrigin = activeTurn?.origin;
+    if (
+      !activeTurn &&
+      options.followPendingThread !== false &&
+      this.pendingThreadFollowId
+    ) {
+      const pendingThreadId = this.pendingThreadFollowId;
+      this.pendingThreadFollowId = null;
+      this.trackLocalSharedThread(pendingThreadId, {
+        reason: "local_follow",
+        signal: "status_changed",
+      });
+    }
+  }
+
+  private getBackgroundTurnForThread(threadId: string): CodexActiveTurn | null {
+    for (const turn of this.backgroundTurns.values()) {
+      if (turn.threadId === threadId) {
+        return turn;
+      }
+    }
+    return null;
+  }
+
+  private hasTrackedTurnForThread(threadId: string): boolean {
+    return (
+      this.activeTurn?.threadId === threadId ||
+      Boolean(this.getBackgroundTurnForThread(threadId))
+    );
+  }
+
+  private moveActiveTurnToBackground(): void {
+    if (!this.activeTurn) {
+      return;
+    }
+    this.backgroundTurns.set(this.activeTurn.turnId, this.activeTurn);
+    this.setActiveTurn(null, { followPendingThread: false });
+  }
+
+  private promoteBackgroundTurnForThread(threadId: string): CodexActiveTurn | null {
+    const turn = this.getBackgroundTurnForThread(threadId);
+    if (!turn) {
+      return null;
+    }
+    this.backgroundTurns.delete(turn.turnId);
+    this.setActiveTurn(turn, { followPendingThread: false });
+    return turn;
+  }
+
+  private getPendingApprovalRequestsForThread(
+    threadId: string | null | undefined,
+  ): CodexPendingApprovalRequest[] {
+    if (!threadId) {
+      return [];
+    }
+    return this.pendingApprovalRequests.filter((request) => request.threadId === threadId);
+  }
+
+  private getPendingUserInputRequestsForThread(
+    threadId: string | null | undefined,
+  ): CodexPendingUserInputRequest[] {
+    if (!threadId) {
+      return [];
+    }
+    return this.pendingUserInputRequests.filter((request) => request.threadId === threadId);
+  }
+
+  private syncSelectedThreadState(
+    message?: string,
+    options: { recoverConnectionError?: boolean } = {},
+  ): void {
+    const selectedThreadId = this.sharedThreadId;
+    if (
+      selectedThreadId &&
+      (!this.activeTurn || this.activeTurn.threadId !== selectedThreadId)
+    ) {
+      this.promoteBackgroundTurnForThread(selectedThreadId);
+    }
+
+    const selectedApproval =
+      this.getPendingApprovalRequestsForThread(selectedThreadId)[0] ?? null;
+    const selectedUserInput =
+      this.getPendingUserInputRequestsForThread(selectedThreadId)[0] ?? null;
+    this.pendingApproval = selectedApproval?.request ?? null;
+    this.state.pendingApproval = selectedApproval?.request ?? null;
+    this.state.pendingApprovalOrigin = selectedApproval?.origin;
+    this.state.pendingUserInput = selectedUserInput?.request ?? null;
+    this.state.pendingUserInputOrigin = selectedUserInput?.origin;
+
+    if (
+      this.state.status === "stopped" ||
+      this.state.status === "starting" ||
+      (this.state.status === "error" && !options.recoverConnectionError)
+    ) {
+      return;
+    }
+
+    const nextStatus = selectedApproval
+      ? "awaiting_approval"
+      : selectedUserInput
+        ? "awaiting_input"
+        : this.activeTurn ||
+            (this.pendingTurnStart && this.pendingTurnThreadId === selectedThreadId)
+          ? "busy"
+          : "idle";
+    if (this.state.status !== nextStatus || message) {
+      this.setStatus(nextStatus, message);
+    }
+  }
+
+  private clearPendingThreadAnnouncement(): void {
+    if (!this.pendingThreadAnnouncement) {
+      return;
+    }
+    if (this.pendingThreadAnnouncement.timer) {
+      clearTimeout(this.pendingThreadAnnouncement.timer);
+    }
+    this.pendingThreadAnnouncement = null;
+  }
+
+  private emitThreadSwitched(
+    threadId: string,
+    source: BridgeThreadSwitchSource,
+    reason: BridgeThreadSwitchReason,
+  ): void {
+    if (this.announcedThreadId === threadId) {
+      if (this.pendingThreadAnnouncement?.threadId === threadId) {
+        this.clearPendingThreadAnnouncement();
+      }
+      return;
+    }
+
+    if (this.pendingThreadAnnouncement?.threadId === threadId) {
+      this.clearPendingThreadAnnouncement();
+    }
+
+    const switchedAt = nowIso();
+    this.announcedThreadId = threadId;
+    this.state.lastSessionSwitchAt = switchedAt;
+    this.state.lastSessionSwitchSource = source;
+    this.state.lastSessionSwitchReason = reason;
+    this.state.lastThreadSwitchAt = switchedAt;
+    this.state.lastThreadSwitchSource = source;
+    this.state.lastThreadSwitchReason = reason;
+    this.emit({
+      type: "thread_switched",
+      threadId,
+      source,
+      reason,
+      timestamp: switchedAt,
+    });
+  }
+
+  private isPendingThreadAnnouncementStable(
+    pending: CodexPendingThreadAnnouncement,
+  ): boolean {
+    return pending.signals.has("user_message") || pending.signals.size >= 2;
+  }
+
+  private schedulePendingThreadAnnouncement(): void {
+    const pending = this.pendingThreadAnnouncement;
+    if (!pending || pending.timer || !this.isNativePanelMode()) {
+      return;
+    }
+
+    pending.timer = setTimeout(() => {
+      const current = this.pendingThreadAnnouncement;
+      if (!current || current.threadId !== pending.threadId) {
+        return;
+      }
+      current.timer = null;
+      this.updateSharedThread(current.threadId, {
+        source: current.source,
+        reason: current.reason,
+        notify: true,
+      });
+    }, CODEX_LOCAL_THREAD_ANNOUNCE_SETTLE_MS);
+    pending.timer.unref?.();
+  }
+
+  private trackLocalSharedThread(
+    threadId: string,
+    options: {
+      reason: BridgeThreadSwitchReason;
+      signal: CodexThreadAnnouncementSignal;
+    },
+  ): void {
+    if (!this.isNativePanelMode()) {
+      this.updateSharedThread(threadId, {
+        source: "local",
+        reason: options.reason,
+        notify: true,
+      });
+      return;
+    }
+
+    this.updateSharedThread(threadId, {
+      source: "local",
+      reason: options.reason,
+    });
+
+    if (this.announcedThreadId === threadId) {
+      if (this.pendingThreadAnnouncement?.threadId === threadId) {
+        this.clearPendingThreadAnnouncement();
+      }
+      return;
+    }
+
+    if (!this.pendingThreadAnnouncement || this.pendingThreadAnnouncement.threadId !== threadId) {
+      this.clearPendingThreadAnnouncement();
+      this.pendingThreadAnnouncement = {
+        threadId,
+        source: "local",
+        reason: options.reason,
+        signals: new Set<CodexThreadAnnouncementSignal>(),
+        timer: null,
+      };
+    }
+
+    this.pendingThreadAnnouncement.source = "local";
+    this.pendingThreadAnnouncement.reason = options.reason;
+    this.pendingThreadAnnouncement.signals.add(options.signal);
+
+    if (this.isPendingThreadAnnouncementStable(this.pendingThreadAnnouncement)) {
+      this.updateSharedThread(threadId, {
+        source: "local",
+        reason: options.reason,
+        notify: true,
+      });
+      return;
+    }
+
+    this.schedulePendingThreadAnnouncement();
+  }
+
+  private rememberBridgeOwnedThreadSignal(threadId: string): void {
+    const cutoff = Date.now() - CODEX_THREAD_SIGNAL_TTL_MS;
+    for (const [candidateThreadId, recordedAtMs] of this.recentBridgeThreadSignalAtById.entries()) {
+      if (recordedAtMs < cutoff) {
+        this.recentBridgeThreadSignalAtById.delete(candidateThreadId);
+      }
+    }
+    this.recentBridgeThreadSignalAtById.set(threadId, Date.now());
+  }
+
+  private isRecentlyBridgeOwnedThread(threadId: string): boolean {
+    const recordedAtMs = this.recentBridgeThreadSignalAtById.get(threadId);
+    if (!recordedAtMs) {
+      return false;
+    }
+    if (recordedAtMs < Date.now() - CODEX_THREAD_SIGNAL_TTL_MS) {
+      this.recentBridgeThreadSignalAtById.delete(threadId);
+      return false;
+    }
+    return true;
+  }
+
+  private clearPendingApprovalState(): void {
+    this.pendingApprovalRequests = [];
+    this.pendingApproval = null;
+    this.state.pendingApproval = null;
+    this.state.pendingApprovalOrigin = undefined;
+  }
+
+  private clearPendingApprovalStateForTurn(turnId: string): void {
+    this.pendingApprovalRequests = this.pendingApprovalRequests.filter(
+      (request) => request.turnId !== turnId,
+    );
+    this.syncSelectedThreadState();
+  }
+
+  private clearPendingApprovalStateForThread(threadId: string): void {
+    this.pendingApprovalRequests = this.pendingApprovalRequests.filter(
+      (request) => request.threadId !== threadId,
+    );
+    this.syncSelectedThreadState();
+  }
+
+  private clearPendingUserInputState(): void {
+    this.pendingUserInputRequests = [];
+    this.state.pendingUserInput = null;
+    this.state.pendingUserInputOrigin = undefined;
+  }
+
+  private clearPendingUserInputStateForTurn(turnId: string): void {
+    this.pendingUserInputRequests = this.pendingUserInputRequests.filter(
+      (request) => request.turnId !== turnId,
+    );
+    this.syncSelectedThreadState();
+  }
+
+  private clearPendingUserInputStateForThread(threadId: string): void {
+    this.pendingUserInputRequests = this.pendingUserInputRequests.filter(
+      (request) => request.threadId !== threadId,
+    );
+    this.syncSelectedThreadState();
+  }
+
+  private cleanupTurnArtifacts(turnId: string): void {
+    this.clearFinalReplyCompletionTimerForTurn(turnId);
+    this.turnFinalMessages.delete(turnId);
+    this.turnDeltaByItem.delete(turnId);
+    this.turnErrorById.delete(turnId);
+    this.turnStartedAtMs.delete(turnId);
+    this.turnLastActivityAtMs.delete(turnId);
+    this.turnPreviewById.delete(turnId);
+    this.mirroredUserInputTurnIds.delete(turnId);
+    this.bridgeOwnedTurnIds.delete(turnId);
+  }
+
+  private rpcRequestKey(requestId: CodexRpcRequestId): string {
+    return `${typeof requestId}:${String(requestId)}`;
+  }
+
+  private isRpcSocketOpen(): boolean {
+    return Boolean(this.rpcSocket && this.rpcSocket.readyState === WebSocket.OPEN);
+  }
+
+  private async ensureRpcClientConnected(): Promise<void> {
+    if (this.isRpcSocketOpen()) {
+      return;
+    }
+
+    if (this.rpcReconnectPromise) {
+      const reconnected = await this.rpcReconnectPromise;
+      if (!reconnected || !this.isRpcSocketOpen()) {
+        throw new Error("Codex websocket is not connected.");
+      }
+      return;
+    }
+
+    await this.connectRpcClient();
+    if (!this.isRpcSocketOpen()) {
+      throw new Error("Codex websocket is not connected.");
+    }
+  }
+
+  private async sendRpcRequest(
+    method: string,
+    params: unknown,
+    options: { allowDesktopBootstrapWrite?: boolean } = {},
+  ): Promise<unknown> {
+    const allowedDesktopBootstrapWrite =
+      options.allowDesktopBootstrapWrite === true &&
+      (
+        method === "thread/start" ||
+        method === "thread/unsubscribe" ||
+        method === "turn/start" ||
+        method === "turn/interrupt"
+      );
+    if (
+      this.usesDesktopTransport() &&
+      method !== "initialize" &&
+      method !== "thread/list" &&
+      method !== "thread/read" &&
+      method !== "thread/name/set" &&
+      !allowedDesktopBootstrapWrite
+    ) {
+      throw new Error(`桌面映射模式禁止通过独立 app-server 执行写操作：${method}`);
+    }
+    await this.ensureRpcClientConnected();
+    const socket = this.rpcSocket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      throw new Error("Codex websocket is not connected.");
+    }
+
+    const requestId = ++this.rpcRequestCounter;
+    const requestKey = this.rpcRequestKey(requestId);
+    const responsePromise = new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingRpcRequests.delete(requestKey);
+        reject(new Error(`Codex RPC request timed out after 30s (method: ${method})`));
+      }, 30_000);
+      this.pendingRpcRequests.set(requestKey, {
+        method,
+        resolve: (value: unknown) => { clearTimeout(timer); resolve(value); },
+        reject: (err: unknown) => { clearTimeout(timer); reject(err); },
+      });
+    });
+
+    try {
+      this.sendRpcMessage({
+        id: requestId,
+        method,
+        params,
+      });
+    } catch (err) {
+      this.pendingRpcRequests.delete(requestKey);
+      throw err;
+    }
+
+    return await responsePromise;
+  }
+
+  private sendRpcMessage(payload: Record<string, unknown>): void {
+    const socket = this.rpcSocket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      throw new Error("Codex websocket is not connected.");
+    }
+
+    socket.send(JSON.stringify(payload));
+  }
+
+  private async respondToApprovalRequest(
+    request: CodexPendingApprovalRequest,
+    action: CodexApprovalResolutionAction,
+  ): Promise<void> {
+    if (
+      this.usesDesktopTransport() &&
+      !this.desktopBootstrapThreadIds.has(request.threadId)
+    ) {
+      const result = request.method === "item/permissions/requestApproval"
+        ? buildCodexPermissionsRequestApprovalResponse(request.params, action)
+        : request.method === "mcpServer/elicitation/request"
+          ? buildCodexMcpServerElicitationResponse(action)
+          : {
+              decision: this.resolveDesktopApprovalDecision(request, action),
+            };
+      await this.respondToDesktopApprovalResult(request, result);
+      return;
+    }
+
+    if (request.method === "item/permissions/requestApproval") {
+      this.sendRpcMessage({
+        id: request.requestId,
+        result: buildCodexPermissionsRequestApprovalResponse(request.params, action),
+      });
+      return;
+    }
+    if (request.method === "mcpServer/elicitation/request") {
+      this.sendRpcMessage({
+        id: request.requestId,
+        result: buildCodexMcpServerElicitationResponse(action),
+      });
+      return;
+    }
+
+    const decision = action === "deny"
+      ? "decline"
+      : action === "confirm_session"
+        ? "acceptForSession"
+        : "accept";
+    this.sendRpcMessage({
+      id: request.requestId,
+      result: { decision },
+    });
+  }
+
+  private resolveDesktopApprovalDecision(
+    request: CodexPendingApprovalRequest,
+    action: CodexApprovalResolutionAction,
+  ): unknown {
+    const availableDecisions = Array.isArray(request.params.availableDecisions)
+      ? request.params.availableDecisions
+      : [];
+    if (action === "deny") {
+      return availableDecisions.includes("cancel") ? "cancel" : "decline";
+    }
+    if (action === "confirm_session") {
+      const amendment = availableDecisions.find(
+        (decision) =>
+          isRecord(decision) &&
+          (isRecord(decision.acceptWithExecpolicyAmendment) ||
+            isRecord(decision.accept_with_execpolicy_amendment)),
+      );
+      return amendment ?? "acceptForSession";
+    }
+    return "accept";
+  }
+
+  private async respondToDesktopApprovalResult(
+    request: CodexPendingApprovalRequest,
+    result: Record<string, unknown>,
+  ): Promise<void> {
+    const client = this.desktopIpcClient;
+    if (!client) {
+      throw new Error("Codex 桌面端连接不可用。");
+    }
+    if (request.method === "item/permissions/requestApproval") {
+      await client.replyToPermissionsApproval(
+        request.threadId,
+        request.requestId,
+        result,
+      );
+      return;
+    }
+    if (request.method === "mcpServer/elicitation/request") {
+      await client.replyToMcpServerElicitation(
+        request.threadId,
+        request.requestId,
+        result,
+      );
+      return;
+    }
+    const decision = result.decision;
+    if (request.method === "item/fileChange/requestApproval") {
+      await client.replyToFileApproval(
+        request.threadId,
+        request.requestId,
+        decision,
+      );
+      return;
+    }
+    await client.replyToCommandApproval(
+      request.threadId,
+      request.requestId,
+      decision,
+    );
+  }
+
+  private handleRpcMessageData(data: unknown): void {
+    const text = coerceWebSocketMessageData(data);
+    if (!text) {
+      return;
+    }
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      return;
+    }
+
+    if (!isRecord(payload)) {
+      return;
+    }
+
+    const requestId = getCodexRpcRequestId(payload.id);
+    const method = typeof payload.method === "string" ? payload.method : null;
+
+    if (requestId !== null && method) {
+      this.handleRpcServerRequest(requestId, method, payload.params);
+      return;
+    }
+
+    if (requestId !== null) {
+      this.handleRpcResponse(requestId, payload);
+      return;
+    }
+
+    if (method) {
+      this.handleRpcNotification(method, payload.params);
+    }
+  }
+
+  private handleRpcResponse(requestId: CodexRpcRequestId, payload: Record<string, unknown>): void {
+    const requestKey = this.rpcRequestKey(requestId);
+    const pending = this.pendingRpcRequests.get(requestKey);
+    if (!pending) {
+      return;
+    }
+
+    this.pendingRpcRequests.delete(requestKey);
+    if (payload.error !== undefined && payload.error !== null) {
+      pending.reject(new Error(normalizeCodexRpcError(payload.error)));
+      return;
+    }
+
+    pending.resolve(payload.result);
+  }
+
+  private handleRpcNotification(method: string, params: unknown): void {
+    if (!isRecord(params)) {
+      return;
+    }
+
+    if (method === "thread/started") {
+      this.handleThreadStarted(params);
+      return;
+    }
+
+    if (method === "thread/status/changed") {
+      this.handleThreadStatusChanged(params);
+      return;
+    }
+
+    if (
+      method === "item/started" ||
+      method === "item/agentMessage/delta" ||
+      method === "item/completed" ||
+      method === "turn/completed" ||
+      method === "turn/started" ||
+      method === "error" ||
+      method === "serverRequest/resolved"
+    ) {
+      if (this.shouldQueuePendingTurnEvent(params)) {
+        this.queuedTurnNotifications.push({ method, params });
+        return;
+      }
+
+      const trackedTurn = this.identifyTrackedTurn(method, params);
+      if (!trackedTurn) {
+        return;
+      }
+
+      this.handleTrackedTurnNotification(method, params, trackedTurn);
+      return;
+    }
+
+    if (this.activeTurn) {
+      this.state.lastOutputAt = nowIso();
+    }
+  }
+
+  private shouldQueuePendingTurnEvent(params: Record<string, unknown>): boolean {
+    if (!this.pendingTurnStart || this.activeTurn || !this.pendingTurnThreadId) {
+      return false;
+    }
+
+    return getNotificationThreadId(params) === this.pendingTurnThreadId;
+  }
+
+  private identifyTrackedTurn(
+    method: string,
+    params: Record<string, unknown>,
+  ): CodexActiveTurn | null {
+    const threadId = getNotificationThreadId(params);
+    const turnId = getNotificationTurnId(params);
+    if (!threadId || !turnId) {
+      return null;
+    }
+
+    if (this.bridgeOwnedTurnIds.has(turnId)) {
+      return {
+        threadId,
+        turnId,
+        origin: "wechat",
+      };
+    }
+
+    if (this.activeTurn?.turnId === turnId) {
+      return {
+        threadId,
+        turnId,
+        origin: this.activeTurn.origin,
+      };
+    }
+
+    const backgroundTurn = this.backgroundTurns.get(turnId);
+    if (backgroundTurn) {
+      return {
+        threadId,
+        turnId,
+        origin: backgroundTurn.origin,
+      };
+    }
+
+    const localBootstrapUserMessage =
+      this.isNativePanelMode() &&
+      !this.activeTurn &&
+      (method === "item/started" || method === "item/completed") &&
+      extractCodexUserMessageText(params.item);
+    if (localBootstrapUserMessage) {
+      return {
+        threadId,
+        turnId,
+        origin: "local",
+      };
+    }
+
+    if (this.sharedThreadId && threadId === this.sharedThreadId) {
+      return {
+        threadId,
+        turnId,
+        origin: "local",
+      };
+    }
+
+    if (method === "turn/started" && !this.activeTurn) {
+      return {
+        threadId,
+        turnId,
+        origin: "local",
+      };
+    }
+
+    return null;
+  }
+
+  private handleTrackedTurnNotification(
+    method: string,
+    params: Record<string, unknown>,
+    trackedTurn: CodexActiveTurn,
+  ): void {
+    this.state.lastOutputAt = nowIso();
+    this.recordTurnActivity(trackedTurn.turnId);
+    this.handleTrackedTurnStarted(trackedTurn);
+
+    switch (method) {
+      case "item/started": {
+        this.maybeMirrorLocalUserInput(trackedTurn, params.item);
+        return;
+      }
+
+      case "item/agentMessage/delta": {
+        const itemId = typeof params.itemId === "string" ? params.itemId : null;
+        const delta = typeof params.delta === "string" ? params.delta : "";
+        if (!itemId || !delta) {
+          return;
+        }
+
+        const deltaByItem = this.getTurnDeltaMap(trackedTurn.turnId);
+        const previous = deltaByItem.get(itemId) ?? "";
+        deltaByItem.set(itemId, `${previous}${delta}`);
+        return;
+      }
+
+      case "item/completed": {
+        this.maybeMirrorLocalUserInput(trackedTurn, params.item);
+        const itemId =
+          isRecord(params.item) && typeof params.item.id === "string"
+            ? params.item.id
+            : null;
+        const finalText = extractCodexFinalTextFromItem(params.item);
+        if (itemId && finalText) {
+          this.getTurnFinalMessageMap(trackedTurn.turnId).set(itemId, finalText);
+          this.scheduleFinalReplyCompletionIfEligible(trackedTurn.turnId);
+        }
+        return;
+      }
+
+      case "error": {
+        if (isRecord(params.error) && typeof params.error.message === "string") {
+          this.turnErrorById.set(trackedTurn.turnId, params.error.message);
+        }
+        return;
+      }
+
+      case "serverRequest/resolved": {
+        const requestId = getCodexRpcRequestId(params.requestId);
+        if (requestId === null) {
+          return;
+        }
+        const approvalResolved = this.pendingApprovalRequests.some(
+          (request) =>
+            request.requestId === requestId &&
+            request.turnId === trackedTurn.turnId,
+        );
+        const userInputResolved = this.pendingUserInputRequests.some(
+          (request) =>
+            request.requestId === requestId &&
+            request.turnId === trackedTurn.turnId,
+        );
+        if (approvalResolved) {
+          this.pendingApprovalRequests = this.pendingApprovalRequests.filter(
+            (request) => request.requestId !== requestId,
+          );
+        }
+        if (userInputResolved) {
+          this.pendingUserInputRequests = this.pendingUserInputRequests.filter(
+            (request) => request.requestId !== requestId,
+          );
+        }
+        if (approvalResolved || userInputResolved) {
+          this.syncSelectedThreadState(
+            trackedTurn.threadId === this.sharedThreadId
+              ? approvalResolved
+                ? "Codex approval resolved."
+                : "Codex user input resolved."
+              : undefined,
+          );
+        }
+        return;
+      }
+
+      case "turn/completed": {
+        this.clearFinalReplyCompletionTimerForTurn(trackedTurn.turnId);
+        this.handleTurnCompleted(trackedTurn, params);
+        return;
+      }
+    }
+  }
+
+  private handleRpcServerRequest(
+    requestId: CodexRpcRequestId,
+    method: string,
+    params: unknown,
+  ): void {
+    if (method === "mcpServer/elicitation/request") {
+      this.sendRpcMessage({
+        id: requestId,
+        result: buildCodexMcpServerElicitationDeclineResponse(),
+      });
+      return;
+    }
+
+    if (method === "item/tool/call") {
+      this.sendRpcMessage({
+        id: requestId,
+        result: buildCodexDynamicToolCallFailureResponse(),
+      });
+      return;
+    }
+
+    if (
+      method !== "item/commandExecution/requestApproval" &&
+      method !== "item/fileChange/requestApproval" &&
+      method !== "item/permissions/requestApproval" &&
+      method !== "item/tool/requestUserInput"
+    ) {
+      this.sendRpcMessage({
+        id: requestId,
+        error: {
+          code: -32601,
+          message: `Unsupported server request: ${method}`,
+        },
+      });
+      return;
+    }
+
+    if (!isRecord(params)) {
+      this.sendRpcMessage({
+        id: requestId,
+        error: {
+          code: -32602,
+          message: "Invalid Codex approval request payload.",
+        },
+      });
+      return;
+    }
+
+    if (this.shouldQueuePendingTurnEvent(params)) {
+      this.queuedTurnServerRequests.push({
+        requestId,
+        method,
+        params,
+      });
+      return;
+    }
+
+    const trackedTurn =
+      this.identifyTrackedTurn("server/request", params) ??
+      this.fallbackTrackedTurnForServerRequest(params);
+    if (!trackedTurn) {
+      this.sendRpcMessage({
+        id: requestId,
+        error: {
+          code: -32602,
+          message: "Invalid Codex server request payload: missing threadId or turnId.",
+        },
+      });
+      return;
+    }
+
+    this.handleTrackedTurnStarted(trackedTurn);
+    this.handleTrackedTurnServerRequest(requestId, method, params, trackedTurn);
+  }
+
+  private handleTrackedTurnServerRequest(
+    requestId: CodexRpcRequestId,
+    method: CodexPendingApprovalRequest["method"] | CodexPendingUserInputRequest["method"],
+    params: Record<string, unknown>,
+    trackedTurn: CodexActiveTurn,
+  ): void {
+    if (method === "item/tool/requestUserInput") {
+      this.handleTrackedTurnUserInputRequest(requestId, params, trackedTurn);
+      return;
+    }
+
+    const denyMessage = getCodexWechatOutboundAttachmentDenyMessage(method, params);
+    if (denyMessage) {
+      this.sendRpcMessage({
+        id: requestId,
+        result:
+          method === "item/permissions/requestApproval"
+            ? buildCodexPermissionsRequestApprovalResponse(params, "deny")
+            : { decision: "decline" },
+      });
+      this.state.lastOutputAt = nowIso();
+      if (trackedTurn.threadId === this.sharedThreadId) {
+        this.setStatus(
+          "busy",
+          `Codex approval auto-denied: ${truncatePreview(denyMessage, 180)}`,
+        );
+      }
+      return;
+    }
+
+    const autoResponse = getCodexApprovalAutoResponse(method, params);
+    if (autoResponse) {
+      this.sendRpcMessage({
+        id: requestId,
+        result: autoResponse.result,
+      });
+      this.state.lastOutputAt = nowIso();
+      if (trackedTurn.threadId === this.sharedThreadId) {
+        this.setStatus(
+          "busy",
+          `Codex approval auto-approved: ${truncatePreview(autoResponse.reason, 180)}`,
+        );
+      }
+      return;
+    }
+
+    const request = buildCodexApprovalRequest(method, params);
+    if (!request) {
+      this.sendRpcMessage({
+        id: requestId,
+        error: {
+          code: -32602,
+          message: "Invalid Codex approval request payload.",
+        },
+      });
+      return;
+    }
+
+    const contextualRequest = {
+      ...request,
+      requestId: String(requestId),
+      threadId: trackedTurn.threadId,
+      turnId: trackedTurn.turnId,
+      origin: trackedTurn.origin,
+    };
+    this.pendingApprovalRequests.push({
+      requestId,
+      method,
+      threadId: trackedTurn.threadId,
+      turnId: trackedTurn.turnId,
+      origin: trackedTurn.origin,
+      params,
+      request: contextualRequest,
+    });
+    this.state.lastOutputAt = nowIso();
+    if (trackedTurn.threadId === this.sharedThreadId) {
+      this.syncSelectedThreadState(
+        `Codex approval is required: ${truncatePreview(request.commandPreview, 180)}`,
+      );
+    }
+    this.emit({
+      type: "approval_required",
+      request: contextualRequest,
+      timestamp: nowIso(),
+      threadId: trackedTurn.threadId,
+      turnId: trackedTurn.turnId,
+      origin: trackedTurn.origin,
+    });
+  }
+
+  private fallbackTrackedTurnForServerRequest(
+    params: Record<string, unknown>,
+  ): CodexActiveTurn | null {
+    if (this.activeTurn) {
+      return null;
+    }
+
+    const threadId = getNotificationThreadId(params);
+    const turnId = getNotificationTurnId(params);
+    if (!threadId || !turnId) {
+      return null;
+    }
+
+    return {
+      threadId,
+      turnId,
+      origin: this.bridgeOwnedTurnIds.has(turnId) ? "wechat" : "local",
+    };
+  }
+
+  private handleTrackedTurnUserInputRequest(
+    requestId: CodexRpcRequestId,
+    params: Record<string, unknown>,
+    trackedTurn: CodexActiveTurn,
+  ): void {
+    const request = buildCodexUserInputRequest(params);
+    if (!request) {
+      this.sendRpcMessage({
+        id: requestId,
+        error: {
+          code: -32602,
+          message: "Invalid Codex user input request payload.",
+        },
+      });
+      return;
+    }
+
+    const contextualRequest = {
+      ...request,
+      threadId: trackedTurn.threadId,
+      turnId: trackedTurn.turnId,
+      origin: trackedTurn.origin,
+    };
+    this.pendingUserInputRequests.push({
+      requestId,
+      method: "item/tool/requestUserInput",
+      threadId: trackedTurn.threadId,
+      turnId: trackedTurn.turnId,
+      origin: trackedTurn.origin,
+      request: contextualRequest,
+    });
+    this.state.lastOutputAt = nowIso();
+    if (trackedTurn.threadId === this.sharedThreadId) {
+      this.syncSelectedThreadState("Codex is waiting for user input.");
+    }
+    this.emit({
+      type: "user_input_required",
+      request: contextualRequest,
+      timestamp: nowIso(),
+      threadId: trackedTurn.threadId,
+      turnId: trackedTurn.turnId,
+      origin: trackedTurn.origin,
+    });
+  }
+
+  private handleThreadStatusChanged(params: Record<string, unknown>): void {
+    const threadId = extractCodexThreadFollowIdFromStatusChanged(params);
+    if (!threadId) {
+      return;
+    }
+
+    if (
+      threadId !== this.sharedThreadId &&
+      this.hasTrackedTurnForThread(threadId)
+    ) {
+      return;
+    }
+
+    if (!this.activeTurn || this.activeTurn.threadId === threadId) {
+      this.trackLocalSharedThread(threadId, {
+        reason: "local_follow",
+        signal: "status_changed",
+      });
+      this.pendingThreadFollowId = null;
+      return;
+    }
+
+    this.pendingThreadFollowId = threadId;
+  }
+
+  private handleThreadStarted(params: Record<string, unknown>): void {
+    const threadId = extractCodexThreadStartedThreadId(params);
+    if (!threadId) {
+      return;
+    }
+
+    if (this.isRecentlyBridgeOwnedThread(threadId)) {
+      return;
+    }
+
+    const thread = isRecord(params.thread) ? params.thread : null;
+    if (thread && typeof thread.cwd === "string" && thread.cwd.trim()) {
+      this.desktopThreadCwdById.set(threadId, thread.cwd.trim());
+    }
+
+    if (
+      threadId !== this.sharedThreadId &&
+      this.hasTrackedTurnForThread(threadId)
+    ) {
+      return;
+    }
+
+    if (!this.activeTurn || this.activeTurn.threadId === threadId) {
+      this.trackLocalSharedThread(threadId, {
+        reason: "local_follow",
+        signal: "thread_started",
+      });
+      this.pendingThreadFollowId = null;
+      return;
+    }
+
+    this.pendingThreadFollowId = threadId;
+  }
+
+  private handleTrackedTurnStarted(trackedTurn: CodexActiveTurn): void {
+    if (this.activeTurn?.turnId === trackedTurn.turnId) {
+      return;
+    }
+
+    const existingBackground = this.backgroundTurns.get(trackedTurn.turnId);
+    if (existingBackground) {
+      if (trackedTurn.threadId === this.sharedThreadId && !this.activeTurn) {
+        this.promoteBackgroundTurnForThread(trackedTurn.threadId);
+        this.syncSelectedThreadState();
+      }
+      return;
+    }
+
+    if (
+      trackedTurn.origin === "local" &&
+      trackedTurn.threadId !== this.sharedThreadId
+    ) {
+      if (!this.activeTurn || this.activeTurn.threadId === trackedTurn.threadId) {
+        this.trackLocalSharedThread(trackedTurn.threadId, {
+          reason: "local_turn",
+          signal: "turn_started",
+        });
+        this.pendingThreadFollowId = null;
+      } else {
+        this.pendingThreadFollowId = trackedTurn.threadId;
+      }
+    }
+
+    if (!this.activeTurn && trackedTurn.threadId === this.sharedThreadId) {
+      this.setActiveTurn(trackedTurn);
+      if (trackedTurn.origin === "local" && this.state.status !== "awaiting_approval") {
+        this.setStatus("busy", "Codex is busy with a local terminal turn.");
+      } else {
+        this.syncSelectedThreadState();
+      }
+      return;
+    }
+
+    this.backgroundTurns.set(trackedTurn.turnId, trackedTurn);
+    if (
+      trackedTurn.origin === "local" &&
+      this.activeTurn &&
+      this.activeTurn.threadId !== trackedTurn.threadId
+    ) {
+      this.pendingThreadFollowId = trackedTurn.threadId;
+    }
+  }
+
+  private maybeMirrorLocalUserInput(
+    trackedTurn: CodexActiveTurn,
+    item: unknown,
+  ): void {
+    if (trackedTurn.origin !== "local" || this.mirroredUserInputTurnIds.has(trackedTurn.turnId)) {
+      return;
+    }
+
+    const text = extractCodexUserMessageText(item);
+    if (!text) {
+      return;
+    }
+
+    this.trackLocalSharedThread(trackedTurn.threadId, {
+      reason: "local_turn",
+      signal: "user_message",
+    });
+    this.mirroredUserInputTurnIds.add(trackedTurn.turnId);
+    this.emit({
+      type: "mirrored_user_input",
+      text,
+      timestamp: nowIso(),
+      origin: "local",
+      threadId: trackedTurn.threadId,
+      turnId: trackedTurn.turnId,
+    });
+  }
+
+  private handleTurnCompleted(
+    trackedTurn: CodexActiveTurn,
+    params: Record<string, unknown>,
+  ): void {
+    this.clearFinalReplyCompletionTimerForTurn(trackedTurn.turnId);
+    this.clearInterruptTimerForTurn(trackedTurn.turnId);
+    if (this.hasCompletedTurn(trackedTurn.turnId)) {
+      if (this.activeTurn?.turnId === trackedTurn.turnId) {
+        this.setActiveTurn(null, { followPendingThread: false });
+      }
+      this.backgroundTurns.delete(trackedTurn.turnId);
+      this.cleanupTurnArtifacts(trackedTurn.turnId);
+      this.syncSelectedThreadState();
+      return;
+    }
+
+    const turn = isRecord(params.turn) ? params.turn : null;
+    const status = turn && typeof turn.status === "string" ? turn.status : "completed";
+    const completedError =
+      turn && isRecord(turn.error) && typeof turn.error.message === "string"
+        ? turn.error.message
+        : this.turnErrorById.get(trackedTurn.turnId) ?? null;
+    const finalText = this.collectTurnOutput(trackedTurn.turnId);
+    const completedTrackedTurn =
+      this.activeTurn?.turnId === trackedTurn.turnId ? this.activeTurn : trackedTurn;
+    const preview = this.turnPreviewById.get(trackedTurn.turnId) ?? this.currentPreview;
+    const summary =
+      status === "interrupted"
+        ? "Interrupted"
+        : completedTrackedTurn.origin === "local"
+          ? "Local terminal turn completed."
+          : preview;
+
+    this.pendingApprovalRequests = this.pendingApprovalRequests.filter(
+      (request) => request.turnId !== trackedTurn.turnId,
+    );
+    this.pendingUserInputRequests = this.pendingUserInputRequests.filter(
+      (request) => request.turnId !== trackedTurn.turnId,
+    );
+    if (this.activeTurn?.turnId === trackedTurn.turnId) {
+      this.setActiveTurn(null, { followPendingThread: false });
+    }
+    this.backgroundTurns.delete(trackedTurn.turnId);
+    const statusMessage =
+      trackedTurn.threadId === this.sharedThreadId && status === "interrupted"
+        ? "Codex task interrupted."
+        : undefined;
+    this.syncSelectedThreadState(statusMessage);
+
+    if (finalText) {
+      this.emit({
+        type: "final_reply",
+        text: finalText,
+        timestamp: nowIso(),
+        threadId: trackedTurn.threadId,
+        turnId: trackedTurn.turnId,
+        origin: trackedTurn.origin,
+      });
+    } else if (status === "failed") {
+      const failureText = completedError
+        ? `Codex could not complete the request: ${completedError}`
+        : "Codex could not complete the request.";
+      this.emit({
+        type: "task_failed",
+        message: failureText,
+        timestamp: nowIso(),
+        threadId: trackedTurn.threadId,
+        turnId: trackedTurn.turnId,
+        origin: trackedTurn.origin,
+      });
+    }
+    this.emit({
+      type: "task_complete",
+      summary,
+      outcome: resolveCodexTaskOutcome(status),
+      timestamp: nowIso(),
+      threadId: trackedTurn.threadId,
+      turnId: trackedTurn.turnId,
+      origin: trackedTurn.origin,
+    });
+    this.rememberCompletedTurn(trackedTurn.turnId);
+    this.cleanupTurnArtifacts(trackedTurn.turnId);
+  }
+
+  private getTurnFinalMessageMap(turnId: string): Map<string, string> {
+    let finalMessages = this.turnFinalMessages.get(turnId);
+    if (!finalMessages) {
+      finalMessages = new Map<string, string>();
+      this.turnFinalMessages.set(turnId, finalMessages);
+    }
+    return finalMessages;
+  }
+
+  private getTurnDeltaMap(turnId: string): Map<string, string> {
+    let deltaByItem = this.turnDeltaByItem.get(turnId);
+    if (!deltaByItem) {
+      deltaByItem = new Map<string, string>();
+      this.turnDeltaByItem.set(turnId, deltaByItem);
+    }
+    return deltaByItem;
+  }
+
+  private collectTurnOutput(turnId: string): string | null {
+    const finalMessages = Array.from(this.getTurnFinalMessageMap(turnId).values())
+      .map((text) => normalizeOutput(text).trim())
+      .filter(Boolean);
+    if (finalMessages.length > 0) {
+      return finalMessages.join("\n\n");
+    }
+
+    const deltaFallback = Array.from(this.getTurnDeltaMap(turnId).values())
+      .map((text) => normalizeOutput(text).trim())
+      .filter(Boolean);
+    if (deltaFallback.length === 0) {
+      return null;
+    }
+
+    return deltaFallback[deltaFallback.length - 1] ?? null;
+  }
+
+  private recordTurnActivity(turnId: string, timestamp: string | number = Date.now()): void {
+    const timestampMs =
+      typeof timestamp === "number" ? timestamp : Date.parse(timestamp);
+    this.turnLastActivityAtMs.set(
+      turnId,
+      Number.isFinite(timestampMs) ? timestampMs : Date.now(),
+    );
+  }
+
+  private clearFinalReplyCompletionTimer(): void {
+    if (this.finalReplyCompletionTimer) {
+      clearTimeout(this.finalReplyCompletionTimer);
+      this.finalReplyCompletionTimer = null;
+    }
+    this.finalReplyCompletionTurnId = null;
+  }
+
+  private clearFinalReplyCompletionTimerForTurn(turnId: string): void {
+    if (this.finalReplyCompletionTurnId !== turnId) {
+      return;
+    }
+    this.clearFinalReplyCompletionTimer();
+  }
+
+  private scheduleFinalReplyCompletionIfEligible(turnId: string): void {
+    if (
+      !this.activeTurn ||
+      this.activeTurn.turnId !== turnId ||
+      this.activeTurn.origin !== "wechat" ||
+      this.pendingTurnStart ||
+      this.getPendingApprovalRequestsForThread(this.activeTurn.threadId).length > 0 ||
+      this.getPendingUserInputRequestsForThread(this.activeTurn.threadId).length > 0 ||
+      !this.collectTurnOutput(turnId)
+    ) {
+      return;
+    }
+
+    this.clearFinalReplyCompletionTimer();
+    this.finalReplyCompletionTurnId = turnId;
+    this.finalReplyCompletionTimer = setTimeout(() => {
+      this.autoCompleteWechatTurnAfterFinalReply(turnId);
+    }, CODEX_FINAL_REPLY_SETTLE_DELAY_MS);
+    this.finalReplyCompletionTimer.unref?.();
+  }
+
+  private autoCompleteWechatTurnAfterFinalReply(turnId: string): void {
+    this.clearFinalReplyCompletionTimerForTurn(turnId);
+
+    const activeTurn = this.activeTurn;
+    const finalText = this.collectTurnOutput(turnId);
+    const lastActivityAtMs = this.turnLastActivityAtMs.get(turnId) ?? null;
+    const pendingApproval = Boolean(
+      activeTurn &&
+        this.getPendingApprovalRequestsForThread(activeTurn.threadId).length > 0,
+    );
+    const pendingUserInput = Boolean(
+      activeTurn &&
+        this.getPendingUserInputRequestsForThread(activeTurn.threadId).length > 0,
+    );
+    const nowMs = Date.now();
+    if (
+      !shouldAutoCompleteCodexWechatTurnAfterFinalReply({
+        candidateTurnId: turnId,
+        activeTurnId: activeTurn?.turnId,
+        activeTurnOrigin: activeTurn?.origin,
+        pendingTurnStart: this.pendingTurnStart,
+        hasPendingApproval: pendingApproval,
+        hasPendingUserInput: pendingUserInput,
+        hasFinalOutput: Boolean(finalText),
+        hasCompletedTurn: this.hasCompletedTurn(turnId),
+        lastActivityAtMs,
+        nowMs,
+        settleDelayMs: CODEX_FINAL_REPLY_SETTLE_DELAY_MS,
+      })
+    ) {
+      if (
+        activeTurn?.turnId === turnId &&
+        activeTurn.origin === "wechat" &&
+        !this.pendingTurnStart &&
+        !pendingApproval &&
+        !pendingUserInput &&
+        finalText &&
+        typeof lastActivityAtMs === "number"
+      ) {
+        const remainingMs = CODEX_FINAL_REPLY_SETTLE_DELAY_MS - (nowMs - lastActivityAtMs);
+        if (remainingMs > 0) {
+          this.finalReplyCompletionTurnId = turnId;
+          this.finalReplyCompletionTimer = setTimeout(() => {
+            this.autoCompleteWechatTurnAfterFinalReply(turnId);
+          }, remainingMs);
+          this.finalReplyCompletionTimer.unref?.();
+        }
+      }
+      return;
+    }
+
+    if (!activeTurn || !finalText) {
+      return;
+    }
+
+    const summary = this.turnPreviewById.get(turnId) ?? this.currentPreview;
+    this.pendingApprovalRequests = this.pendingApprovalRequests.filter(
+      (request) => request.turnId !== turnId,
+    );
+    this.pendingUserInputRequests = this.pendingUserInputRequests.filter(
+      (request) => request.turnId !== turnId,
+    );
+    this.setActiveTurn(null, { followPendingThread: false });
+    this.state.lastOutputAt = nowIso();
+    this.syncSelectedThreadState("Recovered delayed Codex completion after final reply.");
+    this.emit({
+      type: "final_reply",
+      text: finalText,
+      timestamp: nowIso(),
+      threadId: activeTurn.threadId,
+      turnId,
+      origin: activeTurn.origin,
+    });
+    this.emit({
+      type: "task_complete",
+      summary,
+      timestamp: nowIso(),
+      threadId: activeTurn.threadId,
+      turnId,
+      origin: activeTurn.origin,
+    });
+    this.rememberCompletedTurn(turnId);
+    this.cleanupTurnArtifacts(turnId);
+  }
+
+  private async stopAppServer(): Promise<void> {
+    if (!this.appServer) {
+      this.appServerPort = null;
+      this.appServerShuttingDown = false;
+      this.deleteAppServerAuthTokenFile();
+      this.appServerAuthToken = null;
+      return;
+    }
+
+    const child = this.appServer;
+    this.appServerShuttingDown = true;
+    this.appServer = null;
+    this.appServerPort = null;
+
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve();
+      };
+      child.once("exit", () => finish());
+      try {
+        if (child.pid) {
+          killProcessTreeSync(child.pid);
+        } else {
+          child.kill();
+        }
+      } catch {
+        finish();
+      }
+      const timer = setTimeout(() => finish(), 1_000);
+      timer.unref?.();
+    });
+
+    this.deleteAppServerAuthTokenFile();
+    this.appServerAuthToken = null;
+  }
+
+  private describeAppServerLog(): string {
+    const summary = normalizeOutput(this.appServerLog).trim();
+    if (!summary) {
+      return "";
+    }
+    return ` Recent app-server log: ${truncatePreview(summary, 220)}`;
+  }
+
+  private terminateCodexClient(): void {
+    this.shuttingDown = true;
+
+    if (this.pty) {
+      try {
+        this.pty.kill();
+      } catch {
+        // Best effort cleanup after embedded client failure.
+      }
+      return;
+    }
+
+    if (this.nativeProcess) {
+      try {
+        if (this.nativeProcess.pid) {
+          killProcessTreeSync(this.nativeProcess.pid);
+        } else {
+          this.nativeProcess.kill();
+        }
+      } catch {
+        // Best effort cleanup after panel client failure.
+      }
+    }
+  }
+
+  private deleteAppServerAuthTokenFile(): void {
+    if (!this.appServerAuthTokenFilePath) {
+      return;
+    }
+
+    try {
+      fs.unlinkSync(this.appServerAuthTokenFilePath);
+    } catch {
+      // Best effort cleanup after app-server shutdown.
+    }
+
+    this.appServerAuthTokenFilePath = null;
+  }
+
+  private attachLocalInputForwarding(): void {
+    if (this.localInputListener || !process.stdin.readable) {
+      return;
+    }
+
+    process.stdin.setEncoding("utf8");
+    process.stdin.resume();
+    this.localInputListener = (chunk: string | Buffer) => {
+      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      if (!text) {
+        return;
+      }
+      this.writeToPty(text);
+    };
+    process.stdin.on("data", this.localInputListener);
+  }
+
+  private detachLocalInputForwarding(): void {
+    if (!this.localInputListener) {
+      return;
+    }
+
+    process.stdin.off("data", this.localInputListener);
+    this.localInputListener = null;
+    if (process.stdin.isTTY) {
+      process.stdin.pause();
+    }
+  }
+
+  private renderLocalOutput(rawText: string): void {
+    try {
+      process.stdout.write(rawText);
+    } catch {
+      // Best effort local mirroring for the visible Codex panel.
+    }
+  }
+
+  private hasCompletedTurn(turnId: string): boolean {
+    return this.completedTurnIds.has(turnId);
+  }
+
+  private rememberCompletedTurn(turnId: string): void {
+    if (this.completedTurnIds.has(turnId)) {
+      return;
+    }
+
+    this.completedTurnIds.add(turnId);
+    this.completedTurnOrder.push(turnId);
+    while (this.completedTurnOrder.length > CODEX_RECENT_SESSION_KEY_LIMIT) {
+      const staleTurnId = this.completedTurnOrder.shift();
+      if (staleTurnId) {
+        this.completedTurnIds.delete(staleTurnId);
+      }
+    }
+  }
+}
+
+export function shouldTreatCodexNativeExitAsExpected(params: {
+  renderMode?: AdapterOptions["renderMode"];
+  shuttingDown: boolean;
+  exitCode: number | undefined;
+  signal?: NodeJS.Signals;
+  startupError?: Error;
+}): boolean {
+  return (
+    params.shuttingDown ||
+    (params.renderMode === "panel" &&
+      !params.startupError &&
+      !params.signal &&
+      params.exitCode === 0)
+  );
+}
+
+export function shouldSuppressCodexTransportFatalError(params: {
+  transportShuttingDown: boolean;
+  shuttingDown: boolean;
+  cleanPanelExitInProgress: boolean;
+}): boolean {
+  return (
+    params.transportShuttingDown ||
+    params.shuttingDown ||
+    params.cleanPanelExitInProgress
+  );
+}
