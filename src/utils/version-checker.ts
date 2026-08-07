@@ -21,7 +21,7 @@ export interface VersionInfo {
 const NPM_PACKAGE_NAME = "deskrelay";
 const DEFAULT_NPM_REGISTRY_URL = `https://registry.npmjs.org/${NPM_PACKAGE_NAME}/latest`;
 const DEFAULT_GITHUB_TAGS_URL =
-  "https://api.github.com/repos/UNLINEARITY/DeskRelay/tags?per_page=20";
+  "https://api.github.com/repos/imsinolam/DeskRelay/tags?per_page=20";
 const FETCH_TIMEOUT_MS = 10_000;
 
 export interface FetchLatestVersionOptions {
@@ -248,6 +248,6 @@ Update instructions:
    npm install -g .
 
 For more information:
-   https://github.com/UNLINEARITY/DeskRelay/releases
+   https://github.com/imsinolam/DeskRelay/releases
 `;
 }

@@ -243,7 +243,7 @@ function printPostLoginHelp(log: (message: string) => void): void {
   log("  deskrelay --adapter codex");
   log("");
   log("Replace codex with claude, tclaude, grok, codebuddy, reasonix, workbuddy, or opencode when needed.");
-  log("Advanced standalone bridge commands are documented in docs/agent-setup.md.");
+  log("Advanced standalone bridge commands are documented in docs/guides/agent-setup.md.");
   log("");
   log("Run deskrelay-setup again any time you need to refresh the login.");
 }

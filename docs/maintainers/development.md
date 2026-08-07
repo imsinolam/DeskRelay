@@ -13,7 +13,7 @@
 克隆并安装依赖：
 
 ```bash
-git clone https://github.com/UNLINEARITY/DeskRelay
+git clone https://github.com/imsinolam/DeskRelay
 cd DeskRelay
 bun install
 ```
@@ -197,9 +197,9 @@ npm pack --dry-run --json
 
 ## 相关说明
 
-- Agent 安装与配置见 `docs/agent-setup.md`。
-- 运行配置和环境变量见 `docs/configuration.md`。
-- 无服务器与公网 Relay 部署见 `docs/remote-access.md`。
-- 状态文件、日志和迁移排查见 `docs/troubleshooting.md`。
+- Agent 安装与配置见 `docs/guides/agent-setup.md`。
+- 运行配置和环境变量见 `docs/guides/configuration.md`。
+- 无服务器与公网 Relay 部署见 `docs/guides/remote-access.md`。
+- 状态文件、日志和迁移排查见 `docs/guides/troubleshooting.md`。
 - `bin/*.mjs` 是发布包入口源文件，不是生成文件；修改后需要保持 LF 行尾。
 - release 流程见 `docs/releases/README.md` 和 AGENTS.md 中的发布清单。

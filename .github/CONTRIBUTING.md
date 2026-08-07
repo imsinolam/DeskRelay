@@ -4,23 +4,23 @@
 
 ## Before You Start
 
-- 先阅读 [README.md](README.md)，确认当前推荐的使用方式。
-- Agent 前置安装见 [docs/agent-setup.md](docs/agent-setup.md)。
-- 运行配置见 [docs/configuration.md](docs/configuration.md)。
-- 公网 Relay 部署见 [docs/remote-access.md](docs/remote-access.md)。
-- 常见问题和已知限制见 [docs/troubleshooting.md](docs/troubleshooting.md)。
-- 源码运行、测试和打包说明见 [docs/development.md](docs/development.md)。
+- 先阅读 [README.md](../README.md)，确认当前推荐的使用方式。
+- Agent 前置安装见 [Agent 安装与配置](../docs/guides/agent-setup.md)。
+- 运行配置见 [运行配置](../docs/guides/configuration.md)。
+- 公网 Relay 部署见 [公网 Relay 部署](../docs/guides/remote-access.md)。
+- 常见问题和已知限制见 [问题排查](../docs/guides/troubleshooting.md)。
+- 源码运行、测试和打包说明见 [开发与测试](../docs/maintainers/development.md)。
 
 ## Fork and Pull Request Workflow
 
-如果你没有 `UNLINEARITY/DeskRelay` 的写权限，请从 fork 提交 PR。这里的 `origin` 指你的 fork，`upstream` 指官方仓库。
+如果你没有 `imsinolam/DeskRelay` 的写权限，请从 fork 提交 PR。这里的 `origin` 指你的 fork，`upstream` 指官方仓库。
 
 首次参与时：
 
 ```bash
 git clone https://github.com/<your-github-name>/DeskRelay.git
 cd DeskRelay
-git remote add upstream https://github.com/UNLINEARITY/DeskRelay.git
+git remote add upstream https://github.com/imsinolam/DeskRelay.git
 git fetch upstream
 ```
 
@@ -53,7 +53,7 @@ git push -u origin fix/opencode-session-start
 
 然后在 GitHub 上创建 PR：
 
-- `base repository`: `UNLINEARITY/DeskRelay`
+- `base repository`: `imsinolam/DeskRelay`
 - `base branch`: `main`
 - `head repository`: 你的 fork
 - `compare branch`: 你的工作分支，例如 `fix/opencode-session-start`
