@@ -21,7 +21,11 @@ Runtime data lives under `~/.deskrelay` by default. Version 2.0 copy-migrates mi
 - `bin/*.mjs`: published CLI wrappers. These are tracked source files, not generated output.
 - `scripts`: release, safety, snapshot, and packaging helpers, especially `check-public-safety.mjs`, `create-public-snapshot.mjs`, and `smoke-global-install.mjs`.
 - `test/<area>` mirrors the runtime areas: `bridge`, `companion`, `daemon`, and `wechat`.
+- `docs/concepts`: product positioning, owner model, architecture, and data-flow explanations.
+- `docs/guides`: installation, configuration, public Relay, and troubleshooting guides for users.
+- `docs/maintainers`: development, publishing, website copy, and maintainer-only guidance.
 - `docs/releases`: release notes and the release index. Keep English and Chinese notes aligned when preparing a release.
+- `.github`: CI, issue/PR templates, contribution guidance, code of conduct, and security policy.
 
 ## Runtime State And Files
 Default active state is in `~/.deskrelay`:

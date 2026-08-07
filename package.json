@@ -9,14 +9,9 @@
     "scripts/ensure-node-pty-permissions.mjs",
     ".env.example",
     "README.md",
-    "CONTRIBUTING.md",
-    "SECURITY.md",
     "NOTICE.md",
     "LICENSE.txt",
-    "docs/*.md",
-    "docs/releases/",
-    "docs/images/deskrelay-logo.svg",
-    "docs/images/deskrelay-four-panel-white-paper-boy-v2.png",
+    "docs/",
     "deploy/"
   ],
   "keywords": [
@@ -36,12 +31,12 @@
   "license": "AGPL-3.0-or-later",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/UNLINEARITY/DeskRelay.git"
+    "url": "git+https://github.com/imsinolam/DeskRelay.git"
   },
   "bugs": {
-    "url": "https://github.com/UNLINEARITY/DeskRelay/issues"
+    "url": "https://github.com/imsinolam/DeskRelay/issues"
   },
-  "homepage": "https://github.com/UNLINEARITY/DeskRelay#readme",
+  "homepage": "https://github.com/imsinolam/DeskRelay#readme",
   "publishConfig": {
     "access": "public"
   },
