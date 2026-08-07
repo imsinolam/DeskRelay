@@ -1,0 +1,26 @@
+[Unit]
+Description=DeskRelay application relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deskrelay
+Group=deskrelay
+EnvironmentFile=/etc/deskrelay-relay.env
+# Run `command -v deskrelay-relay-server` and replace this path if needed.
+ExecStart=/usr/local/bin/deskrelay-relay-server
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,1746 @@
+import fs from "node:fs";
+import path from "node:path";
+
+import { describe, expect, test } from "bun:test";
+
+import {
+  appendCodexMobileTaskLink,
+  buildDaemonApprovalNotificationKey,
+  buildMacVisibleClientLaunchScript,
+  buildMacVisibleClientOpenArgs,
+  buildVisibleClientLaunchArgs,
+  buildWindowsVisibleClientLaunchCommand,
+  cleanupDaemonBeforeStart,
+  cleanupSingleBridgeBeforeDaemon,
+  computeCodexDeferredDrainRetryDelayMs,
+  buildDaemonRuntimeOptions,
+  defaultDaemonSessionStartMode,
+  flushPendingDaemonRestartNotice,
+  formatCodexTaskCompletionMessage,
+  formatCodexTaskCompletionMessages,
+  formatCurrentCodexFullReplyMessages,
+  formatCompactTaskDuration,
+  formatDaemonRestartNotice,
+  formatDaemonSwitchResultDetail,
+  formatDaemonStatus,
+  formatMobileTaskListUnavailableMessage,
+  isCodexTaskCandidateCacheFresh,
+  detectOpenMobileAdaptersFromProcessList,
+  filterCodexMobileProgressForCurrentTurn,
+  mapCodexMobileTaskStatus,
+  observeCodexTask,
+  parseDaemonCliArgs,
+  parseDaemonSwitchCommand,
+  prefixDaemonAdapterMessage,
+  prefixDaemonTaskMessage,
+  resolveDaemonSessionStartMode,
+  resolveDaemonWechatCommand,
+  resolveMobileAdapterDisplayStatus,
+  resolveCodexMobileTaskStatusFromSignals,
+  resolveDaemonTaskListSnapshot,
+  resolveDaemonTaskTargetedMessage,
+  resolveCodexWechatReplyThreadId,
+  resolveCodexMobilePendingApprovalFromSignals,
+  resolveCodexTaskCompletionDurationMs,
+  selectCodexCompletionReplyText,
+  selectCodexCompletionRequestPreview,
+  shouldFollowCodexActiveTask,
+  shouldClearCodexActiveTaskForCompletion,
+  shouldForwardDaemonFinalReply,
+  shouldForwardCodexTaskCompletionEvent,
+  shouldForwardDaemonThreadSwitch,
+  shouldQueueCodexDaemonInbound,
+  shouldQueueCodexMobileMessage,
+  shouldSendCodexMobileTaskLink,
+  shouldSendDaemonRestartNotice,
+  waitForVisibleClientConnection,
+} from "../../src/daemon/deskrelay-daemon.ts";
+import type { BridgeLockPayload } from "../../src/bridge/bridge-state.ts";
+import type {
+  DaemonEndpoint,
+  DaemonRequest,
+} from "../../src/daemon/daemon-link.ts";
+
+function readRepoFile(relativePath: string): string {
+  return fs.readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
+}
+
+function buildBridgeLock(overrides: Partial<BridgeLockPayload> = {}): BridgeLockPayload {
+  return {
+    pid: 28544,
+    parentPid: 1234,
+    instanceId: "bridge-1",
+    adapter: "codex",
+    command: "codex",
+    cwd: "C:\\Users\\example",
+    startedAt: "2026-05-22T00:00:00.000Z",
+    lifecycle: "persistent",
+    ...overrides,
+  };
+}
+
+function buildDaemonEndpoint(overrides: Partial<DaemonEndpoint> = {}): DaemonEndpoint {
+  return {
+    protocolVersion: 1,
+    pid: 28600,
+    port: 55901,
+    token: "daemon-token",
+    cwd: "C:\\Users\\example",
+    startedAt: "2026-05-25T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("mobile image persistence", () => {
+  test("does not delete an uploaded image when desktop acceptance is uncertain", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const start = source.indexOf("  private async sendMobileMessage(");
+    const end = source.indexOf("\n  private persistMobileImages", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(source.slice(start, end)).not.toContain("fs.rmSync(imagePath");
+  });
+});
+
+describe("daemon startup resilience", () => {
+  test("starts the mobile web before the initial adapter and keeps polling if that adapter fails", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const ipc = source.indexOf("  await daemon.startIpcServer();");
+    const mobile = source.indexOf("  await daemon.startCodexMobileWeb();", ipc);
+    const initial = source.indexOf("    await daemon.runInitialAdapter(options);", mobile);
+    const polling = source.indexOf("  await daemon.runPollLoop();", initial);
+    expect(ipc).toBeGreaterThan(-1);
+    expect(mobile).toBeGreaterThan(ipc);
+    expect(initial).toBeGreaterThan(mobile);
+    expect(polling).toBeGreaterThan(initial);
+    expect(source.slice(mobile, polling)).toContain("catch (error)");
+    expect(source.slice(mobile, polling)).toContain("initial_adapter_start_error");
+    const mobileMethodStart = source.indexOf("  async startCodexMobileWeb(): Promise<void> {");
+    const mobileMethodEnd = source.indexOf("\n  async runInitialAdapter", mobileMethodStart);
+    expect(source.slice(mobileMethodStart, mobileMethodEnd)).not.toContain('!this.slots.has("codex")');
+  });
+});
+
+describe("deskrelay-daemon helpers", () => {
+  test("reports an open terminal separately from a daemon-connected adapter", () => {
+    expect(resolveMobileAdapterDisplayStatus({
+      visibleClientOpen: true,
+    })).toBe("open");
+    expect(resolveMobileAdapterDisplayStatus({
+      endpointStatus: "busy",
+      endpointCompanionAlive: true,
+    })).toBe("busy");
+    expect(resolveMobileAdapterDisplayStatus({
+      slotStatus: "awaiting_approval",
+      visibleClientOpen: true,
+    })).toBe("awaiting_approval");
+    expect(resolveMobileAdapterDisplayStatus({})).toBe("stopped");
+  });
+
+  test("detects already-open CLI and desktop applications from one process snapshot", () => {
+    const open = detectOpenMobileAdaptersFromProcessList([
+      "/Applications/WorkBuddy.app/Contents/MacOS/Electron /Applications/WorkBuddy.app/Contents/Resources/app.asar",
+      "node /Users/test/.hermes/node/bin/tclaude --dangerously-skip-permissions",
+      "/Users/test/.hermes/node/lib/node_modules/@vendor/tclaude/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+      "grok",
+      "reasonix acp",
+      "opencode serve",
+    ].join("\n"), { codexDesktopOpen: true });
+
+    expect([...open].sort()).toEqual([
+      "codex",
+      "grok",
+      "opencode",
+      "reasonix",
+      "tclaude",
+      "workbuddy",
+    ]);
+    expect(open.has("claude")).toBe(false);
+  });
+
+  test("explains terminal capability limits instead of exposing a generic mobile error", () => {
+    expect(formatMobileTaskListUnavailableMessage(
+      "tclaude",
+      new Error('WeChat /resume is disabled in claude mode.'),
+    )).toBe(
+      "TClaude 已连接，但网页版暂不支持读取这个终端的任务列表。请在微信或电脑终端中继续使用。",
+    );
+    expect(formatMobileTaskListUnavailableMessage(
+      "tclaude",
+      new Error("tclaude companion is connected but not ready yet."),
+    )).toBe("TClaude 正在连接，请稍后再试。");
+    expect(formatMobileTaskListUnavailableMessage(
+      "codex",
+      new Error("unexpected decoder failure"),
+    )).toBeNull();
+  });
+
+  test("uses thread, turn, and request id to deduplicate approval notifications", () => {
+    expect(buildDaemonApprovalNotificationKey({
+      threadId: "thread-a",
+      turnId: "turn-a",
+      requestId: "request-a",
+      commandPreview: "npm test",
+    })).toBe(buildDaemonApprovalNotificationKey({
+      threadId: "thread-a",
+      turnId: "turn-a",
+      requestId: "request-a",
+      commandPreview: "updated preview",
+    }));
+    expect(buildDaemonApprovalNotificationKey({
+      threadId: "thread-a",
+      turnId: "turn-b",
+      requestId: "request-a",
+      commandPreview: "npm test",
+    })).not.toBe(buildDaemonApprovalNotificationKey({
+      threadId: "thread-a",
+      turnId: "turn-a",
+      requestId: "request-a",
+      commandPreview: "npm test",
+    }));
+  });
+
+  test("routes a plain follow-up to the task named by the latest task notification", () => {
+    expect(resolveCodexWechatReplyThreadId({
+      currentThreadId: "thread-3",
+      notifiedThreadId: "thread-2",
+    })).toBe("thread-2");
+    expect(resolveCodexWechatReplyThreadId({
+      currentThreadId: "thread-3",
+    })).toBe("thread-3");
+  });
+
+  test("routes number-colon content to the matching stable task number for every adapter", () => {
+    const snapshot = resolveDaemonTaskListSnapshot({
+      latestCandidates: [
+        { sessionId: "thread-1", title: "任务一", lastUpdatedAt: "2026-08-04T01:00:00.000Z" },
+        { sessionId: "thread-2", title: "任务二", lastUpdatedAt: "2026-08-04T02:00:00.000Z" },
+      ],
+      refresh: true,
+    });
+
+    for (const text of ["2:继续处理", "2：继续处理", "2 : 继续处理", "2 ： 继续处理"]) {
+      expect(resolveDaemonTaskTargetedMessage({ text, snapshot })).toEqual({
+        candidate: snapshot.candidates[1],
+        text: "继续处理",
+      });
+    }
+    expect(resolveDaemonTaskTargetedMessage({ text: "3:不存在", snapshot })).toBeNull();
+    expect(resolveDaemonTaskTargetedMessage({ text: "2:", snapshot })).toBeNull();
+    expect(resolveDaemonTaskTargetedMessage({ text: "2：继续处理", snapshot: null })).toBeNull();
+  });
+
+  test("keeps task numbers stable until the task list is explicitly refreshed", () => {
+    const first = resolveDaemonTaskListSnapshot({
+      latestCandidates: [
+        { sessionId: "thread-2", title: "任务二", lastUpdatedAt: "2026-08-03T05:00:00.000Z" },
+        { sessionId: "thread-3", title: "任务三", lastUpdatedAt: "2026-08-03T05:01:00.000Z" },
+      ],
+      refresh: true,
+    });
+    const retained = resolveDaemonTaskListSnapshot({
+      current: first,
+      latestCandidates: [
+        {
+          sessionId: "thread-3",
+          title: "任务三",
+          lastUpdatedAt: "2026-08-03T05:03:00.000Z",
+          runtimeStatus: { type: "active", activeFlags: [] },
+        },
+        {
+          sessionId: "thread-2",
+          title: "任务二（已更新）",
+          lastUpdatedAt: "2026-08-03T05:02:00.000Z",
+          runtimeStatus: { type: "idle" },
+        },
+      ],
+      refresh: false,
+    });
+
+    expect(retained.candidates.map((candidate) => candidate.sessionId)).toEqual([
+      "thread-2",
+      "thread-3",
+    ]);
+    expect(retained.candidates[0]?.title).toBe("任务二（已更新）");
+    expect(retained.candidates[1]?.runtimeStatus?.type).toBe("active");
+    expect(retained.numberByThreadId.get("thread-2")).toBe(1);
+    expect(retained.numberByThreadId.get("thread-3")).toBe(2);
+
+    const refreshed = resolveDaemonTaskListSnapshot({
+      current: retained,
+      latestCandidates: [
+        { sessionId: "thread-3", title: "任务三", lastUpdatedAt: "2026-08-03T05:01:00.000Z" },
+        { sessionId: "thread-2", title: "任务二", lastUpdatedAt: "2026-08-03T05:00:00.000Z" },
+      ],
+      refresh: true,
+    });
+    expect(refreshed.numberByThreadId.get("thread-3")).toBe(1);
+    expect(refreshed.numberByThreadId.get("thread-2")).toBe(2);
+  });
+
+  test("hides stale Codex progress while a new mobile turn is awaiting its turn id", () => {
+    expect(filterCodexMobileProgressForCurrentTurn({
+      progressItems: [{
+        id: "old-progress",
+        turnId: "turn-old",
+        kind: "reasoning",
+        status: "running",
+        text: "上一轮进展",
+      }],
+      hasActiveTask: true,
+      runSummary: {
+        turnId: "turn-old",
+        status: "running",
+      },
+    })).toEqual([]);
+  });
+
+  test("keeps only progress belonging to the current Codex turn", () => {
+    expect(filterCodexMobileProgressForCurrentTurn({
+      progressItems: [
+        {
+          id: "old-progress",
+          turnId: "turn-old",
+          kind: "reasoning",
+          status: "completed",
+          text: "上一轮进展",
+        },
+        {
+          id: "new-progress",
+          turnId: "turn-new",
+          kind: "plan",
+          status: "running",
+          text: "当前轮进展",
+        },
+      ],
+      hasActiveTask: true,
+      activeTurnId: "turn-new",
+      runSummary: {
+        turnId: "turn-old",
+        status: "running",
+      },
+    })).toEqual([{
+      id: "new-progress",
+      turnId: "turn-new",
+      kind: "plan",
+      status: "running",
+      text: "当前轮进展",
+    }]);
+  });
+
+  test("prefers the live desktop turn when a stale bridge turn has no progress", () => {
+    expect(filterCodexMobileProgressForCurrentTurn({
+      progressItems: [{
+        id: "desktop-progress",
+        turnId: "turn-desktop",
+        kind: "tool",
+        status: "running",
+        text: "等待桌面端审批",
+      }],
+      hasActiveTask: true,
+      activeTurnId: "turn-stale-bridge",
+      runSummary: {
+        turnId: "turn-desktop",
+        status: "running",
+      },
+    })).toEqual([{
+      id: "desktop-progress",
+      turnId: "turn-desktop",
+      kind: "tool",
+      status: "running",
+      text: "等待桌面端审批",
+    }]);
+  });
+
+  test("uses the desktop run turn when the task was started outside the bridge", () => {
+    expect(filterCodexMobileProgressForCurrentTurn({
+      progressItems: [
+        {
+          id: "old-progress",
+          turnId: "turn-old",
+          kind: "reasoning",
+          status: "completed",
+          text: "上一轮进展",
+        },
+        {
+          id: "desktop-progress",
+          turnId: "turn-desktop",
+          kind: "tool",
+          status: "running",
+          text: "桌面端当前进展",
+        },
+      ],
+      hasActiveTask: false,
+      runSummary: {
+        turnId: "turn-desktop",
+        status: "running",
+      },
+    })).toEqual([{
+      id: "desktop-progress",
+      turnId: "turn-desktop",
+      kind: "tool",
+      status: "running",
+      text: "桌面端当前进展",
+    }]);
+  });
+
+  test("preserves matching completed progress and legacy progress without turn evidence", () => {
+    const completedProgress = [{
+      id: "completed-progress",
+      turnId: "turn-completed",
+      kind: "command" as const,
+      status: "completed" as const,
+      text: "已运行命令",
+    }];
+    expect(filterCodexMobileProgressForCurrentTurn({
+      progressItems: [
+        {
+          id: "old-progress",
+          turnId: "turn-old",
+          kind: "reasoning",
+          status: "completed",
+          text: "更早的进展",
+        },
+        ...completedProgress,
+      ],
+      hasActiveTask: false,
+      runSummary: {
+        turnId: "turn-completed",
+        status: "completed",
+      },
+    })).toEqual(completedProgress);
+    expect(filterCodexMobileProgressForCurrentTurn({
+      progressItems: completedProgress,
+      hasActiveTask: false,
+      runSummary: null,
+    })).toEqual(completedProgress);
+  });
+
+  test("maps Codex desktop runtime states for the mobile task list", () => {
+    expect(mapCodexMobileTaskStatus({ type: "idle" })).toBe("idle");
+    expect(
+      mapCodexMobileTaskStatus({
+        type: "active",
+        activeFlags: ["waitingOnApproval"],
+      }),
+    ).toBe("approval");
+    expect(
+      mapCodexMobileTaskStatus({
+        type: "active",
+        activeFlags: ["waitingOnUserInput"],
+      }),
+    ).toBe("input");
+    expect(
+      mapCodexMobileTaskStatus({ type: "active", activeFlags: [] }),
+    ).toBe("running");
+  });
+
+  test("subscribes to active Codex summary state so approval and input can be discovered", () => {
+    expect(shouldFollowCodexActiveTask({
+      type: "active",
+      activeFlags: [],
+    })).toBe(true);
+    expect(shouldFollowCodexActiveTask({
+      type: "active",
+      activeFlags: ["waitingOnApproval"],
+    })).toBe(true);
+    expect(shouldFollowCodexActiveTask({
+      type: "active",
+      activeFlags: ["waitingOnUserInput"],
+    })).toBe(true);
+    expect(shouldFollowCodexActiveTask({ type: "idle" })).toBe(false);
+  });
+
+  test("lets the desktop owner override stale local approval and running flags", () => {
+    expect(resolveCodexMobileTaskStatusFromSignals({
+      runtimeStatus: { type: "idle" },
+      hasPendingApproval: true,
+      hasPendingUserInput: true,
+      hasActiveTask: true,
+      selectedStateStatus: "busy",
+    })).toBe("idle");
+    expect(resolveCodexMobileTaskStatusFromSignals({
+      runtimeStatus: { type: "active", activeFlags: [] },
+      hasPendingApproval: true,
+      hasPendingUserInput: false,
+      hasActiveTask: true,
+      selectedStateStatus: "busy",
+    })).toBe("approval");
+    expect(resolveCodexMobileTaskStatusFromSignals({
+      runtimeStatus: { type: "active", activeFlags: [] },
+      hasPendingApproval: true,
+      runtimeTaskApprovals: [],
+      hasPendingUserInput: false,
+      hasActiveTask: true,
+      selectedStateStatus: "busy",
+    })).toBe("running");
+    expect(resolveCodexMobileTaskStatusFromSignals({
+      runtimeStatus: { type: "notLoaded" },
+      hasPendingApproval: false,
+      hasPendingUserInput: false,
+      hasActiveTask: true,
+      selectedStateStatus: "idle",
+    })).toBe("running");
+  });
+
+  test("restores a selected task approval from the desktop runtime after daemon restart", () => {
+    const pending = resolveCodexMobilePendingApprovalFromSignals({
+      threadId: "thread-a",
+      selectedThreadId: "thread-a",
+      pendingConfirmations: [],
+      runtimeTaskApprovals: [{
+        source: "cli",
+        summary: "Codex 请求运行命令。",
+        commandPreview: "npm run quality",
+        allowForSession: true,
+      }],
+      runtimePendingApproval: {
+        source: "cli",
+        summary: "旧的运行状态摘要",
+        commandPreview: "stale command",
+        allowForSession: true,
+      },
+    });
+
+    expect(pending).toEqual({
+      summary: "Codex 请求运行命令。",
+      commandPreview: "npm run quality",
+      allowForSession: true,
+    });
+    expect(
+      resolveCodexMobilePendingApprovalFromSignals({
+        threadId: "thread-b",
+        selectedThreadId: "thread-a",
+        pendingConfirmations: [{
+          source: "cli",
+          summary: "已经失效的审批",
+          commandPreview: "stale command",
+          code: "STALE",
+          createdAt: "2026-08-02T00:00:00.000Z",
+          threadId: "thread-b",
+        }],
+        runtimeTaskApprovals: [],
+        runtimePendingApproval: {
+          source: "cli",
+          summary: "另一项审批",
+          commandPreview: "npm test",
+        },
+      }),
+    ).toBeNull();
+  });
+
+  test("lets a task-list number switch tasks before interpreting approval shortcuts", () => {
+    expect(resolveDaemonWechatCommand({
+      adapter: "codex",
+      text: "2",
+      awaitingBareTaskSelection: true,
+      hasPendingConfirmation: true,
+      hasPendingUserInput: false,
+      canConfirmForSession: true,
+    })).toEqual({ type: "resume", target: "2" });
+    expect(resolveDaemonWechatCommand({
+      adapter: "claude",
+      text: "2",
+      awaitingBareTaskSelection: true,
+      hasPendingConfirmation: false,
+      hasPendingUserInput: false,
+    })).toEqual({ type: "resume", target: "2" });
+    expect(resolveDaemonWechatCommand({
+      adapter: "codex",
+      text: "2",
+      awaitingBareTaskSelection: false,
+      hasPendingConfirmation: true,
+      hasPendingUserInput: false,
+      canConfirmForSession: true,
+    })).toEqual({ type: "deny" });
+    expect(resolveDaemonWechatCommand({
+      adapter: "codex",
+      text: "任务 2",
+      awaitingBareTaskSelection: false,
+      hasPendingConfirmation: true,
+      hasPendingUserInput: false,
+    })).toEqual({ type: "resume", target: "2" });
+    expect(resolveDaemonWechatCommand({
+      adapter: "codex",
+      text: "任务：2",
+      awaitingBareTaskSelection: false,
+      hasPendingConfirmation: true,
+      hasPendingUserInput: false,
+    })).toEqual({ type: "resume", target: "2" });
+    expect(resolveDaemonWechatCommand({
+      adapter: "codex",
+      text: "任务：震荡止损",
+      awaitingBareTaskSelection: false,
+      hasPendingConfirmation: true,
+      hasPendingUserInput: false,
+    })).toEqual({ type: "resume", target: "震荡止损" });
+  });
+
+  test("sends a mobile link for every settled Codex task with a thread", () => {
+    expect(shouldSendCodexMobileTaskLink("completed", "thread_a")).toBe(true);
+    expect(shouldSendCodexMobileTaskLink(undefined, "thread_a")).toBe(true);
+    expect(shouldSendCodexMobileTaskLink("interrupted", "thread_a")).toBe(true);
+    expect(shouldSendCodexMobileTaskLink("failed", "thread_a")).toBe(true);
+    expect(shouldSendCodexMobileTaskLink("completed", undefined)).toBe(false);
+  });
+
+  test("adds one concise mobile link to task-scoped messages", () => {
+    const url = "http://198.51.100.10/?task=0000000a&key=secret";
+    expect(appendCodexMobileTaskLink("已收到，处理中。", url)).toBe(
+      `已收到，处理中。\n\n${url}`,
+    );
+    expect(appendCodexMobileTaskLink(`已切换。\n\n${url}`, url)).toBe(
+      `已切换。\n\n${url}`,
+    );
+    expect(appendCodexMobileTaskLink("任务列表", undefined)).toBe("任务列表");
+  });
+
+  test("replaces Codex final output with one named linked completion notice", () => {
+    expect(shouldForwardDaemonFinalReply("codex")).toBe(false);
+    expect(shouldForwardDaemonFinalReply("claude")).toBe(true);
+    expect(formatCompactTaskDuration(547_000)).toBe("9m 7s");
+    expect(
+      formatCodexTaskCompletionMessage({
+        title: "完善移动版消息",
+        taskNumber: 3,
+        outcome: "completed",
+        durationMs: 547_000,
+        requestPreview: "让完成通知明确显示本次处理的具体请求",
+        preview: "已完成移动端消息刷新。",
+        url: "http://192.168.50.10:4396/?task=0000000a&key=secret",
+      }),
+    ).toBe(
+      "[完善移动版消息] 已完成，用时9m 7s\n本次任务：让完成通知明确显示本次处理的具体请求\n\n已完成移动端消息刷新。\n\nhttp://192.168.50.10:4396/?task=0000000a&key=secret\n发送“全文”查看完整回答；网页版可查看完整任务及列表。",
+    );
+    expect(
+      formatCodexTaskCompletionMessage({
+        title: "完善移动版消息",
+        outcome: "interrupted",
+        durationMs: 65_000,
+        url: "http://192.168.50.10:4396/?task=0000000a&key=secret",
+      }),
+    ).toStartWith("[完善移动版消息] 已中断，用时1m 5s\n");
+    expect(
+      formatCodexTaskCompletionMessage({
+        title: "完善移动版消息",
+        outcome: "failed",
+        durationMs: 8_000,
+        url: "http://192.168.50.10:4396/?task=0000000a&key=secret",
+      }),
+    ).toStartWith("[完善移动版消息] 执行失败，用时8s\n");
+    expect(
+      formatCodexTaskCompletionMessage({
+        title: "长回复任务",
+        outcome: "completed",
+        durationMs: 8_000,
+        preview: "一二三四五六七八九十",
+        previewLimit: 8,
+        url: "http://192.168.50.10:4396/?task=thread&key=secret",
+      }),
+    ).toBe(
+      "[长回复任务] 已完成，用时8s\n\n一二三四五六七八…\n后面还有 2 字，共 10 字\n\nhttp://192.168.50.10:4396/?task=thread&key=secret\n发送“全文”查看完整回答；网页版可查看完整任务及列表。",
+    );
+
+    expect(
+      formatCodexTaskCompletionMessage({
+        title: "网页不可用",
+        outcome: "completed",
+        durationMs: 1_000,
+        preview: "任务结果",
+      }),
+    ).toBe(
+      "[网页不可用] 已完成，用时1s\n\n任务结果\n\n发送“全文”查看完整回答。",
+    );
+  });
+
+  test("formats full Codex replies as safe WeChat message chunks", () => {
+    const fullText = `第一段\n\n${"完整内容".repeat(500)}`;
+    const messages = formatCodexTaskCompletionMessages({
+      title: "全文任务",
+      taskNumber: 8,
+      outcome: "completed",
+      durationMs: 9_000,
+      text: fullText,
+      url: "http://192.168.50.10:4396/?task=thread&key=secret",
+      mode: "full",
+    });
+
+    expect(messages.length).toBeGreaterThan(1);
+    expect(messages.every((message) => message.length <= 1_200)).toBe(true);
+    expect(messages.join("\n")).toContain("[全文任务] 已完成，用时9s");
+    expect(messages.join("")).toContain("完整内容".repeat(500));
+    expect(messages.at(-1)).toEndWith(
+      "http://192.168.50.10:4396/?task=thread&key=secret",
+    );
+  });
+
+  test("formats the current task latest full reply for on-demand fallback", () => {
+    const messages = formatCurrentCodexFullReplyMessages({
+      title: "当前任务",
+      taskNumber: 4,
+      text: "这是完整回答。",
+    });
+    expect(messages).toEqual([
+      "[当前任务] 最近完整回答\n\n这是完整回答。",
+    ]);
+  });
+
+  test("observes every desktop task and detects active-to-idle completion", () => {
+    const active = observeCodexTask(null, {
+      sessionId: "thread_a",
+      title: "后台任务",
+      lastUpdatedAt: "2026-08-01T01:00:00.000Z",
+      runtimeStatus: { type: "active", activeFlags: [] },
+    }, 1_000);
+    expect(active.completion).toBeUndefined();
+    expect(active.observation.runningSinceMs).toBe(1_000);
+
+    const completed = observeCodexTask(active.observation, {
+      sessionId: "thread_a",
+      title: "后台任务",
+      lastUpdatedAt: "2026-08-01T01:09:07.000Z",
+      runtimeStatus: { type: "idle" },
+    }, 548_000);
+    expect(completed.completion).toEqual({
+      outcome: "completed",
+      startedAtMs: 1_000,
+    });
+
+    const temporarilyUnavailable = observeCodexTask(active.observation, {
+      sessionId: "thread_a",
+      title: "后台任务",
+      lastUpdatedAt: "2026-08-01T01:05:00.000Z",
+      runtimeStatus: { type: "notLoaded" },
+    }, 301_000);
+    expect(temporarilyUnavailable.completion).toBeUndefined();
+    expect(temporarilyUnavailable.observation.status).toBe("running");
+    expect(temporarilyUnavailable.observation.runningSinceMs).toBe(1_000);
+  });
+
+  test("keeps the terminal prefix at entry and uses only task labels afterwards", () => {
+    expect(prefixDaemonAdapterMessage("codex", "已进入 Codex。"))
+      .toBe("[codex]\n已进入 Codex。");
+    expect(prefixDaemonTaskMessage("codex", "需要审批", 3, "thread_a"))
+      .toBe("[Codex 任务]\n需要审批");
+    expect(prefixDaemonTaskMessage("claude", "任务已继续"))
+      .toBe("任务已继续");
+    expect(prefixDaemonTaskMessage(
+      "claude",
+      "任务已继续",
+      2,
+      "session_a",
+      "修复 hooks",
+    )).toBe("[Claude · 修复 hooks]\n任务已继续");
+    expect(prefixDaemonTaskMessage(
+      "codex",
+      "需要审批",
+      3,
+      "thread_a",
+      "codex-clawbot",
+    )).toBe("[DeskRelay]\n需要审批");
+  });
+
+  test("does not reuse an older turn reply as the next completion preview", () => {
+    expect(selectCodexCompletionReplyText({
+      resolvedTurnId: "turn_new",
+      threadReply: { turnId: "turn_old", text: "旧回复" },
+      latestMessage: {
+        role: "assistant",
+        text: "旧回复",
+        turnId: "turn_old",
+      },
+    })).toBeUndefined();
+    expect(selectCodexCompletionReplyText({
+      resolvedTurnId: "turn_new",
+      turnReply: "当前回复",
+      threadReply: { turnId: "turn_old", text: "旧回复" },
+      latestMessage: null,
+    })).toBe("当前回复");
+  });
+
+  test("identifies a completion with the current turn request instead of only the chat title", () => {
+    expect(selectCodexCompletionRequestPreview({
+      resolvedTurnId: "turn_current",
+      activeTaskPreview: "修复当前任务的完成通知",
+      messages: [{
+        role: "user",
+        text: "旧任务内容",
+        turnId: "turn_old",
+      }],
+    })).toBe("修复当前任务的完成通知");
+    expect(selectCodexCompletionRequestPreview({
+      resolvedTurnId: "turn_current",
+      messages: [
+        { role: "user", text: "旧任务内容", turnId: "turn_old" },
+        { role: "user", text: "本次真实任务内容", turnId: "turn_current" },
+        { role: "assistant", text: "已经完成", turnId: "turn_current" },
+      ],
+    })).toBe("本次真实任务内容");
+    expect(selectCodexCompletionRequestPreview({
+      resolvedTurnId: "turn_current",
+      messages: [
+        { role: "user", text: "旧任务内容", turnId: "turn_old" },
+      ],
+    })).toBeUndefined();
+    expect(selectCodexCompletionRequestPreview({
+      resolvedTurnId: "turn_current",
+      messages: [{
+        role: "user",
+        turnId: "turn_current",
+        text: [
+          "[DeskRelay WeChat note]",
+          "English bridge guidance that must not enter the completion notice.",
+          "",
+          "[User request]",
+          "把本次任务说清楚",
+          "",
+          "[WeChat inbound attachments — ACTION REQUIRED]",
+          "kind=image path=/tmp/png1.png",
+        ].join("\n"),
+      }],
+    })).toBe("把本次任务说清楚");
+  });
+
+  test("uses the persisted turn duration for completion notices", () => {
+    expect(resolveCodexTaskCompletionDurationMs({
+      turnId: "turn_current",
+      runSummary: {
+        turnId: "turn_current",
+        status: "completed",
+        startedAtMs: 1_000,
+        completedAtMs: 548_000,
+        durationMs: 547_000,
+      },
+      startedAtMs: 500_000,
+      nowMs: 550_000,
+    })).toBe(547_000);
+    expect(resolveCodexTaskCompletionDurationMs({
+      turnId: "turn_current",
+      runSummary: {
+        turnId: "turn_other",
+        status: "completed",
+        durationMs: 900_000,
+      },
+      startedAtMs: 500_000,
+      nowMs: 550_000,
+    })).toBe(50_000);
+  });
+
+  test("clears task state only for the completing turn", () => {
+    expect(shouldClearCodexActiveTaskForCompletion("turn_current", "turn_current")).toBe(true);
+    expect(shouldClearCodexActiveTaskForCompletion("turn_new", "turn_old")).toBe(false);
+    expect(shouldClearCodexActiveTaskForCompletion(undefined, "turn_current")).toBe(false);
+    expect(shouldClearCodexActiveTaskForCompletion(undefined, undefined)).toBe(true);
+  });
+
+  test("suppresses replayed historical Codex completion events", () => {
+    const bridgeStartedAtMs = 10_000;
+    expect(
+      shouldForwardCodexTaskCompletionEvent({
+        bridgeStartedAtMs,
+        eventTurnId: "turn_old",
+        runSummary: {
+          turnId: "turn_old",
+          status: "completed",
+          completedAtMs: 9_000,
+          durationMs: 1_000,
+        },
+        hasActiveTask: false,
+        observationStatus: "idle",
+      }),
+    ).toBe(false);
+    expect(
+      shouldForwardCodexTaskCompletionEvent({
+        bridgeStartedAtMs,
+        eventTurnId: "turn_old",
+        runSummary: {
+          turnId: "turn_current",
+          status: "running",
+          startedAtMs: 9_500,
+          durationMs: 500,
+        },
+        hasActiveTask: true,
+        observationStatus: "running",
+      }),
+    ).toBe(false);
+    expect(
+      shouldForwardCodexTaskCompletionEvent({
+        bridgeStartedAtMs,
+        eventTurnId: "turn_current",
+        activeTaskTurnId: "turn_current",
+        runSummary: {
+          turnId: "turn_current",
+          status: "running",
+          startedAtMs: 9_500,
+          durationMs: 500,
+        },
+        hasActiveTask: true,
+        observationStatus: "running",
+      }),
+    ).toBe(true);
+    expect(
+      shouldForwardCodexTaskCompletionEvent({
+        bridgeStartedAtMs,
+        eventTurnId: "turn_old",
+        activeTaskTurnId: "turn_new",
+        runSummary: null,
+        hasActiveTask: true,
+        observationStatus: "running",
+      }),
+    ).toBe(false);
+  });
+
+  test("forwards only a current completion or a completion with live task evidence", () => {
+    expect(
+      shouldForwardCodexTaskCompletionEvent({
+        bridgeStartedAtMs: 10_000,
+        eventTurnId: "turn_current",
+        runSummary: {
+          turnId: "turn_current",
+          status: "completed",
+          completedAtMs: 11_000,
+          durationMs: 1_500,
+        },
+        hasActiveTask: false,
+        observationStatus: "running",
+      }),
+    ).toBe(true);
+    expect(
+      shouldForwardCodexTaskCompletionEvent({
+        bridgeStartedAtMs: 10_000,
+        eventTurnId: "turn_current",
+        runSummary: null,
+        hasActiveTask: true,
+        observationStatus: "idle",
+      }),
+    ).toBe(true);
+    expect(
+      shouldForwardCodexTaskCompletionEvent({
+        bridgeStartedAtMs: 10_000,
+        eventTurnId: "turn_unknown",
+        runSummary: null,
+        hasActiveTask: false,
+        observationStatus: "idle",
+      }),
+    ).toBe(false);
+  });
+
+  test("never retains failed completion notices for a later inbound message", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    expect(source).not.toContain("flushPendingMobileTaskLinks");
+    expect(source).not.toContain("codex_completion_sent_after_refresh");
+    expect(source).not.toContain("codex_completion_deferred");
+    expect(source).toContain("codex_completion_dropped");
+  });
+
+  test("never hides mobile messages in a Bridge-owned Codex queue", () => {
+    expect(shouldQueueCodexMobileMessage("running")).toBe(false);
+    expect(shouldQueueCodexMobileMessage("approval")).toBe(false);
+    expect(shouldQueueCodexMobileMessage("input")).toBe(false);
+    expect(shouldQueueCodexMobileMessage("idle")).toBe(false);
+    expect(shouldQueueCodexMobileMessage("error")).toBe(false);
+  });
+
+  test("backs off transient Codex reconnect retries instead of polling every 500ms", () => {
+    expect(computeCodexDeferredDrainRetryDelayMs(1)).toBe(1_000);
+    expect(computeCodexDeferredDrainRetryDelayMs(2)).toBe(2_000);
+    expect(computeCodexDeferredDrainRetryDelayMs(3)).toBe(4_000);
+    expect(computeCodexDeferredDrainRetryDelayMs(10)).toBe(30_000);
+  });
+
+  test("restores the persisted Codex thread through runtime options", () => {
+    expect(
+      buildDaemonRuntimeOptions({
+        adapter: "codex",
+        cwd: "/Users/test/project",
+        sessionStartMode: "restore",
+        initialSharedSessionId: "thread_previous",
+      }),
+    ).toMatchObject({
+      kind: "codex",
+      cwd: "/Users/test/project",
+      sessionStartMode: "restore",
+      initialSharedSessionId: "thread_previous",
+      initialSharedThreadId: "thread_previous",
+    });
+  });
+
+  test("formats concise restart notices", () => {
+    expect(formatDaemonRestartNotice(true)).toBe(
+      "DeskRelay 已重启，仍在原任务。\n直接发送消息即可继续；发送“任务”可切换。",
+    );
+    expect(formatDaemonRestartNotice(false)).toBe(
+      "DeskRelay 已重启。\n发送“任务”选择要继续的任务。",
+    );
+  });
+
+  test("suppresses repeated restart notices during the same maintenance window", () => {
+    const nowMs = Date.parse("2026-08-05T02:30:00.000+08:00");
+    expect(shouldSendDaemonRestartNotice(null, nowMs)).toBe(false);
+    expect(shouldSendDaemonRestartNotice({
+      version: 1,
+      cwd: "/Users/test/project",
+      updatedAt: "2026-08-05T01:00:00.000+08:00",
+    }, nowMs)).toBe(true);
+    expect(shouldSendDaemonRestartNotice({
+      version: 1,
+      cwd: "/Users/test/project",
+      restartNoticeSentAt: "2026-08-05T02:04:00.000+08:00",
+      updatedAt: "2026-08-05T02:04:00.000+08:00",
+    }, nowMs)).toBe(false);
+    expect(shouldSendDaemonRestartNotice({
+      version: 1,
+      cwd: "/Users/test/project",
+      restartNoticeSentAt: "2026-08-05T01:20:00.000+08:00",
+      updatedAt: "2026-08-05T01:20:00.000+08:00",
+    }, nowMs)).toBe(true);
+  });
+
+  test("keeps a failed restart notice pending until WeChat refreshes its token", async () => {
+    const attempts: string[] = [];
+
+    await expect(
+      flushPendingDaemonRestartNotice(
+        "重启提示",
+        async (text) => {
+          attempts.push(text);
+          return false;
+        },
+      ),
+    ).resolves.toBe("重启提示");
+
+    await expect(
+      flushPendingDaemonRestartNotice(
+        "重启提示",
+        async (text) => {
+          attempts.push(text);
+          return true;
+        },
+      ),
+    ).resolves.toBeNull();
+    expect(attempts).toEqual(["重启提示", "重启提示"]);
+  });
+
+  test("does not send an extra task-switch message for startup restoration", () => {
+    expect(shouldForwardDaemonThreadSwitch("startup_restore")).toBe(false);
+    expect(shouldForwardDaemonThreadSwitch("wechat_resume")).toBe(false);
+    expect(shouldForwardDaemonThreadSwitch("local_follow")).toBe(false);
+    expect(shouldForwardDaemonThreadSwitch("local_turn")).toBe(false);
+
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const sessionSwitchStart = source.indexOf('      case "session_switched":');
+    const sessionSwitchEnd = source.indexOf('      case "thread_switched":', sessionSwitchStart);
+    expect(sessionSwitchStart).toBeGreaterThan(-1);
+    expect(sessionSwitchEnd).toBeGreaterThan(sessionSwitchStart);
+    expect(source.slice(sessionSwitchStart, sessionSwitchEnd)).toContain(
+      "shouldForwardDaemonThreadSwitch(event.reason)",
+    );
+  });
+
+  test("reuses the recent background task cache", () => {
+    expect(isCodexTaskCandidateCacheFresh({
+      cachedAtMs: 8_000,
+      nowMs: 10_000,
+      maxAgeMs: 3_000,
+    })).toBe(true);
+    expect(isCodexTaskCandidateCacheFresh({
+      cachedAtMs: 6_000,
+      nowMs: 10_000,
+      maxAgeMs: 3_000,
+    })).toBe(false);
+    expect(isCodexTaskCandidateCacheFresh({
+      cachedAtMs: 0,
+      nowMs: 10_000,
+      maxAgeMs: 3_000,
+    })).toBe(false);
+  });
+
+  test("creates ClawBot tasks without clearing other background task state", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const start = source.indexOf('      case "new_session":');
+    const end = source.indexOf('      case "stop":', start);
+    const block = source.slice(start, end);
+    expect(start).toBeGreaterThan(-1);
+    expect(block).toContain("已新建");
+    expect(block).toContain("直接发送消息即可开始");
+    expect(block).toContain("command.input");
+    expect(block).toContain("suppressCodexAcceptedNotice");
+    expect(block).toContain("本次任务");
+    expect(block).not.toContain("clearDeferredCodexInboundMessages");
+    expect(block).not.toContain("activeTasks.clear");
+  });
+
+  test("keeps ClawBot task selection independent from desktop task switching", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const targetedStart = source.indexOf("  private async handleDaemonTaskTargetedMessage(");
+    const targetedEnd = source.indexOf("\n  private async handleSystemCommand(", targetedStart);
+    const resumeStart = source.indexOf('      case "resume": {');
+    const resumeEnd = source.indexOf('      case "new_session":', resumeStart);
+    const switchStart = source.indexOf('      case "thread_switched":');
+    const switchEnd = source.indexOf('      case "task_complete":', switchStart);
+
+    expect(targetedStart).toBeGreaterThan(-1);
+    expect(targetedEnd).toBeGreaterThan(targetedStart);
+    expect(resumeStart).toBeGreaterThan(-1);
+    expect(resumeEnd).toBeGreaterThan(resumeStart);
+    expect(switchStart).toBeGreaterThan(-1);
+    expect(switchEnd).toBeGreaterThan(switchStart);
+
+    expect(source.slice(targetedStart, targetedEnd)).not.toContain("slot.runtime.resumeSession(threadId)");
+    expect(source.slice(resumeStart, resumeEnd)).toContain('if (activeSlot.adapter !== "codex")');
+    expect(source.slice(resumeStart, resumeEnd)).toContain("activeSlot.runtime.resumeSession(candidate.sessionId)");
+    expect(source.slice(resumeStart, resumeEnd)).toContain("persistCodexWechatThreadId");
+    expect(source.slice(switchStart, switchEnd)).not.toContain("slot.wechatReplyThreadId = event.threadId");
+  });
+
+  test("shows the selected adapter task list immediately after a successful switch", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const switchStart = source.indexOf("    const switchAdapter = parseDaemonSwitchCommand(message.text);");
+    const switchEnd = source.indexOf("\n    if (message.text.trim().toLowerCase() === \"/daemon-stop\")", switchStart);
+    const switchBlock = source.slice(switchStart, switchEnd);
+
+    expect(switchStart).toBeGreaterThan(-1);
+    expect(switchEnd).toBeGreaterThan(switchStart);
+    expect(switchBlock).toContain("if (result.activated)");
+    expect(switchBlock).toContain("await this.handleSystemCommand(message, switchedSlot, {");
+    expect(switchBlock).toContain('type: "resume"');
+  });
+
+  test("does not restrict stable number-colon routing to Codex", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const routeStart = source.indexOf("    const targetedTaskMessage =");
+    const routeEnd = source.indexOf("\n    const pendingApprovalSlot", routeStart);
+    const routeBlock = source.slice(routeStart, routeEnd);
+
+    expect(routeStart).toBeGreaterThan(-1);
+    expect(routeEnd).toBeGreaterThan(routeStart);
+    expect(routeBlock).toContain("slot.runtime.sendInputToSession");
+    expect(routeBlock).toContain("resolveDaemonTaskTargetedMessage");
+    expect(routeBlock).toContain("handleDaemonTaskTargetedMessage");
+    expect(routeBlock).not.toContain('slot.adapter === "codex"');
+  });
+
+  test("never hides WeChat messages in a Bridge-owned Codex queue", () => {
+    expect(
+      shouldQueueCodexDaemonInbound({
+        adapter: "codex",
+        status: "busy",
+        currentThreadId: "thread_a",
+        hasActiveTask: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldQueueCodexDaemonInbound({
+        adapter: "codex",
+        status: "idle",
+        currentThreadId: "thread_a",
+        hasActiveTask: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldQueueCodexDaemonInbound({
+        adapter: "opencode",
+        status: "busy",
+        currentThreadId: "session_a",
+        hasActiveTask: true,
+      }),
+    ).toBe(false);
+  });
+
+  test("parseDaemonSwitchCommand recognizes terminal switch commands", () => {
+    expect(parseDaemonSwitchCommand("/codex")).toBe("codex");
+    expect(parseDaemonSwitchCommand("/claude")).toBe("claude");
+    expect(parseDaemonSwitchCommand("/tclaude")).toBe("tclaude");
+    expect(parseDaemonSwitchCommand("/grok")).toBe("grok");
+    expect(parseDaemonSwitchCommand("/codebuddy")).toBe("codebuddy");
+    expect(parseDaemonSwitchCommand("/reasonix")).toBe("reasonix");
+    expect(parseDaemonSwitchCommand("/reasonix code")).toBe("reasonix");
+    expect(parseDaemonSwitchCommand("/workbuddy")).toBe("workbuddy");
+    expect(parseDaemonSwitchCommand("/opencode")).toBe("opencode");
+    expect(parseDaemonSwitchCommand("/grok cli")).toBe("grok");
+    expect(parseDaemonSwitchCommand("/claude code")).toBe("claude");
+    expect(parseDaemonSwitchCommand("/workbuddy desktop")).toBe("workbuddy");
+    expect(parseDaemonSwitchCommand("/status")).toBeNull();
+  });
+
+  test("parseDaemonCliArgs binds daemon to cwd and optional initial adapter", () => {
+    const options = parseDaemonCliArgs([
+      "--cwd",
+      "./tmp/project",
+      "--adapter",
+      "claude",
+      "--profile",
+      "work",
+      "--no-open",
+    ]);
+
+    expect(options).toEqual({
+      cwd: path.resolve("./tmp/project"),
+      initialAdapter: "claude",
+      profile: "work",
+      openVisible: false,
+    });
+  });
+
+  test("macOS visible clients launch through a Terminal command file instead of AppleScript", () => {
+    const launcherFile = "/tmp/Desk Relay/launcher's tclaude.command";
+    const cwd = "/tmp/Project's Workspace";
+    const script = buildMacVisibleClientLaunchScript({
+      launcherFile,
+      cwd,
+      execPath: "/opt/homebrew/bin/node",
+      args: ["--no-warnings", "/tmp/local companion.js", "--adapter", "tclaude"],
+    });
+
+    expect(buildMacVisibleClientOpenArgs(launcherFile)).toEqual([
+      "-g",
+      "-a",
+      "Terminal",
+      launcherFile,
+    ]);
+    expect(script).toStartWith("#!/bin/zsh\n");
+    expect(script).toContain(String.raw`/bin/rm -f -- '/tmp/Desk Relay/launcher'\''s tclaude.command'`);
+    expect(script).toContain(String.raw`cd '/tmp/Project'\''s Workspace' || exit 1`);
+    expect(script).toContain(
+      "exec '/opt/homebrew/bin/node' '--no-warnings' '/tmp/local companion.js' '--adapter' 'tclaude'",
+    );
+    expect(script).not.toContain("tell application");
+    expect(script).not.toContain("osascript");
+  });
+
+  test("buildVisibleClientLaunchArgs routes codex through the remote client", () => {
+    const args = buildVisibleClientLaunchArgs({
+      adapter: "codex",
+      cwd: path.resolve("./tmp/project"),
+      cliArgs: ["--yolo"],
+    });
+
+    expect(args.some((arg) => arg.endsWith("codex-remote-client.ts"))).toBe(true);
+    expect(args).toContain("--cwd");
+    expect(args).toContain(path.resolve("./tmp/project"));
+    expect(args).toContain("--yolo");
+    expect(args).not.toContain("--adapter");
+  });
+
+  test("buildVisibleClientLaunchArgs routes shared-owner agents through local companion", () => {
+    for (const adapter of ["grok", "opencode"] as const) {
+      const args = buildVisibleClientLaunchArgs({
+        adapter,
+        cwd: path.resolve("./tmp/project"),
+      });
+
+      expect(args.some((arg) => arg.endsWith("local-companion.ts"))).toBe(true);
+      expect(args).toContain("--adapter");
+      expect(args).toContain(adapter);
+    }
+  });
+
+  test("buildVisibleClientLaunchArgs can request a fresh local companion session", () => {
+    for (const adapter of ["claude", "opencode"] as const) {
+      const args = buildVisibleClientLaunchArgs({
+        adapter,
+        cwd: path.resolve("./tmp/project"),
+        sessionStartMode: "new",
+      });
+
+      expect(args).toContain("--session-start-mode");
+      expect(args).toContain("new");
+    }
+  });
+
+  test("defaultDaemonSessionStartMode starts Claude and OpenCode fresh", () => {
+    expect(defaultDaemonSessionStartMode("codex")).toBe("restore");
+    expect(defaultDaemonSessionStartMode("claude")).toBe("new");
+    expect(defaultDaemonSessionStartMode("tclaude")).toBe("new");
+    expect(defaultDaemonSessionStartMode("grok")).toBe("new");
+    expect(defaultDaemonSessionStartMode("codebuddy")).toBe("new");
+    expect(defaultDaemonSessionStartMode("opencode")).toBe("new");
+  });
+
+  test("resolveDaemonSessionStartMode avoids restoring stale OpenCode sessions", () => {
+    expect(
+      resolveDaemonSessionStartMode({
+        adapter: "opencode",
+        slotCreated: true,
+        visibleConnected: false,
+      }),
+    ).toBe("new");
+
+    expect(
+      resolveDaemonSessionStartMode({
+        adapter: "opencode",
+        slotCreated: false,
+        visibleConnected: false,
+      }),
+    ).toBe("new");
+
+    expect(
+      resolveDaemonSessionStartMode({
+        adapter: "opencode",
+        slotCreated: false,
+        visibleConnected: false,
+        sharedSessionId: "session_current",
+      }),
+    ).toBe("restore");
+
+    expect(
+      resolveDaemonSessionStartMode({
+        adapter: "opencode",
+        slotCreated: false,
+        visibleConnected: true,
+        sharedSessionId: "session_current",
+      }),
+    ).toBe("restore");
+
+    expect(
+      resolveDaemonSessionStartMode({
+        adapter: "opencode",
+        explicitSessionStartMode: "new",
+        slotCreated: false,
+        visibleConnected: true,
+        sharedSessionId: "session_current",
+      }),
+    ).toBe("new");
+
+    expect(
+      resolveDaemonSessionStartMode({
+        adapter: "opencode",
+        explicitSessionStartMode: "new",
+        slotCreated: false,
+        visibleConnected: true,
+        sharedSessionId: "session_current",
+        reuseExistingVisible: true,
+      }),
+    ).toBe("restore");
+
+    expect(
+      resolveDaemonSessionStartMode({
+        adapter: "codex",
+        slotCreated: true,
+        visibleConnected: false,
+      }),
+    ).toBe("restore");
+  });
+
+  test("buildWindowsVisibleClientLaunchCommand opens a titled console window", () => {
+    const command = buildWindowsVisibleClientLaunchCommand({
+      adapter: "claude",
+      cwd: "D:\\work",
+      args: ["C:\\Program Files\\bridge\\local-companion.js", "--cwd", "D:\\work"],
+    });
+
+    expect(command).toContain("start");
+    expect(command).toContain('"deskrelay-claude"');
+    expect(command).toContain('/D "D:\\work"');
+    expect(command).toContain('"C:\\Program Files\\bridge\\local-companion.js"');
+  });
+
+  test("labels Codex background replies without repeating the terminal prefix", () => {
+    expect(
+      prefixDaemonTaskMessage(
+        "codex",
+        "第一个任务已完成",
+        3,
+        "0000000a-0000-7000-8000-00000000000a",
+        "示例任务",
+      ),
+    ).toBe("[示例任务]\n第一个任务已完成");
+    expect(
+      prefixDaemonTaskMessage(
+        "codex",
+        "需要审批",
+        undefined,
+        "0000000a-0000-7000-8000-00000000000a",
+        "示例任务",
+      ),
+    ).toBe("[示例任务]\n需要审批");
+  });
+
+  test("formatDaemonStatus keeps mobile output concise", () => {
+    const output = formatDaemonStatus({
+      cwd: "D:/work/project",
+      activeAdapter: "codex",
+      startedAt: "2026-05-22T00:00:00.000Z",
+      slots: [
+        {
+          adapter: "codex",
+          status: "idle",
+          cwd: "D:/work/project",
+          companionPid: 456,
+          pendingApproval: false,
+          pendingUserInput: false,
+        },
+        {
+          adapter: "claude",
+          status: "awaiting_approval",
+          cwd: "D:/work/project",
+          pendingApproval: true,
+          pendingUserInput: false,
+        },
+      ],
+    });
+
+    expect(output).toBe(
+      "当前：Codex\nCodex：空闲\nClaude：待审批\nTClaude：未启动\nGrok CLI：未启动\nCodeBuddy：未启动\nreasonix：未启动\nWorkBuddy：未启动\nOpenCode：未启动",
+    );
+    expect(output).not.toMatch(/cwd|started_at|pid|D:\/work/);
+  });
+
+  test("formatDaemonSwitchResultDetail reports concise visible client outcomes", () => {
+    expect(
+      formatDaemonSwitchResultDetail({
+        created: true,
+        openedVisible: true,
+        visibleConnected: true,
+      }),
+    ).toBe("已启动并连接桌面端。");
+
+    expect(
+      formatDaemonSwitchResultDetail({
+        created: false,
+        openedVisible: false,
+        visibleConnected: true,
+      }),
+    ).toBe("已连接现有桌面端。");
+
+    expect(
+      formatDaemonSwitchResultDetail({
+        created: true,
+        openedVisible: true,
+        visibleConnected: false,
+        activated: false,
+        previousActiveAdapter: "claude",
+      }),
+    ).toBe("桌面端尚未连接，仍使用 Claude。");
+  });
+
+  test("waitForVisibleClientConnection resolves when the visible companion appears", async () => {
+    let now = 0;
+    let checks = 0;
+
+    const connected = await waitForVisibleClientConnection(
+      {
+        cwd: "D:\\work\\project",
+        adapter: "opencode",
+        timeoutMs: 1_000,
+        pollMs: 250,
+      },
+      {
+        isAlive: () => {
+          checks += 1;
+          return checks >= 3;
+        },
+        sleep: async (ms) => {
+          now += ms;
+        },
+        now: () => now,
+      },
+    );
+
+    expect(connected).toBe(true);
+    expect(checks).toBe(3);
+  });
+
+  test("waitForVisibleClientConnection returns false on timeout", async () => {
+    let now = 0;
+
+    const connected = await waitForVisibleClientConnection(
+      {
+        cwd: "D:\\work\\project",
+        adapter: "claude",
+        timeoutMs: 500,
+        pollMs: 250,
+      },
+      {
+        isAlive: () => false,
+        sleep: async (ms) => {
+          now += ms;
+        },
+        now: () => now,
+      },
+    );
+
+    expect(connected).toBe(false);
+    expect(now).toBe(500);
+  });
+
+  test("cleanupDaemonBeforeStart returns none when no daemon endpoint exists", async () => {
+    await expect(
+      cleanupDaemonBeforeStart({
+        readEndpoint: () => null,
+        listDaemonProcesses: () => [],
+      }),
+    ).resolves.toEqual({ action: "none" });
+  });
+
+  test("cleanupDaemonBeforeStart stops same-cwd daemon peers when no endpoint exists", async () => {
+    const killed: number[] = [];
+    const alive = new Set([100, 101]);
+
+    const result = await cleanupDaemonBeforeStart({
+      cwd: "C:\\Users\\example",
+      readEndpoint: () => null,
+      listDaemonProcesses: (cwd) => {
+        expect(cwd).toBe("C:\\Users\\example");
+        return [
+          {
+            pid: 100,
+            parentPid: 50,
+            commandLine:
+              '"C:\\Program Files\\nodejs\\node.exe" C:\\Users\\example\\AppData\\Roaming\\npm\\node_modules\\deskrelay\\bin\\deskrelay-daemon.mjs --cwd C:\\Users\\example',
+          },
+          {
+            pid: 101,
+            parentPid: 100,
+            commandLine:
+              '"C:\\Program Files\\nodejs\\node.exe" C:\\repo\\dist\\daemon\\deskrelay-daemon.js --cwd C:\\Users\\example',
+          },
+        ];
+      },
+      killProcess: (pid) => {
+        killed.push(pid);
+        alive.delete(pid);
+      },
+      isAlive: (pid) => alive.has(pid),
+      sleep: async () => undefined,
+      log: () => undefined,
+      daemonLog: () => undefined,
+      forceStopTimeoutMs: 1,
+      pollMs: 1,
+    });
+
+    expect(result).toEqual({ action: "none" });
+    expect(killed).toEqual([101]);
+  });
+
+  test("cleanupDaemonBeforeStart clears stale daemon endpoint and workspace endpoints", async () => {
+    const endpoint = buildDaemonEndpoint();
+    const cleared: string[] = [];
+
+    const result = await cleanupDaemonBeforeStart({
+      readEndpoint: () => endpoint,
+      isAlive: () => false,
+      clearEndpoint: (pid) => {
+        cleared.push(`endpoint:${pid ?? 0}`);
+      },
+      clearWorkspaceEndpoints: (payload) => {
+        cleared.push(`workspace:${payload.cwd}`);
+      },
+      listDaemonProcesses: () => [],
+      log: () => undefined,
+      daemonLog: () => undefined,
+    });
+
+    expect(result).toEqual({ action: "cleared_stale_endpoint", endpoint });
+    expect(cleared).toEqual(["workspace:C:\\Users\\example", "endpoint:28600"]);
+  });
+
+  test("cleanupDaemonBeforeStart gracefully stops a live daemon before startup", async () => {
+    const endpoint = buildDaemonEndpoint();
+    let alive = true;
+    const requests: DaemonRequest[] = [];
+    const cleared: string[] = [];
+
+    const result = await cleanupDaemonBeforeStart({
+      readEndpoint: () => endpoint,
+      isAlive: () => alive,
+      sendRequest: async (_endpoint, request) => {
+        requests.push(request);
+        alive = false;
+        return { ok: true };
+      },
+      clearEndpoint: (pid) => {
+        cleared.push(`endpoint:${pid ?? 0}`);
+      },
+      clearWorkspaceEndpoints: (payload) => {
+        cleared.push(`workspace:${payload.cwd}`);
+      },
+      listDaemonProcesses: () => [],
+      sleep: async () => undefined,
+      log: () => undefined,
+      daemonLog: () => undefined,
+    });
+
+    expect(result).toEqual({ action: "stopped", endpoint, forced: false });
+    expect(requests).toEqual([{ command: "shutdown" }]);
+    expect(cleared).toEqual(["workspace:C:\\Users\\example", "endpoint:28600"]);
+  });
+
+  test("cleanupDaemonBeforeStart force-stops daemon endpoints that do not answer IPC", async () => {
+    const endpoint = buildDaemonEndpoint();
+    let alive = true;
+    const killed: number[] = [];
+
+    const result = await cleanupDaemonBeforeStart({
+      readEndpoint: () => endpoint,
+      isAlive: () => alive,
+      sendRequest: async () => ({ ok: false, error: "Timed out waiting for daemon response." }),
+      isDaemonProcess: () => true,
+      killProcess: (pid) => {
+        killed.push(pid);
+        alive = false;
+      },
+      clearEndpoint: () => undefined,
+      clearWorkspaceEndpoints: () => undefined,
+      listDaemonProcesses: () => [],
+      sleep: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      },
+      log: () => undefined,
+      daemonLog: () => undefined,
+      stopTimeoutMs: 1,
+      forceStopTimeoutMs: 1,
+      pollMs: 1,
+    });
+
+    expect(result).toEqual({ action: "stopped", endpoint, forced: true });
+    expect(killed).toEqual([28600]);
+  });
+
+  test("cleanupDaemonBeforeStart does not force-stop unverified reused pids", async () => {
+    const endpoint = buildDaemonEndpoint();
+    const killed: number[] = [];
+    const cleared: string[] = [];
+
+    const result = await cleanupDaemonBeforeStart({
+      readEndpoint: () => endpoint,
+      isAlive: () => true,
+      sendRequest: async () => ({ ok: false, error: "Daemon endpoint is not reachable." }),
+      isDaemonProcess: () => false,
+      killProcess: (pid) => {
+        killed.push(pid);
+      },
+      clearEndpoint: (pid) => {
+        cleared.push(`endpoint:${pid ?? 0}`);
+      },
+      clearWorkspaceEndpoints: (payload) => {
+        cleared.push(`workspace:${payload.cwd}`);
+      },
+      listDaemonProcesses: () => [],
+      sleep: async () => undefined,
+      log: () => undefined,
+      daemonLog: () => undefined,
+      stopTimeoutMs: 1,
+      pollMs: 1,
+    });
+
+    expect(result).toEqual({ action: "cleared_stale_endpoint", endpoint });
+    expect(killed).toEqual([]);
+    expect(cleared).toEqual(["workspace:C:\\Users\\example", "endpoint:28600"]);
+  });
+
+  test("cleanupSingleBridgeBeforeDaemon returns none when no lock exists", async () => {
+    await expect(
+      cleanupSingleBridgeBeforeDaemon({
+        readLock: () => null,
+      }),
+    ).resolves.toEqual({ action: "none" });
+  });
+
+  test("cleanupSingleBridgeBeforeDaemon clears stale locks and endpoints", async () => {
+    const lock = buildBridgeLock();
+    const cleared: string[] = [];
+
+    const result = await cleanupSingleBridgeBeforeDaemon({
+      readLock: () => lock,
+      isAlive: () => false,
+      clearEndpoint: (payload) => {
+        cleared.push(`endpoint:${payload.adapter}:${payload.cwd}`);
+      },
+      clearLock: (payload) => {
+        cleared.push(`lock:${payload.pid}`);
+      },
+      log: () => undefined,
+      daemonLog: () => undefined,
+    });
+
+    expect(result).toEqual({ action: "cleared_stale_lock", lock });
+    expect(cleared).toEqual([
+      "endpoint:codex:C:\\Users\\example",
+      "lock:28544",
+    ]);
+  });
+
+  test("cleanupSingleBridgeBeforeDaemon stops a live single bridge before daemon startup", async () => {
+    const lock = buildBridgeLock({ adapter: "opencode" });
+    let alive = true;
+    const signals: string[] = [];
+    const cleared: string[] = [];
+
+    const result = await cleanupSingleBridgeBeforeDaemon({
+      readLock: () => lock,
+      isAlive: () => alive,
+      killProcess: (_pid, signal) => {
+        signals.push(signal);
+        alive = false;
+      },
+      clearEndpoint: (payload) => {
+        cleared.push(`endpoint:${payload.adapter}`);
+      },
+      clearLock: (payload) => {
+        cleared.push(`lock:${payload.pid}`);
+      },
+      sleep: async () => undefined,
+      log: () => undefined,
+      daemonLog: () => undefined,
+    });
+
+    expect(result).toEqual({ action: "stopped", lock, forced: false });
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(cleared).toEqual(["endpoint:opencode", "lock:28544"]);
+  });
+
+  test("cleanupSingleBridgeBeforeDaemon force-stops bridges that ignore SIGTERM", async () => {
+    const lock = buildBridgeLock();
+    let alive = true;
+    const signals: string[] = [];
+    let pollCount = 0;
+
+    const result = await cleanupSingleBridgeBeforeDaemon({
+      readLock: () => lock,
+      isAlive: () => {
+        pollCount += 1;
+        return alive;
+      },
+      killProcess: (_pid, signal) => {
+        signals.push(signal);
+        if (signal === "SIGKILL") {
+          alive = false;
+        }
+      },
+      clearEndpoint: () => undefined,
+      clearLock: () => undefined,
+      sleep: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      },
+      log: () => undefined,
+      daemonLog: () => undefined,
+      stopTimeoutMs: 1,
+      forceStopTimeoutMs: 1,
+      pollMs: 1,
+    });
+
+    expect(result).toEqual({ action: "stopped", lock, forced: true });
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(pollCount).toBeGreaterThan(1);
+  });
+
+  test("package exposes the daemon binary and npm script", () => {
+    const packageJson = JSON.parse(readRepoFile("package.json")) as {
+      bin?: Record<string, string>;
+      scripts?: Record<string, string>;
+    };
+    const mainBinSource = readRepoFile("bin/deskrelay.mjs");
+    const binSource = readRepoFile("bin/deskrelay-daemon.mjs");
+    const reasonixBinSource = readRepoFile("bin/deskrelay-bridge-reasonix.mjs");
+
+    expect(packageJson.bin?.deskrelay).toBe("bin/deskrelay.mjs");
+    expect(mainBinSource).toContain('runJsEntry("dist/daemon/deskrelay-daemon.js")');
+    expect(packageJson.bin?.["deskrelay-daemon"]).toBe("bin/deskrelay-daemon.mjs");
+    expect(packageJson.scripts?.daemon).toContain("src/daemon/deskrelay-daemon.ts");
+    expect(binSource).toContain('runJsEntry("dist/daemon/deskrelay-daemon.js")');
+    expect(packageJson.bin?.["deskrelay-bridge-reasonix"]).toBe("bin/deskrelay-bridge-reasonix.mjs");
+    expect(packageJson.scripts?.["bridge:reasonix"]).toContain("--adapter reasonix");
+    expect(reasonixBinSource).toContain('["--adapter", "reasonix"]');
+  });
+});

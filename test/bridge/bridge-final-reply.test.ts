@@ -1,0 +1,347 @@
+import { describe, expect, test } from "bun:test";
+
+import {
+  OPENCODE_EMPTY_VISIBLE_REPLY_MESSAGE,
+  forwardWechatFinalReply,
+} from "../../src/bridge/bridge-final-reply.ts";
+import { WECHAT_TEXT_CHUNK_MAX_CHARS } from "../../src/bridge/bridge-utils.ts";
+
+describe("forwardWechatFinalReply", () => {
+  test("sends long visible replies as bounded WeChat text chunks", async () => {
+    const calls: string[] = [];
+    const rawText = "a".repeat(1800);
+
+    await forwardWechatFinalReply({
+      adapter: "codex",
+      rawText,
+      sender: {
+        sendText: async (text) => {
+          calls.push(text);
+          return true;
+        },
+        sendImage: async () => undefined,
+        sendFile: async () => undefined,
+        sendVoice: async () => undefined,
+        sendVideo: async () => undefined,
+      },
+    });
+
+    expect(calls.length).toBeGreaterThan(1);
+    for (const chunk of calls) {
+      expect(chunk.length).toBeLessThanOrEqual(WECHAT_TEXT_CHUNK_MAX_CHARS);
+    }
+    expect(calls.join("")).toBe(rawText);
+  });
+
+  test("stops final reply forwarding after the visible text send fails", async () => {
+    const calls: string[] = [];
+
+    await forwardWechatFinalReply({
+      adapter: "codex",
+      rawText: [
+        "Visible text.",
+        "```wechat-attachments",
+        "image C:\\Users\\example\\Desktop\\photo.jpg",
+        "```",
+      ].join("\n"),
+      sender: {
+        sendText: async (text) => {
+          calls.push(`text:${text}`);
+          return false;
+        },
+        sendImage: async (imagePath) => {
+          calls.push(`image:${imagePath}`);
+        },
+        sendFile: async (filePath) => {
+          calls.push(`file:${filePath}`);
+        },
+        sendVoice: async (voicePath) => {
+          calls.push(`voice:${voicePath}`);
+        },
+        sendVideo: async (videoPath) => {
+          calls.push(`video:${videoPath}`);
+        },
+      },
+    });
+
+    expect(calls).toEqual(["text:Visible text."]);
+  });
+
+  test("sends stripped text before attachments in listed order", async () => {
+    const calls: string[] = [];
+
+    await forwardWechatFinalReply({
+      adapter: "codex",
+      rawText: [
+        "Artifacts are ready.",
+        "```wechat-attachments",
+        "image C:\\Users\\example\\Desktop\\photo.jpg",
+        "file C:\\Users\\example\\Desktop\\report.pdf",
+        "```",
+      ].join("\n"),
+      sender: {
+        sendText: async (text) => {
+          calls.push(`text:${text}`);
+        },
+        sendImage: async (imagePath) => {
+          calls.push(`image:${imagePath}`);
+        },
+        sendFile: async (filePath) => {
+          calls.push(`file:${filePath}`);
+        },
+        sendVoice: async (voicePath) => {
+          calls.push(`voice:${voicePath}`);
+        },
+        sendVideo: async (videoPath) => {
+          calls.push(`video:${videoPath}`);
+        },
+      },
+    });
+
+    expect(calls).toEqual([
+      "text:Artifacts are ready.",
+      "image:C:\\Users\\example\\Desktop\\photo.jpg",
+      "file:C:\\Users\\example\\Desktop\\report.pdf",
+    ]);
+  });
+
+  test("continues after attachment failures and reports the error in text", async () => {
+    const calls: string[] = [];
+
+    await forwardWechatFinalReply({
+      adapter: "claude",
+      rawText: [
+        "```wechat-attachments",
+        "image C:\\Users\\example\\Desktop\\broken.jpg",
+        "file C:\\Users\\example\\Desktop\\report.pdf",
+        "```",
+      ].join("\n"),
+      sender: {
+        sendText: async (text) => {
+          calls.push(`text:${text}`);
+        },
+        sendImage: async () => {
+          throw new Error("upload failed");
+        },
+        sendFile: async (filePath) => {
+          calls.push(`file:${filePath}`);
+        },
+        sendVoice: async (voicePath) => {
+          calls.push(`voice:${voicePath}`);
+        },
+        sendVideo: async (videoPath) => {
+          calls.push(`video:${videoPath}`);
+        },
+      },
+    });
+
+    expect(calls).toEqual([
+      "text:Failed to send image attachment: C:\\Users\\example\\Desktop\\broken.jpg\nupload failed",
+      "file:C:\\Users\\example\\Desktop\\report.pdf",
+    ]);
+  });
+
+  test("auto-sends inline local text files as file attachments", async () => {
+    const calls: string[] = [];
+
+    await forwardWechatFinalReply({
+      adapter: "codex",
+      rawText: [
+        "Saved note to `C:\\Users\\example\\Desktop\\exports\\summary.txt`.",
+        "Review it.",
+      ].join("\n"),
+      sender: {
+        sendText: async (text) => {
+          calls.push(`text:${text}`);
+        },
+        sendImage: async (imagePath) => {
+          calls.push(`image:${imagePath}`);
+        },
+        sendFile: async (filePath) => {
+          calls.push(`file:${filePath}`);
+        },
+        sendVoice: async (voicePath) => {
+          calls.push(`voice:${voicePath}`);
+        },
+        sendVideo: async (videoPath) => {
+          calls.push(`video:${videoPath}`);
+        },
+      },
+    });
+
+    expect(calls).toEqual([
+      "text:Saved note to .\nReview it.",
+      "file:C:\\Users\\example\\Desktop\\exports\\summary.txt",
+    ]);
+  });
+
+  test("keeps source code paths in text instead of auto-sending them as files", async () => {
+    const calls: string[] = [];
+
+    await forwardWechatFinalReply({
+      adapter: "codex",
+      rawText: [
+        "Reference only:",
+        "`C:\\Users\\example\\Desktop\\Github\\deskrelay-project\\src\\bridge\\bridge-adapters.test.ts`",
+        "Do not upload this file.",
+      ].join("\n"),
+      sender: {
+        sendText: async (text) => {
+          calls.push(`text:${text}`);
+        },
+        sendImage: async (imagePath) => {
+          calls.push(`image:${imagePath}`);
+        },
+        sendFile: async (filePath) => {
+          calls.push(`file:${filePath}`);
+        },
+        sendVoice: async (voicePath) => {
+          calls.push(`voice:${voicePath}`);
+        },
+        sendVideo: async (videoPath) => {
+          calls.push(`video:${videoPath}`);
+        },
+      },
+    });
+
+    expect(calls).toEqual([
+      "text:Reference only:\n`C:\\Users\\example\\Desktop\\Github\\deskrelay-project\\src\\bridge\\bridge-adapters.test.ts`\nDo not upload this file.",
+    ]);
+  });
+
+  test("keeps OpenCode answers when inline reasoning shares the same line", async () => {
+    const calls: string[] = [];
+
+    await forwardWechatFinalReply({
+      adapter: "opencode",
+      rawText: "hiThe user is just saying hi. I should respond briefly.Hello! How can I help?",
+      sender: {
+        sendText: async (text) => {
+          calls.push(`text:${text}`);
+        },
+        sendImage: async (imagePath) => {
+          calls.push(`image:${imagePath}`);
+        },
+        sendFile: async (filePath) => {
+          calls.push(`file:${filePath}`);
+        },
+        sendVoice: async (voicePath) => {
+          calls.push(`voice:${voicePath}`);
+        },
+        sendVideo: async (videoPath) => {
+          calls.push(`video:${videoPath}`);
+        },
+      },
+    });
+
+    expect(calls).toEqual(["text:Hello! How can I help?"]);
+  });
+
+  test("sends an OpenCode diagnostic when reasoning cleanup leaves no visible reply", async () => {
+    const calls: string[] = [];
+    const emptyVisibleReplies: string[] = [];
+
+    await forwardWechatFinalReply({
+      adapter: "opencode",
+      rawText:
+        'The user said "好" (okay/good) with an OK hand gesture. This seems like just an acknowledgment. I should keep it brief and ask if they nee...',
+      onEmptyVisibleReply: ({ rawVisibleText }) => {
+        emptyVisibleReplies.push(rawVisibleText);
+      },
+      sender: {
+        sendText: async (text) => {
+          calls.push(`text:${text}`);
+        },
+        sendImage: async (imagePath) => {
+          calls.push(`image:${imagePath}`);
+        },
+        sendFile: async (filePath) => {
+          calls.push(`file:${filePath}`);
+        },
+        sendVoice: async (voicePath) => {
+          calls.push(`voice:${voicePath}`);
+        },
+        sendVideo: async (videoPath) => {
+          calls.push(`video:${videoPath}`);
+        },
+      },
+    });
+
+    expect(calls).toEqual([`text:${OPENCODE_EMPTY_VISIBLE_REPLY_MESSAGE}`]);
+    expect(emptyVisibleReplies).toEqual([
+      'The user said "好" (okay/good) with an OK hand gesture. This seems like just an acknowledgment. I should keep it brief and ask if they nee...',
+    ]);
+  });
+
+  test("sanitizes noisy OpenCode final replies before sending to WeChat", async () => {
+    const calls: string[] = [];
+
+    await forwardWechatFinalReply({
+      adapter: "opencode",
+      rawText: [
+        "I need to respond to the user's greeting in Chinese as per the CLAUDE.md instruction.",
+        "你好！有什么我可以帮助你的吗？",
+        'Bridge error: opencode companion is not connected. Run "deskrelay-opencode" in a second terminal for this directory.',
+        "OpenCode session switched to ses_2cb824bf from the local terminal.",
+        "OpenCode is still working on:",
+        "hi",
+        "你是什么模型呀我需要告诉用户我是什么模型。根据系统提示，我应该用中文回答。",
+        "让我直接回答这个问题。",
+        "我是opencode，由nemotron-3-super-free模型驱动，模型ID是opencode/nemotron-3-super-free。有什么我可以帮助你的吗？",
+      ].join("\n"),
+      sender: {
+        sendText: async (text) => {
+          calls.push(`text:${text}`);
+        },
+        sendImage: async (imagePath) => {
+          calls.push(`image:${imagePath}`);
+        },
+        sendFile: async (filePath) => {
+          calls.push(`file:${filePath}`);
+        },
+        sendVoice: async (voicePath) => {
+          calls.push(`voice:${voicePath}`);
+        },
+        sendVideo: async (videoPath) => {
+          calls.push(`video:${videoPath}`);
+        },
+      },
+    });
+
+    expect(calls).toEqual([
+      "text:我是opencode，由nemotron-3-super-free模型驱动，模型ID是opencode/nemotron-3-super-free。有什么我可以帮助你的吗？",
+    ]);
+  });
+  test("sends structured generated images after text and deduplicates paths already listed in the reply", async () => {
+    const calls: string[] = [];
+
+    await forwardWechatFinalReply({
+      adapter: "grok",
+      rawText: [
+        "图片已经生成。",
+        "```wechat-attachments",
+        "image /tmp/generated/result.png",
+        "```",
+      ].join("\n"),
+      images: [
+        { source: "local", path: "/tmp/generated/result.png" },
+        { source: "local", path: "/tmp/generated/second.jpg" },
+        { source: "remote", url: "https://example.com/remote.png" },
+      ],
+      sender: {
+        sendText: async (text) => { calls.push(`text:${text}`); },
+        sendImage: async (imagePath) => { calls.push(`image:${imagePath}`); },
+        sendFile: async () => undefined,
+        sendVoice: async () => undefined,
+        sendVideo: async () => undefined,
+      },
+    });
+
+    expect(calls).toEqual([
+      "text:执行结果：\n图片已经生成。",
+      "image:/tmp/generated/result.png",
+      "image:/tmp/generated/second.jpg",
+    ]);
+  });
+
+});

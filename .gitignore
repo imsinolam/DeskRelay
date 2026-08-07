@@ -1,0 +1,61 @@
+node_modules/
+dist/
+.claude/
+~/
+log.md
+.codex-app-schema/
+.codex-app-ts/
+tmp-codex-*.log
+plan/
+architecture/
+git-log.md
+.worktrees/
+/.omc
+
+# Local credentials and runtime state
+.env
+.env.*
+!.env.example
+.deskrelay/
+**/.deskrelay/
+# Ignore the v1 data directory if it exists during one-time migration.
+.cli-bridge/
+**/.cli-bridge/
+.ssh/
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+account.json
+context_tokens.json
+daemon-endpoint.json
+bridge-state.json
+inbound-attachments/
+mobile-images/
+
+# Local logs, caches and editor state
+*.log
+coverage/
+.DS_Store
+.idea/
+.vscode/
+*.code-workspace
+*.local
+deploy/**/*.local.*
+
+# Local marketing drafts may contain unreviewed product screenshots.
+# Curate and privacy-review a final site before tracking it.
+website/
+
+# Generated illustration sources and alternate exports. The reviewed public
+# asset is docs/images/deskrelay-four-panel-white-paper-boy-v2.png.
+docs/images/deskrelay-four-panel-white-paper-boy-raw.png
+docs/images/deskrelay-four-panel-white-paper-boy.jpg
+docs/images/deskrelay-four-panel-white-paper-boy.png
+docs/images/deskrelay-four-panel-white-paper-boy-v2-raw.png
+docs/images/deskrelay-four-panel-white-paper-boy-v2.jpg
+docs/images/deskrelay-four-panel-xiaohei-raw.png
+docs/images/deskrelay-four-panel-xiaohei.jpg
+docs/images/deskrelay-four-panel-xiaohei.png
+docs/images/deskrelay-illustration-independent-review.md

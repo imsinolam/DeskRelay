@@ -1,0 +1,103 @@
+# 运行配置
+
+DeskRelay 通过进程环境变量配置。仓库中的 `.env.example` 只是参考，程序不会自动加载它；请在启动终端、LaunchAgent、systemd 或其他进程管理器中显式设置。
+
+## 活动数据目录
+
+默认目录是 `~/.deskrelay`。它可能包含：
+
+- 微信登录凭据和同步游标；
+- 工作区、Agent 与任务映射；
+- 移动网页认证；
+- 日志、附件和待发送消息；
+- Relay 指令去重记录。
+
+不要把它放进项目仓库、同步盘、公开备份或 issue 附件。需要修改位置时设置 `DESKRELAY_DATA_DIR`。
+
+## 电脑端变量
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `DESKRELAY_DATA_DIR` | `~/.deskrelay` | 活动数据目录 |
+| `DESKRELAY_LANG` | `zh` | CLI 提示语言，支持 `zh` / `en` |
+| `DESKRELAY_MOBILE_PORT` | `4396` | 局域网移动网页首选端口，占用时继续尝试后续端口 |
+| `DESKRELAY_RELAY_URL` | 未设置 | 公网应用层 Relay 的 HTTPS 基础地址 |
+| `DESKRELAY_RELAY_DEVICE_ID` | `default` | Relay 设备标识，必须与服务器一致 |
+| `DESKRELAY_RELAY_DEVICE_TOKEN` | 无 | Relay 设备密钥，必须与服务器一致 |
+| `DESKRELAY_MOBILE_PUBLIC_URL` | 未设置 | 高级自定义公开 Web 地址；普通公网部署应使用 Relay |
+| `DESKRELAY_STRICT_APPROVAL` | 未设置 | 设为 `1` 后，低风险审批也全部交给远程端确认 |
+| `DESKRELAY_THINKING_FORWARD` | 未设置 | 设为 `1` 时转发可用的思考进度摘要 |
+| `DESKRELAY_REASONIX_OPEN_WEB` | 未设置 | 设为 `0` 时不自动打开 reasonix 官方 Web UI |
+| `DESKRELAY_SKIP_NODE_CHECK` | 未设置 | 设为 `1` 跳过 Node.js 版本检查，自担风险 |
+| `WECHAT_ILINK_BASE_URL` | 内置服务地址 | 覆盖微信 iLink API 地址 |
+| `WECHAT_MAX_IMAGE_MB` | `20` | 微信出站图片大小限制 |
+| `WECHAT_MAX_FILE_MB` | `50` | 微信出站普通文件大小限制 |
+| `WECHAT_MAX_VOICE_MB` | `20` | 微信出站语音大小限制 |
+| `WECHAT_MAX_VIDEO_MB` | `100` | 微信出站视频大小限制 |
+
+Relay 地址必须是 HTTPS 基础地址，不能包含账号密码、查询参数或片段。设备密钥不要放进 URL，也不要与移动网页密码复用。
+
+## 公网 Relay 服务器变量
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `DESKRELAY_RELAY_HOST` | `127.0.0.1` | Relay 内部监听地址；生产环境建议保持回环地址 |
+| `DESKRELAY_RELAY_PORT` | `14396` | Relay 内部 HTTP 端口 |
+| `DESKRELAY_RELAY_DEVICE_ID` | `default` | 允许连接的设备 ID |
+| `DESKRELAY_RELAY_DEVICE_TOKEN` | 无 | 设备密钥；缺失时拒绝启动 |
+
+服务器和电脑必须配置相同的设备 ID 与设备密钥。服务器环境文件建议使用 `0600` 权限，由 systemd 读取；外部访问由 Nginx/Caddy 提供 HTTPS。
+
+## Agent 环境继承
+
+DeskRelay 启动 Agent 子进程时会继承当前环境，包括 Agent 自己使用的 API 地址、令牌、代理和状态目录。先在同一个终端中确认 Agent 能独立启动，再运行 DeskRelay。
+
+常见的 Agent 自有变量包括 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`、`OPENAI_API_KEY`、`HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`。不要把密钥写进仓库、文档示例、截图或 shell 历史。
+
+<a id="from-1x-to-20"></a>
+
+## 从 1.x 迁移到 2.0
+
+2.0 不继续发布旧 npm 包和旧命令别名。建议先停止旧进程，再安装新包：
+
+```bash
+npm uninstall -g cli-wechat-bridge
+npm install -g deskrelay
+deskrelay-setup
+deskrelay --adapter codex
+```
+
+### 名称迁移
+
+| 1.x | 2.0 |
+| --- | --- |
+| npm 包 `cli-wechat-bridge` | npm 包 `deskrelay` |
+| `wechat-daemon` | `deskrelay` 或 `deskrelay-daemon` |
+| `wechat-setup` | `deskrelay-setup` |
+| `wechat-check-update` | `deskrelay-check-update` |
+| `wechat-bridge-*` | `deskrelay-bridge-*` |
+| `wechat-codex` / `wechat-claude` / `wechat-opencode` | `deskrelay-codex` / `deskrelay-claude` / `deskrelay-opencode` |
+| `~/.cli-bridge` | `~/.deskrelay` |
+| `CLI_BRIDGE_*` | `DESKRELAY_*` |
+
+### 数据迁移行为
+
+首次启动时，如果 `~/.deskrelay` 中还没有对应文件，DeskRelay 会从 `~/.cli-bridge` 一次性复制可迁移的登录状态、同步游标、任务映射、附件和更新缓存。它不会：
+
+- 覆盖已经存在的 2.0 数据；
+- 迁移旧进程锁和 endpoint；
+- 删除旧目录；
+- 在迁移后继续读写旧目录。
+
+确认 2.0 登录、任务列表和移动网页均正常后，可自行离线备份或删除旧目录。
+
+旧 `CLI_BRIDGE_*` 环境变量不会作为 2.0 活动配置继续读取，升级 LaunchAgent、systemd 或 shell 配置时必须同步改名。
+
+## 配置位置建议
+
+- 临时调试：当前 shell 中 `export`；
+- macOS 常驻：LaunchAgent 的 `EnvironmentVariables`；
+- Linux 服务器：权限受限的 systemd `EnvironmentFile`；
+- 不要把真实 token 写入仓库中的 `.env.example`。
+
+公网部署步骤见 [移动网页与公网访问](remote-access.md)，状态文件说明见 [问题排查](troubleshooting.md)。
