@@ -43,8 +43,8 @@ cd ../DeskRelay-public
 
 ```bash
 git init -b main
-git config user.name UNLINEARITY
-git config user.email UNLINEARITY@users.noreply.github.com
+git config user.name imsinolam
+git config user.email imsinolam@users.noreply.github.com
 npm install
 npm run quality
 npm pack --dry-run --json

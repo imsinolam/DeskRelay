@@ -10,7 +10,11 @@ import {
   buildCliEnvironment,
   resolveSpawnTarget,
 } from "./bridge-adapters.shared.ts";
-import type { BridgeMessageImage, BridgeSessionMessage } from "./bridge-types.ts";
+import type {
+  BridgeMessageImage,
+  BridgeResumeSessionCandidate,
+  BridgeSessionMessage,
+} from "./bridge-types.ts";
 import {
   enrichBridgeSessionMessageImages,
   mergeBridgeMessageImages,
@@ -244,6 +248,65 @@ export function parseGrokChatHistory(text: string): BridgeSessionMessage[] {
     if (value.type === "assistant") latestAssistantIndex = messages.length - 1;
   }
   return messages;
+}
+
+export function listGrokStoredSessions(
+  limit = 10,
+): BridgeResumeSessionCandidate[] {
+  const sessionsRoot = path.join(grokHomeDirectory(), "sessions");
+  const candidates: BridgeResumeSessionCandidate[] = [];
+  let projects: fs.Dirent[];
+  try {
+    projects = fs.readdirSync(sessionsRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  for (const project of projects) {
+    if (!project.isDirectory()) continue;
+    const projectDirectory = path.join(sessionsRoot, project.name);
+    let sessions: fs.Dirent[];
+    try {
+      sessions = fs.readdirSync(projectDirectory, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const session of sessions) {
+      if (!session.isDirectory()) continue;
+      const directory = path.join(projectDirectory, session.name);
+      const summaryPath = path.join(directory, "summary.json");
+      let summary: unknown;
+      let stat: fs.Stats;
+      try {
+        summary = JSON.parse(fs.readFileSync(summaryPath, "utf8"));
+        stat = fs.statSync(summaryPath);
+      } catch {
+        continue;
+      }
+      if (!isRecord(summary)) continue;
+      const info = isRecord(summary.info) ? summary.info : null;
+      const sessionId = readString(info?.id) ?? session.name;
+      const cwd = readString(info?.cwd) ?? (() => {
+        try { return decodeURIComponent(project.name); } catch { return undefined; }
+      })();
+      const title = readString(summary.generated_title) ??
+        readString(summary.session_summary) ??
+        `Grok 会话 ${sessionId.slice(0, 8)}`;
+      const lastUpdatedAt = readString(summary.last_active_at) ??
+        readString(summary.updated_at) ??
+        stat.mtime.toISOString();
+      candidates.push({
+        sessionId,
+        threadId: sessionId,
+        title,
+        lastUpdatedAt,
+        ...(cwd ? { cwd, projectName: path.basename(cwd) || cwd } : {}),
+        runtimeStatus: { type: "notLoaded" },
+      });
+    }
+  }
+  return candidates
+    .sort((left, right) => Date.parse(right.lastUpdatedAt) - Date.parse(left.lastUpdatedAt))
+    .slice(0, Math.max(1, limit));
 }
 
 export async function readGrokStoredSessionMessages(

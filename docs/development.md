@@ -13,7 +13,7 @@
 克隆并安装依赖：
 
 ```bash
-git clone https://github.com/UNLINEARITY/DeskRelay
+git clone https://github.com/imsinolam/DeskRelay
 cd DeskRelay
 bun install
 ```
