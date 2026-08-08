@@ -21,11 +21,7 @@ Runtime data lives under `~/.deskrelay` by default. Version 2.0 copy-migrates mi
 - `bin/*.mjs`: published CLI wrappers. These are tracked source files, not generated output.
 - `scripts`: release, safety, snapshot, and packaging helpers, especially `check-public-safety.mjs`, `create-public-snapshot.mjs`, and `smoke-global-install.mjs`.
 - `test/<area>` mirrors the runtime areas: `bridge`, `companion`, `daemon`, and `wechat`.
-- `docs/concepts`: product positioning, owner model, architecture, and data-flow explanations.
-- `docs/guides`: installation, configuration, public Relay, and troubleshooting guides for users.
-- `docs/maintainers`: development, publishing, website copy, and maintainer-only guidance.
 - `docs/releases`: release notes and the release index. Keep English and Chinese notes aligned when preparing a release.
-- `.github`: CI, issue/PR templates, contribution guidance, code of conduct, and security policy.
 
 ## Runtime State And Files
 Default active state is in `~/.deskrelay`:
@@ -208,3 +204,11 @@ Prefer surgical fixes backed by focused tests. Avoid broad rewrites of adapter f
 - **新增 `BridgeAdapter` 可选能力时必须同步检查并转发所有 RuntimeHost 包装层，不能只改 adapter 和调用方。** Daemon 实际持有的是 `LegacyAdapterRuntime`；如果包装层漏绑新方法，源码类型仍可通过且 adapter 单测也会成功，但运行时能力会悄悄变成 `undefined`，导致加速历史无法补图片等只在真实部署出现的问题，因此要为“缺失时保持 undefined、存在时保持 this 绑定并正确转发”各写回归断言。
 - **网页中的用户输入图片必须和 AI 输出图片共用同一套可点击预览，并在乐观消息被真实历史替换后继续可见。** 只让上传缩略图短暂显示会导致发送成功、刷新页面或重启服务后图片消失，用户无法回看自己给 Agent 的关键上下文；移动端输入图片应持久记录到对应 adapter、任务和 turn，历史读取时恢复为受鉴权的公共消息媒体，同时输入框缩略图也应直接打开全屏预览。
 - **移动网页合并加速历史与原生实时消息时必须按跨来源的稳定消息序列对齐，不能直接追加、只依赖消息 ID，或只匹配“旧页结尾＝新页开头”的连续重叠。** OpenAgentLog 可能没有原生 `id`、`turnId`、`phase`，还会插入 `[tool_use]` 等来源特有记录；原生实时页也可能从更早的位置开始。若按数组追加或窄重叠匹配，乐观消息被真实消息替换后就会跳位、重复并与旧消息串在一起；使用忽略缺失元数据但尊重明确冲突的序列对齐，并以原生页替换已对齐区间，才能让消息顺序在轮询和异步刷新后保持稳定。
+- **官网演示截图必须省略项目名、避免任务列表产生孤字换行，并保留完整手机状态栏；电脑端与移动端配图还要使用同一批任务和逐字一致的续派消息。** 这些细节直接决定用户能否一眼理解“移动端接力原任务”，也能避免营销图暴露无关工作区信息或显得像拼接假数据。
+- **微信审批推送失败时必须区分“没有检测到审批”和“iLink context token 已失效”，并在下一条微信消息刷新 token 后先补发仍有效的审批，再处理新消息。** 长任务经常超过微信主动回复窗口；如果先执行用户的新输入或静默丢弃，审批可能继续卡住，用户也会误以为 DeskRelay 没监控到任务。
+- **给运行中的 LaunchAgent 部署本地 npm 包时必须安装 `npm pack` 产出的 tarball，不能直接 `npm install -g <仓库目录>`。** 直接安装目录会把全局包变成指向工作区的软链接，后续 `npm run build` 删除并重建 `dist/` 时就可能让正在运行的服务短暂失去入口；先卸载服务、打包并安装 tarball、再恢复服务和验活，才能让开发目录与线上运行副本保持隔离。
+- **网页审批结果必须按 Agent、任务和 turn 持久化并重新合并进消息流，不能在清空待审批卡片后只保留短暂 Toast。** 审批卡片消失并不代表用户不再需要确认自己的选择；记录允许、拒绝、任务级允许或免审结果，并在刷新后恢复到对应轮次附近，才能避免用户误以为操作未生效，也能防止结果串到其他任务。
+- **DeskRelay 的敏感运行时写入必须统一经过私有目录与原子私有文件 helper，并在启动时递归修复旧数据权限。** 只在个别调用点传 `mode` 会遗漏已存在文件、原子临时文件和迁移复制内容；POSIX 上统一目录 `0700`、普通敏感文件 `0600`，并跳过符号链接，才能避免凭据、上下文令牌、日志和附件因 umask 或历史版本遗留而被同机其他用户读取。
+- **Codex 完成通知必须把待发送正文、分段进度和成功去重键持久化，发送前只能标记 in-flight，不能提前标记 delivered 或清理 final reply。** 微信 context token 可能在长任务结束时失效，且多段消息可能只成功一部分；只有全部文本送达后再清缓存，并从未送达分段继续补发，才能同时避免通知永久丢失和重复发送，daemon 重启后也能恢复。
+- **用某个 nvm 目录下的 `npm` 绝对路径执行安装时，仍必须把同目录的 Node 放到 `PATH` 最前面。** `npm` 的入口使用 `#!/usr/bin/env node`，只指定 `.../bin/npm` 仍可能由另一套 Node 运行并安装到错误的全局前缀；先固定 `PATH`、再核对 `npm prefix -g` 和最终命令解析，才能确保 LaunchAgent 使用的是真正验收过的副本。
+- **macOS 打包给 Linux 使用的公开快照时必须设置 `COPYFILE_DISABLE=1`。** 否则 BSD tar 会把扩展属性编码成 `._*` AppleDouble 文件，Linux 解包后这些文件会进入 Git 候选列表并触发隐私审计；禁用 copyfile 元数据并在服务器检查不存在 `._*`，才能保证上传内容和本机审计快照一致。

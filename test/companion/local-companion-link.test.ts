@@ -97,6 +97,17 @@ describe("local companion endpoint occupancy", () => {
       kind: "claude",
       port: 8124,
     });
+    if (process.platform !== "win32") {
+      const paths = getWorkspaceChannelPaths(cwd);
+      expect(fs.statSync(paths.workspaceDir).mode & 0o777).toBe(0o700);
+      expect(
+        fs.statSync(path.join(paths.workspaceDir, "codex-companion-endpoint.json")).mode & 0o777,
+      ).toBe(0o600);
+      expect(
+        fs.statSync(path.join(paths.workspaceDir, "claude-companion-endpoint.json")).mode & 0o777,
+      ).toBe(0o600);
+      expect(fs.statSync(paths.endpointFile).mode & 0o777).toBe(0o600);
+    }
   });
 
   test("clears only the requested adapter endpoint when adapter is provided", () => {

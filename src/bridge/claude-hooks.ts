@@ -195,6 +195,7 @@ export function buildClaudeHookScript(params: ClaudeHookScriptParams): string {
     : "2>/dev/null";
   return [
     "#!/bin/sh",
+    "umask 077",
     `export CLAUDE_WECHAT_HOOK_PORT=${quotePosixCommandArg(String(params.hookPort))}`,
     `export CLAUDE_WECHAT_HOOK_TOKEN=${quotePosixCommandArg(params.hookToken)}`,
     `${command} ${stderrRedirect} || true`,

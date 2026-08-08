@@ -41,6 +41,10 @@ describe("CodexDeferredInputStore", () => {
       store.replace(entries);
 
       expect(new CodexDeferredInputStore(cwd, { stateFile }).load()).toEqual(entries);
+      if (process.platform !== "win32") {
+        expect(fs.statSync(path.dirname(stateFile)).mode & 0o777).toBe(0o700);
+        expect(fs.statSync(stateFile).mode & 0o777).toBe(0o600);
+      }
       store.clear();
       expect(fs.existsSync(stateFile)).toBe(false);
     } finally {

@@ -70,7 +70,7 @@ Get-Command opencode
 
 TClaude、Grok CLI、CodeBuddy、reasonix 和 WorkBuddy 可能来自组织内部或供应商渠道。DeskRelay 不提供这些工具的安装包，也不应在公开文档中猜测其安装命令；请使用工具自身的官方或组织内说明。
 
-“可以列出任务”不自动等于“电脑端实时同步”。Codex 与 WorkBuddy 使用桌面原生 owner；Claude Code、TClaude 使用 DeskRelay 连接的可见 CLI owner；OpenCode、Grok、CodeBuddy 与 reasonix 使用电脑界面和远程入口共用的共享服务 owner。完整边界见 [README 的会话一致性矩阵](../../README.md#支持的-agent-与会话一致性)。
+“可以列出任务”不自动等于“电脑端实时同步”。Codex 与 WorkBuddy 使用桌面原生 owner；Claude Code、TClaude 使用 DeskRelay 连接的可见 CLI owner；OpenCode、Grok、CodeBuddy 与 reasonix 使用电脑界面和远程入口共用的共享服务 owner。完整边界见 [README 的会话一致性矩阵](../README.md#支持的-agent-与会话一致性)。
 
 ## 三、各 Agent 的安装与启动
 

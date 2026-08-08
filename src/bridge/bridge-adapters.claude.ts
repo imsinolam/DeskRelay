@@ -38,6 +38,10 @@ import {
   nowIso,
   truncatePreview,
 } from "./bridge-utils.ts";
+import {
+  ensurePrivateDir,
+  writePrivateFileAtomic,
+} from "../utils/private-files.ts";
 import { AbstractPtyAdapter } from "./bridge-adapters.core.ts";
 import * as shared from "./bridge-adapters.shared.ts";
 
@@ -905,7 +909,7 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
 
     const { workspaceDir } = ensureWorkspaceChannelDir(this.options.cwd);
     const runtimeDir = path.join(workspaceDir, "claude-runtime");
-    fs.mkdirSync(runtimeDir, { recursive: true });
+    ensurePrivateDir(runtimeDir);
 
     const hookScriptPath = path.join(
       runtimeDir,
@@ -920,7 +924,7 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
     const hookErrorLogPath = path.join(runtimeDir, "hook-error.log");
     this.hookErrorLogPath = hookErrorLogPath;
 
-    fs.writeFileSync(
+    writePrivateFileAtomic(
       hookScriptPath,
       buildClaudeHookScript({
         platform: process.platform,
@@ -930,20 +934,20 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
         hookToken: this.hookToken,
         hookErrorLogPath,
       }),
-      "utf8",
+      { encoding: "utf8" },
     );
     if (process.platform !== "win32") {
-      fs.chmodSync(hookScriptPath, 0o755);
+      fs.chmodSync(hookScriptPath, 0o700);
     }
 
     const hookCommand =
       process.platform === "win32"
         ? quoteWindowsCommandArg(hookScriptPath)
         : quotePosixCommandArg(hookScriptPath);
-    fs.writeFileSync(
+    writePrivateFileAtomic(
       settingsFilePath,
       JSON.stringify(buildClaudeHookSettings(hookCommand), null, 2),
-      "utf8",
+      { encoding: "utf8" },
     );
     this.settingsFilePath = settingsFilePath;
   }

@@ -6,6 +6,7 @@ import {
   normalizeWorkspacePath,
 } from "../wechat/channel-config.ts";
 import type { InboundWechatMessage } from "../wechat/wechat-transport.ts";
+import { writePrivateFileAtomic } from "../utils/private-files.ts";
 
 export type CodexDeferredInboundMessage =
   | { source: "wechat"; message: InboundWechatMessage }
@@ -170,14 +171,9 @@ export class CodexDeferredInputStore {
       cwd: this.cwd,
       entries,
     };
-    fs.mkdirSync(path.dirname(this.stateFile), { recursive: true });
-    const tempFile = `${this.stateFile}.${process.pid}.tmp`;
-    try {
-      fs.writeFileSync(tempFile, JSON.stringify(state, null, 2), "utf8");
-      fs.renameSync(tempFile, this.stateFile);
-    } finally {
-      fs.rmSync(tempFile, { force: true });
-    }
+    writePrivateFileAtomic(this.stateFile, JSON.stringify(state, null, 2), {
+      encoding: "utf8",
+    });
   }
 
   clear(): void {

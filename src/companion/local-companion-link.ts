@@ -17,6 +17,7 @@ import {
   LOCAL_CLIENT_PROTOCOL_VERSION,
   type LocalClientEndpoint,
 } from "../runtime/runtime-types.ts";
+import { writePrivateFileAtomic } from "../utils/private-files.ts";
 
 export type LocalCompanionCommand =
   | { command: "send_input"; text: string }
@@ -199,13 +200,15 @@ export function writeLocalCompanionEndpoint(
     ...serializeEndpoint(endpoint),
   };
 
-  fs.writeFileSync(
+  writePrivateFileAtomic(
     getWorkspaceAdapterEndpointFile(endpoint.cwd, endpoint.kind),
     JSON.stringify(payload, null, 2),
-    "utf8",
+    { encoding: "utf8" },
   );
   if (options.writeLegacy !== false) {
-    fs.writeFileSync(endpointFile, JSON.stringify(payload, null, 2), "utf8");
+    writePrivateFileAtomic(endpointFile, JSON.stringify(payload, null, 2), {
+      encoding: "utf8",
+    });
   }
 }
 

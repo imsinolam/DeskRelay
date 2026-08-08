@@ -20,6 +20,7 @@ import {
   isClaudeProviderKind,
 } from "./bridge-providers.ts";
 import { buildInstanceId } from "./bridge-utils.ts";
+import { writePrivateFileAtomic } from "../utils/private-files.ts";
 
 type BridgeStateOptions = {
   adapter: BridgeAdapterKind;
@@ -441,11 +442,7 @@ export class BridgeStateStore {
   private writeAtomicJsonFile(filePath: string, value: unknown): void {
     ensureChannelDataDir();
     const data = JSON.stringify(value, null, 2);
-    // temp + rename so a crash mid-write cannot leave a truncated/half-written
-    // state or lock file that would break the next launch or look like a stale lock.
-    const tempPath = `${filePath}.${process.pid}.tmp`;
-    fs.writeFileSync(tempPath, data, "utf-8");
-    fs.renameSync(tempPath, filePath);
+    writePrivateFileAtomic(filePath, data, { encoding: "utf-8" });
   }
 
   private save(): void {

@@ -1804,6 +1804,49 @@ describe("Codex desktop latest conversation message", () => {
     ).toBeNull();
   });
 
+  test("ignores injected AGENTS instructions recorded as a user message", () => {
+    expect(
+      extractLatestCodexThreadMessage({
+        thread: {
+          turns: [{
+            items: [{
+              type: "userMessage",
+              content: [{
+                type: "text",
+                text: [
+                  "# AGENTS.md instructions",
+                  "",
+                  "<INSTRUCTIONS>",
+                  "始终使用中文对话",
+                  "</INSTRUCTIONS>",
+                  "<environment_context>internal environment</environment_context>",
+                ].join("\n"),
+              }],
+            }],
+          }],
+        },
+      }),
+    ).toBeNull();
+  });
+
+  test("ignores model handoff summaries recorded as user messages", () => {
+    expect(
+      extractLatestCodexThreadMessage({
+        thread: {
+          turns: [{
+            items: [{
+              type: "userMessage",
+              content: [{
+                type: "text",
+                text: "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model.\nInternal handoff details.",
+              }],
+            }],
+          }],
+        },
+      }),
+    ).toBeNull();
+  });
+
   test("returns null when the thread has no visible conversation message", () => {
     expect(
       extractLatestCodexThreadMessage({
@@ -2168,6 +2211,35 @@ describe("Codex desktop IPC transport", () => {
     ]);
   });
 
+  test("creates a new desktop task in the source task project directory", async () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: "/workspace/default",
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    const rpcCalls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    adapter.desktopThreadCwdById.set("thread_source", "/workspace/project-a");
+    adapter.sendRpcRequest = async (method: string, params: Record<string, unknown>) => {
+      rpcCalls.push({ method, params });
+      if (method === "thread/start") return { thread: { id: "thread_project_new" } };
+      if (method === "thread/unsubscribe") return {};
+      throw new Error(`Unexpected RPC method: ${method}`);
+    };
+    adapter.desktopIpcClient = {
+      openAndFollowThread: async () => ({}),
+    };
+
+    await adapter.createSessionInProject("thread_source");
+
+    expect(rpcCalls[0]).toMatchObject({
+      method: "thread/start",
+      params: { cwd: "/workspace/project-a" },
+    });
+    expect(adapter.getState().sharedThreadId).toBe("thread_project_new");
+  });
+
   test("keeps a newly created canonical task usable while the desktop is locked", async () => {
     const adapter = new CodexPtyAdapter({
       kind: "codex",
@@ -2483,6 +2555,133 @@ describe("Codex desktop IPC transport", () => {
       turnId: "turn_a_queued",
       origin: "wechat",
     });
+  });
+
+  test("starts directly when persisted completion proves tracked desktop activity is stale", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-stale-active-send-"));
+    const threadId = "thread_stale";
+    const rolloutFile = path.join(directory, `rollout-${threadId}.jsonl`);
+    const globalStateFile = path.join(directory, ".codex-global-state.json");
+    fs.writeFileSync(globalStateFile, JSON.stringify({ "queued-follow-ups": {} }));
+    fs.writeFileSync(rolloutFile, [
+      JSON.stringify({ type: "session_meta", payload: { id: threadId } }),
+      JSON.stringify({
+        timestamp: "2026-08-07T01:00:05.000Z",
+        type: "event_msg",
+        payload: {
+          type: "task_complete",
+          turn_id: "turn_stale",
+          completed_at: 1_786_000_005,
+          duration_ms: 5_000,
+        },
+      }),
+    ].join("\n") + "\n");
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+      codexDesktopGlobalStateFile: globalStateFile,
+    }) as any;
+    const starts: Array<{ threadId: string; text: string }> = [];
+    const queueWrites: unknown[] = [];
+    adapter.desktopIpcClient = {
+      startTurn: async (candidateThreadId: string, text: string) => {
+        starts.push({ threadId: candidateThreadId, text });
+        return { id: "turn_new", status: "inProgress" };
+      },
+      setQueuedFollowUpsState: async (_candidateThreadId: string, state: unknown) => {
+        queueWrites.push(state);
+      },
+      getThreadState: () => null,
+    };
+    adapter.desktopThreadSessionFilePathById.set(threadId, rolloutFile);
+    adapter.desktopListedRuntimeStatusByThreadId.set(threadId, {
+      type: "active",
+      activeFlags: [],
+    });
+    adapter.sharedThreadId = threadId;
+    adapter.state.sharedSessionId = threadId;
+    adapter.state.sharedThreadId = threadId;
+    adapter.state.status = "busy";
+    adapter.activeTurn = {
+      threadId,
+      turnId: "turn_stale",
+      origin: "local",
+    };
+    adapter.state.activeTurnId = "turn_stale";
+    adapter.state.activeTurnOrigin = "local";
+
+    try {
+      const result = await adapter.sendInputToSession(threadId, "新任务只启动一次");
+      expect(result).toEqual({ turnId: "turn_new", queued: false });
+      expect(starts).toEqual([{ threadId, text: "新任务只启动一次" }]);
+      expect(queueWrites).toEqual([]);
+      expect(adapter.activeTurn).toEqual({
+        threadId,
+        turnId: "turn_new",
+        origin: "wechat",
+      });
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("removes a queued follow-up after Codex starts the same input", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-consumed-queue-"));
+    const globalStateFile = path.join(directory, ".codex-global-state.json");
+    const queued = {
+      id: "queued_consumed",
+      text: "不要再执行第二次",
+      context: {
+        prompt: "不要再执行第二次",
+        imageAttachments: [],
+        workspaceRoots: [process.cwd()],
+      },
+      cwd: process.cwd(),
+      createdAt: 1_800_000_000_000,
+    };
+    fs.writeFileSync(globalStateFile, JSON.stringify({
+      "queued-follow-ups": { thread_a: [queued] },
+    }));
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+      codexDesktopGlobalStateFile: globalStateFile,
+    }) as any;
+    const queueWrites: Array<Record<string, unknown[]>> = [];
+    adapter.desktopIpcClient = {
+      setQueuedFollowUpsState: async (
+        _threadId: string,
+        state: Record<string, unknown[]>,
+      ) => {
+        queueWrites.push(structuredClone(state));
+        fs.writeFileSync(globalStateFile, JSON.stringify({ "queued-follow-ups": state }));
+      },
+    };
+
+    try {
+      adapter.handleDesktopTurnState("thread_a", {
+        turnId: "turn_started",
+        status: "inProgress",
+        errorMessage: null,
+        startedAtMs: 1_800_000_001_000,
+        items: [{
+          id: "user_started",
+          type: "userMessage",
+          content: [{ type: "text", text: "不要再执行第二次" }],
+        }],
+      }, null, false);
+      await adapter.desktopQueuedFollowUpMutationChain;
+      expect(queueWrites.at(-1)?.thread_a).toBeUndefined();
+      expect(adapter.getQueuedTaskInputs("thread_a")).toEqual([]);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   test("adds a native queued follow-up instead of starting another active turn", async () => {

@@ -4,6 +4,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { ensurePrivateDir } from "../utils/private-files.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -89,7 +90,8 @@ const logPath = process.env.DESKRELAY_WORKBUDDY_HOOK_LOG;
 function log(message) {
   if (!logPath) return;
   try {
-    fs.appendFileSync(logPath, new Date().toISOString() + " pid=" + process.pid + " " + message + "\n");
+    fs.appendFileSync(logPath, new Date().toISOString() + " pid=" + process.pid + " " + message + "\n", { mode: 0o600 });
+    fs.chmodSync(logPath, 0o600);
   } catch {}
 }
 
@@ -199,7 +201,7 @@ export async function ensureWorkBuddyDesktopHookFile(
   hookPath = resolveWorkBuddyDesktopHookPath(),
 ): Promise<string> {
   const source = buildWorkBuddyDesktopHookSource();
-  await fs.promises.mkdir(path.dirname(hookPath), { recursive: true });
+  ensurePrivateDir(path.dirname(hookPath));
   let current = "";
   try {
     current = await fs.promises.readFile(hookPath, "utf8");

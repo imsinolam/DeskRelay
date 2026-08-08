@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { writePrivateFileAtomic } from "../utils/private-files.ts";
 
 const DEFAULT_SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
 const PASSWORD_MIN_LENGTH = 8;
@@ -165,12 +166,6 @@ export class CodexMobileAuthStore {
     if (!state) {
       return;
     }
-    fs.mkdirSync(path.dirname(this.stateFile), { recursive: true });
-    const tempFile = `${this.stateFile}.tmp-${process.pid}-${Date.now()}`;
-    fs.writeFileSync(tempFile, `${JSON.stringify(state, null, 2)}\n`, {
-      mode: 0o600,
-    });
-    fs.renameSync(tempFile, this.stateFile);
-    fs.chmodSync(this.stateFile, 0o600);
+    writePrivateFileAtomic(this.stateFile, `${JSON.stringify(state, null, 2)}\n`);
   }
 }

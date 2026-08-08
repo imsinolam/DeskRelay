@@ -22,6 +22,10 @@ describe("MobileMessageImageStore", () => {
       });
 
       const restored = new MobileMessageImageStore("/tmp/project", { stateFile });
+      if (process.platform !== "win32") {
+        expect(fs.statSync(path.dirname(stateFile)).mode & 0o777).toBe(0o700);
+        expect(fs.statSync(stateFile).mode & 0o777).toBe(0o600);
+      }
       expect(restored.enrich([
         { role: "user", text: "看看这张图\n[image]", turnId: "turn-1" },
         { role: "assistant", text: "收到" },

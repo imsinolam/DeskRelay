@@ -40,6 +40,7 @@ export type SystemCommand =
   | { type: "reset" }
   | { type: "confirm" }
   | { type: "confirm_session" }
+  | { type: "confirm_task" }
   | { type: "deny" }
   | { type: "answer"; raw: string };
 
@@ -160,6 +161,46 @@ export function sanitizeWechatInboundPromptForDisplay(value: string): string {
     normalized = normalized.slice(0, attachmentIndex);
   }
   return normalized.trim();
+}
+
+const CODEX_MODEL_HANDOFF_PREFIX_RE =
+  /^Another language model started to solve this problem and produced a summary of its thinking process\.\s+You also have access to the state of the tools that were used by that language model\./i;
+
+function isCodexInternalUserMessage(value: string): boolean {
+  const trimmed = value.trimStart();
+  if (
+    /^#\s+AGENTS\.md instructions\s*(?:\r?\n|$)/i.test(trimmed) &&
+    /<INSTRUCTIONS>[\s\S]*?<\/INSTRUCTIONS>/i.test(trimmed)
+  ) {
+    return true;
+  }
+  return CODEX_MODEL_HANDOFF_PREFIX_RE.test(trimmed) ||
+    /^<(?:subagent_notification|turn_aborted)\b/i.test(trimmed) ||
+    /^##\s+user confirmation protocol\b/i.test(trimmed);
+}
+
+export function sanitizeCodexVisibleUserMessageForDisplay(
+  value: string,
+): string | null {
+  const withoutDesktopContext = normalizeOutput(value)
+    .replace(
+      /<(in-app-browser-context|app-context|environment_context)\b[^>]*>[\s\S]*?<\/\1>/gi,
+      "",
+    )
+    .trim();
+  const sanitized = sanitizeWechatInboundPromptForDisplay(withoutDesktopContext).trim();
+  if (!sanitized || isCodexInternalUserMessage(sanitized)) {
+    return null;
+  }
+  if (
+    /^#\s+Files mentioned by the user:/im.test(sanitized) ||
+    /^##\s+My request for Codex:/im.test(sanitized) ||
+    /<image\b[^>]*\bpath=/i.test(sanitized)
+  ) {
+    const compact = compactMirroredUserInputText(sanitized).trim();
+    return compact && compact !== "（空消息）" ? compact : null;
+  }
+  return sanitized;
 }
 
 const WECHAT_ATTACHMENT_BLOCK_RE =
@@ -486,6 +527,7 @@ export function parseWechatControlCommand(
     hasPendingConfirmation: boolean;
     hasPendingUserInput: boolean;
     canConfirmForSession?: boolean;
+    canAutoApproveTask?: boolean;
   },
 ): SystemCommand | null {
   const systemCommand = parseSystemCommand(text);
@@ -546,7 +588,15 @@ export function parseWechatControlCommand(
     case "2":
       return { type: "deny" };
     case "3":
-      return options.canConfirmForSession ? { type: "confirm_session" } : null;
+      return options.canConfirmForSession
+        ? { type: "confirm_session" }
+        : options.canAutoApproveTask
+          ? { type: "confirm_task" }
+          : null;
+    case "4":
+      return options.canConfirmForSession && options.canAutoApproveTask
+        ? { type: "confirm_task" }
+        : null;
     case "confirm":
     case "yes":
     case "approve":
@@ -2142,6 +2192,7 @@ export function formatTaskInterruptedMessage(adapter: BridgeAdapterKind): string
 export function formatApprovalMessage(
   pending: PendingApproval,
   adapterState: BridgeAdapterState,
+  options: { allowTaskAutoApprove?: boolean } = {},
 ): string {
   const adapterLabel = formatAdapterLabel(adapterState.kind);
   const rawSummary = isClaudeProviderKind(adapterState.kind) && pending.toolName
@@ -2159,23 +2210,33 @@ export function formatApprovalMessage(
     ? rawTarget
     : "";
 
+  const replyOptions = t(
+    pending.allowForSession ? "approval.replyWithSession" : "approval.replyShort",
+  );
+  const taskAutoApproveOption = options.allowTaskAutoApprove
+    ? t("approval.taskAutoApproveOption", {
+        number: pending.allowForSession ? 4 : 3,
+      })
+    : "";
+
   return [
     t("approval.requestTitle"),
     summary,
     target ? t("approval.action", { target: truncatePreview(target, 180) }) : "",
-    t(pending.allowForSession ? "approval.replyWithSession" : "approval.replyShort"),
+    [replyOptions, taskAutoApproveOption].filter(Boolean).join("\n"),
   ].filter(Boolean).join("\n");
 }
 
 export function formatPendingApprovalReminder(
   pending: PendingApproval,
   _adapterState: BridgeAdapterState,
+  options: { allowTaskAutoApprove?: boolean } = {},
 ): string {
   const rawTarget = pending.detailPreview?.trim() || pending.commandPreview.trim();
   const target = rawTarget.length <= 60 && !/[\\/].{30,}/.test(rawTarget)
     ? rawTarget
     : "待确认操作";
-  return t(
+  const reminder = t(
     pending.allowForSession
       ? "approval.pendingWithSession"
       : "approval.pendingShort",
@@ -2183,6 +2244,12 @@ export function formatPendingApprovalReminder(
       target: truncatePreview(target, 140),
     },
   );
+  if (!options.allowTaskAutoApprove) {
+    return reminder;
+  }
+  return `${reminder}\n${t("approval.taskAutoApproveOption", {
+    number: pending.allowForSession ? 4 : 3,
+  })}`;
 }
 
 function formatUserInputQuestionLabel(

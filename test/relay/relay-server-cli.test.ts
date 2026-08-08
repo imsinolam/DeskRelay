@@ -5,15 +5,35 @@ import {
 } from "../../src/relay/relay-server-cli.ts";
 
 describe("DeskRelay relay server CLI", () => {
-  test("reads deployment settings without putting the device token in process arguments", () => {
+  test("defaults to a loopback listener without putting the device token in process arguments", () => {
     expect(parseRelayServerCliOptions(
-      ["--host", "0.0.0.0", "--port", "14396", "--device-id", "example-device"],
+      ["--host", "127.0.0.1", "--port", "14396", "--device-id", "example-device"],
       { DESKRELAY_RELAY_DEVICE_TOKEN: "server-secret" },
     )).toEqual({
-      host: "0.0.0.0",
+      host: "127.0.0.1",
       port: 14396,
       deviceId: "example-device",
       deviceToken: "server-secret",
+      allowNonLoopback: false,
+    });
+  });
+
+  test("rejects wildcard and non-loopback listeners by default", () => {
+    for (const host of ["0.0.0.0", "::", "192.168.1.20", "example.com"]) {
+      expect(() => parseRelayServerCliOptions(
+        ["--host", host],
+        { DESKRELAY_RELAY_DEVICE_TOKEN: "server-secret" },
+      )).toThrow("默认只允许监听本机回环地址");
+    }
+  });
+
+  test("requires an explicit dangerous switch for a non-loopback listener", () => {
+    expect(parseRelayServerCliOptions(
+      ["--host", "0.0.0.0", "--allow-non-loopback"],
+      { DESKRELAY_RELAY_DEVICE_TOKEN: "server-secret" },
+    )).toMatchObject({
+      host: "0.0.0.0",
+      allowNonLoopback: true,
     });
   });
 

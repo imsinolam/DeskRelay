@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { CodexMobileAuthStore } from "../../src/daemon/codex-mobile-auth.ts";
 import { CODEX_MOBILE_CSS, CODEX_MOBILE_JS } from "../../src/daemon/codex-mobile-web.ts";
+import { DaemonWorkspaceStateStore } from "../../src/daemon/daemon-state.ts";
 import {
   CODEX_MOBILE_ASSET_VERSION,
   MobileAdapterUnavailableError,
@@ -51,6 +52,28 @@ describe("paginateCodexMobileMessages", () => {
       hasMore: false,
       nextBefore: null,
     });
+  });
+});
+
+describe("mobile approval result helpers", () => {
+  test("keeps approval decisions visible with action-specific labels", () => {
+    const helpers = loadMobileApprovalResultHelpers();
+    expect(helpers.title("confirm")).toBe("已允许本次操作");
+    expect(helpers.title("confirm_session")).toBe("本任务后续同类操作已允许");
+    expect(helpers.title("confirm_task")).toBe("已按本任务免审允许");
+    expect(helpers.title("deny")).toBe("已拒绝此操作");
+  });
+
+  test("places an approval result after the matching turn", () => {
+    const helpers = loadMobileApprovalResultHelpers();
+    const messages = [
+      { turnId: "turn-1" },
+      { turnId: "turn-1" },
+      { turnId: "turn-2" },
+    ];
+    expect(helpers.insertIndex(messages, { turnId: "turn-1" })).toBe(2);
+    expect(helpers.insertIndex(messages, { turnId: "turn-missing" })).toBe(3);
+    expect(helpers.insertIndex(messages, {})).toBe(3);
   });
 });
 
@@ -118,6 +141,16 @@ function loadMobileTaskSidebarHelpers(): {
     collapsed: boolean,
   ) => void;
   sortTasksByRecency: <T extends { lastUpdatedAt?: string }>(tasks: T[]) => T[];
+  taskBoardLane: (task: { status?: string; completedAt?: string }) => string;
+  taskBoardMatchesQuery: (
+    task: { title?: string; projectName?: string; adapterLabel?: string },
+    query: string,
+  ) => boolean;
+  formatTaskBoardTime: (value: string, nowMs?: number) => string;
+  projectTaskCreationSource: <T extends {
+    threadId: string;
+    canCreateInProject?: boolean;
+  }>(tasks: T[], currentThreadId: string) => T | null;
 } {
   const start = CODEX_MOBILE_JS.indexOf("  var PROJECT_TASK_BATCH_SIZE");
   const end = CODEX_MOBILE_JS.indexOf("\n  function readSetupToken", start);
@@ -129,7 +162,11 @@ return {
   recentBatchSize: RECENT_TASK_BATCH_SIZE,
   nextTaskVisibleLimit,
   setProjectGroupCollapsed,
-  sortTasksByRecency
+  sortTasksByRecency,
+  taskBoardLane,
+  taskBoardMatchesQuery,
+  formatTaskBoardTime,
+  projectTaskCreationSource
 };`)() as ReturnType<typeof loadMobileTaskSidebarHelpers>;
 }
 
@@ -207,6 +244,22 @@ function loadMobileRunSummaryRenderKey(): (
   >;
 }
 
+function loadMobileApprovalResultHelpers(): {
+  title: (action: string) => string;
+  insertIndex: (
+    messages: Array<{ turnId?: string }>,
+    result: { turnId?: string },
+  ) => number;
+} {
+  const start = CODEX_MOBILE_JS.indexOf("  function approvalResultTitle");
+  const end = CODEX_MOBILE_JS.indexOf("\n  function renderApprovalResult", start);
+  if (start < 0 || end < 0) throw new Error("Mobile approval-result helpers not found");
+  const source = CODEX_MOBILE_JS.slice(start, end);
+  return new Function(`${source}\nreturn { title: approvalResultTitle, insertIndex: approvalResultInsertIndex };`)() as ReturnType<
+    typeof loadMobileApprovalResultHelpers
+  >;
+}
+
 function loadVisibleMessageModel(): (message: {
   role?: string;
   phase?: string;
@@ -271,6 +324,8 @@ function loadMobileQueuedMessageMerger(): (
     displayInTranscript: boolean;
     createdAtMs?: number;
   }>,
+  transcriptMessages?: Array<{ role: string; text: string; turnId?: string }>,
+  runSummary?: { status: string; turnId?: string } | null,
 ) => Array<{
   id: string;
   text: string;
@@ -314,6 +369,22 @@ describe("Codex mobile web rendering", () => {
     expect(resolveTaskSelector(tasks, "0000000a-bbbb")).toEqual(tasks[1]);
     expect(resolveTaskSelector(tasks, "0000000c")).toEqual(tasks[2]);
     expect(resolveTaskSelector(tasks, "0000000a")).toBeNull();
+  });
+
+  test("chooses the current project task for project-scoped creation", () => {
+    const { projectTaskCreationSource } = loadMobileTaskSidebarHelpers();
+    const tasks = [
+      { threadId: "task-a", canCreateInProject: true },
+      { threadId: "task-b", canCreateInProject: true },
+    ];
+
+    expect(projectTaskCreationSource(tasks, "task-b")).toEqual(tasks[1]);
+    expect(projectTaskCreationSource(tasks, "missing")).toEqual(tasks[0]);
+    expect(projectTaskCreationSource([
+      { threadId: "unsupported", canCreateInProject: false },
+    ], "unsupported")).toBeNull();
+    expect(CODEX_MOBILE_CSS).toContain(".task-group-create");
+    expect(CODEX_MOBILE_JS).toContain("task-group-create");
   });
 
   test("does not rebuild the transcript when only the running clock advances", () => {
@@ -447,6 +518,59 @@ describe("Codex mobile web rendering", () => {
       [{ id: "queued-real", text: pending.text, imageCount: 1 }],
       [{ ...pending, status: "queued", queuedMessageId: "queued-real" }],
     )).toEqual([{ id: "queued-real", text: pending.text, imageCount: 1 }]);
+  });
+
+  test("hides a confirmed queue card once the same input is the active transcript turn", () => {
+    const mergeQueuedMessagesForDisplay = loadMobileQueuedMessageMerger();
+    expect(mergeQueuedMessagesForDisplay(
+      [{
+        id: "queued-real",
+        text: "只处理一次",
+        imageCount: 0,
+        createdAtMs: 9_000,
+      }],
+      [],
+      [{ role: "user", text: "只处理一次", turnId: "turn-current" }],
+      { status: "running", turnId: "turn-current", startedAtMs: 10_000 },
+    )).toEqual([]);
+    expect(mergeQueuedMessagesForDisplay(
+      [{ id: "queued-real", text: "下一条再处理", imageCount: 0 }],
+      [],
+      [{ role: "user", text: "当前任务", turnId: "turn-current" }],
+      { status: "running", turnId: "turn-current", startedAtMs: 10_000 },
+    )).toHaveLength(1);
+    expect(mergeQueuedMessagesForDisplay(
+      [{
+        id: "queued-intentional-repeat",
+        text: "只处理一次",
+        imageCount: 0,
+        createdAtMs: 11_000,
+      }],
+      [],
+      [{ role: "user", text: "只处理一次", turnId: "turn-current" }],
+      { status: "running", turnId: "turn-current", startedAtMs: 10_000 },
+    )).toHaveLength(1);
+    expect(mergeQueuedMessagesForDisplay(
+      [{
+        id: "queued-consumed",
+        text: "只处理一次",
+        imageCount: 0,
+        createdAtMs: 9_000,
+      }, {
+        id: "queued-repeat",
+        text: "只处理一次",
+        imageCount: 0,
+        createdAtMs: 9_500,
+      }],
+      [],
+      [{ role: "user", text: "只处理一次", turnId: "turn-current" }],
+      { status: "running", turnId: "turn-current", startedAtMs: 10_000 },
+    )).toEqual([{
+      id: "queued-repeat",
+      text: "只处理一次",
+      imageCount: 0,
+      createdAtMs: 9_500,
+    }]);
   });
 
   test("does not show transcript or failed pending messages in the composer queue", () => {
@@ -600,6 +724,32 @@ describe("Codex mobile web rendering", () => {
     expect(tasks.map((task) => task.threadId)).toEqual(["older", "newest", "middle"]);
   });
 
+  test("classifies one unified task board without grouping by agent", () => {
+    const {
+      taskBoardLane,
+      taskBoardMatchesQuery,
+      formatTaskBoardTime,
+    } = loadMobileTaskSidebarHelpers();
+
+    expect(taskBoardLane({ status: "running", completedAt: "2026-08-07T01:00:00.000Z" }))
+      .toBe("running");
+    expect(taskBoardLane({ status: "approval" })).toBe("waiting");
+    expect(taskBoardLane({ status: "input" })).toBe("waiting");
+    expect(taskBoardLane({ status: "error" })).toBe("error");
+    expect(taskBoardLane({ status: "idle", completedAt: "2026-08-07T01:00:00.000Z" }))
+      .toBe("completed");
+    expect(taskBoardLane({ status: "idle" })).toBe("queued");
+    expect(taskBoardMatchesQuery({
+      title: "统一任务看板",
+      projectName: "DeskRelay",
+      adapterLabel: "Codex",
+    }, "codex")).toBe(true);
+    expect(formatTaskBoardTime(
+      "2026-08-07T02:30:00.000Z",
+      Date.parse("2026-08-07T03:00:00.000Z"),
+    )).toBe("30 分钟前");
+  });
+
   test("preserves ordered-list numbers when bullet sections split the list", () => {
     const renderMarkdown = loadMobileMarkdownRenderer();
     const html = renderMarkdown([
@@ -692,6 +842,98 @@ describe("Codex mobile web rendering", () => {
 });
 
 describe("Codex mobile server", () => {
+  test("serves one authenticated task board across adapters", async () => {
+    const authStore = createAuthStore("a configured mobile password");
+    const sessionCookie = `codex_mobile_session=${authStore.createSessionToken()}`;
+    const server = await startCodexMobileServer({
+      host: "127.0.0.1",
+      port: 0,
+      lanAddress: "127.0.0.1",
+      accessToken: "mobile-secret",
+      authStore,
+      listTaskBoard: async () => ({
+        tasks: [
+          {
+            adapter: "codex",
+            adapterLabel: "Codex",
+            threadId: "codex-running",
+            title: "实现统一任务看板",
+            status: "running",
+            lastUpdatedAt: "2026-08-07T03:00:00.000Z",
+          },
+          {
+            adapter: "grok",
+            adapterLabel: "Grok",
+            threadId: "grok-approval",
+            title: "检查发布说明",
+            status: "approval",
+            lastUpdatedAt: "2026-08-07T02:00:00.000Z",
+          },
+        ],
+        recentCompleted: [
+          {
+            adapter: "workbuddy",
+            adapterLabel: "WorkBuddy",
+            threadId: "workbuddy-complete",
+            title: "修复桌面同步",
+            completedAt: "2026-08-07T01:00:00.000Z",
+          },
+        ],
+      }),
+      listTasks: async () => [],
+      readMessages: async (threadId) => ({
+        threadId,
+        messages: [],
+        queuedMessages: [],
+      }),
+      sendMessage: async () => ({ queued: false }),
+    });
+
+    try {
+      const unauthorized = await fetch(
+        `http://127.0.0.1:${server.port}/api/task-board`,
+      );
+      expect(unauthorized.status).toBe(401);
+
+      const response = await fetch(
+        `http://127.0.0.1:${server.port}/api/task-board`,
+        { headers: { cookie: sessionCookie } },
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        tasks: [
+          {
+            adapter: "codex",
+            adapterLabel: "Codex",
+            threadId: "codex-running",
+            title: "实现统一任务看板",
+            status: "running",
+            lastUpdatedAt: "2026-08-07T03:00:00.000Z",
+          },
+          {
+            adapter: "grok",
+            adapterLabel: "Grok",
+            threadId: "grok-approval",
+            title: "检查发布说明",
+            status: "approval",
+            lastUpdatedAt: "2026-08-07T02:00:00.000Z",
+          },
+        ],
+        recentCompleted: [
+          {
+            adapter: "workbuddy",
+            adapterLabel: "WorkBuddy",
+            threadId: "workbuddy-complete",
+            title: "修复桌面同步",
+            completedAt: "2026-08-07T01:00:00.000Z",
+          },
+        ],
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   test("returns a clear recoverable error when the selected adapter is not connected", async () => {
     const authStore = createAuthStore("a configured mobile password");
     const sessionCookie = `codex_mobile_session=${authStore.createSessionToken()}`;
@@ -1257,6 +1499,16 @@ describe("Codex mobile server", () => {
           detailLabel: "运行命令",
           detailPreview: "npm run quality",
         },
+        approvalResults: [
+          {
+            id: "approval-denied",
+            action: "deny",
+            turnId: "turn-previous",
+            summary: "Codex 请求删除文件。",
+            commandPreview: "rm obsolete.txt",
+            resolvedAt: "2026-08-08T01:00:00.000Z",
+          },
+        ],
       }),
       sendMessage: async (threadId, input) => {
         if (input.text === "触发失败") {
@@ -1267,7 +1519,19 @@ describe("Codex mobile server", () => {
       },
       resolveApproval: async (threadId, action) => {
         resolvedApprovals.push({ threadId, action });
-        return 1;
+        return {
+          count: 1,
+          result: {
+            id: "approval-confirmed",
+            action,
+            turnId: "turn-running",
+            summary: "Codex 请求运行命令。",
+            commandPreview: "npm run quality",
+            detailLabel: "运行命令",
+            detailPreview: "npm run quality",
+            resolvedAt: "2026-08-08T01:02:00.000Z",
+          },
+        };
       },
       updateQueuedMessage: async (threadId, messageId, text) => {
         queueActions.push({ action: "update", threadId, messageId, text });
@@ -1348,8 +1612,11 @@ describe("Codex mobile server", () => {
       expect(html).not.toContain("Codex 也可能会犯错。请核查重要信息。");
       expect(html).not.toContain('class="brand-mark"');
       expect(html).not.toContain('class="empty-logo"');
+      expect(html).toContain('id="task-board-open"');
+      expect(html).toContain('id="task-board-view-completed"');
+      expect(html).toContain('id="task-board-body"');
       const sidebarHeadStart = html.indexOf('<div class="sidebar-head">');
-      const sidebarHeadEnd = html.indexOf("</div>\n      <div class=\"task-view-switch\"", sidebarHeadStart);
+      const sidebarHeadEnd = html.indexOf("</div>\n      <nav class=\"sidebar-primary-nav\"", sidebarHeadStart);
       const workspaceSwitcherIndex = html.indexOf('id="workspace-switcher"');
       const topbarCopyStart = html.indexOf('<div class="topbar-copy">');
       const topbarCopyEnd = html.indexOf("</div>\n        <div class=\"topbar-actions\">", topbarCopyStart);
@@ -1384,6 +1651,8 @@ describe("Codex mobile server", () => {
       expect(css).toContain("overflow: hidden;");
       expect(css).toContain(".task-list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto;");
       expect(css).toContain(".task-view-switch {");
+      expect(css).toContain(".task-board-columns {");
+      expect(css).toContain(".task-board-completed {");
       expect(css).toContain(".task-group-title {");
       expect(css).toContain(".task-group { margin: 0; }");
       expect(css).toContain(".task-group:not(.is-recent) .task-group-items .task-item,");
@@ -1553,6 +1822,9 @@ describe("Codex mobile server", () => {
       expect(js).toContain("message.id === state.editingQueuedMessageId");
       expect(js).toContain("submitQueuedMessageEdit");
       expect(js).toContain("loadAdapters");
+      expect(js).toContain("loadTaskBoard");
+      expect(js).toContain('api("/api/task-board")');
+      expect(js).toContain("openTaskFromBoard");
       expect(js).toContain("switchAdapter");
       expect(js).toContain("deleteQueuedMessage");
       expect(js).not.toContain("state.queuedMessages.concat");
@@ -1662,6 +1934,14 @@ describe("Codex mobile server", () => {
           commandPreview: string;
           allowForSession?: boolean;
         } | null;
+        approvalResults: Array<{
+          id: string;
+          action: string;
+          turnId?: string;
+          summary: string;
+          commandPreview: string;
+          resolvedAt: string;
+        }>;
       };
       expect(transcript.threadId).toBe(
         "0000000a-0000-7000-8000-00000000000a",
@@ -1716,6 +1996,16 @@ describe("Codex mobile server", () => {
         commandPreview: "npm run quality",
         allowForSession: true,
       });
+      expect(transcript.approvalResults).toEqual([
+        {
+          id: "approval-denied",
+          action: "deny",
+          turnId: "turn-previous",
+          summary: "Codex 请求删除文件。",
+          commandPreview: "rm obsolete.txt",
+          resolvedAt: "2026-08-08T01:00:00.000Z",
+        },
+      ]);
 
       const approvalResponse = await fetch(
         `${root}/api/tasks/0000000a/approval`,
@@ -1729,7 +2019,20 @@ describe("Codex mobile server", () => {
         },
       );
       expect(approvalResponse.status).toBe(200);
-      expect(await approvalResponse.json()).toEqual({ ok: true, count: 1 });
+      expect(await approvalResponse.json()).toEqual({
+        ok: true,
+        count: 1,
+        result: {
+          id: "approval-confirmed",
+          action: "confirm",
+          turnId: "turn-running",
+          summary: "Codex 请求运行命令。",
+          commandPreview: "npm run quality",
+          detailLabel: "运行命令",
+          detailPreview: "npm run quality",
+          resolvedAt: "2026-08-08T01:02:00.000Z",
+        },
+      });
       expect(resolvedApprovals).toEqual([
         {
           threadId: "0000000a-0000-7000-8000-00000000000a",
@@ -1870,13 +2173,118 @@ describe("Codex mobile server", () => {
       await server.close();
     }
   });
+
+  test("keeps a resolved approval visible after the transcript is refreshed", async () => {
+    const authStore = createAuthStore("a configured mobile password");
+    const sessionCookie = `codex_mobile_session=${authStore.createSessionToken()}`;
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "mobile-approval-result-"));
+    tempDirs.push(directory);
+    const stateStore = new DaemonWorkspaceStateStore(directory, {
+      stateFile: path.join(directory, "daemon-state.json"),
+    });
+    let pendingApproval: {
+      summary: string;
+      commandPreview: string;
+      allowForSession: boolean;
+      detailLabel: string;
+      detailPreview: string;
+    } | null = {
+      summary: "Codex 请求运行命令。",
+      commandPreview: "npm run quality",
+      allowForSession: true,
+      detailLabel: "运行命令",
+      detailPreview: "npm run quality",
+    };
+    const server = await startCodexMobileServer({
+      host: "127.0.0.1",
+      port: 0,
+      lanAddress: "127.0.0.1",
+      accessToken: "mobile-secret",
+      authStore,
+      listTasks: async () => [{
+        threadId: "approval-task",
+        title: "审批结果验证",
+        status: pendingApproval ? "approval" : "running",
+        selected: true,
+      }],
+      readMessages: async (threadId) => ({
+        threadId,
+        messages: [
+          { role: "user", text: "运行完整检查", turnId: "turn-approval" },
+          { role: "assistant", text: "准备执行。", turnId: "turn-approval" },
+        ],
+        queuedMessages: [],
+        pendingApproval,
+        approvalResults: stateStore
+          .getMobileApprovalResults("codex", threadId)
+          .map(({ adapter: _adapter, threadId: _threadId, ...result }) => result),
+      }),
+      sendMessage: async () => ({ queued: false }),
+      resolveApproval: async (threadId, action) => {
+        if (!pendingApproval) {
+          return { count: 0 };
+        }
+        const result = {
+          id: "approval-persisted",
+          action,
+          turnId: "turn-approval",
+          summary: pendingApproval.summary,
+          commandPreview: pendingApproval.commandPreview,
+          detailLabel: pendingApproval.detailLabel,
+          detailPreview: pendingApproval.detailPreview,
+          resolvedAt: "2026-08-08T02:00:00.000Z",
+        };
+        stateStore.recordMobileApprovalResult({
+          ...result,
+          adapter: "codex",
+          threadId,
+        });
+        pendingApproval = null;
+        return { count: 1, result };
+      },
+    });
+
+    try {
+      const root = `http://127.0.0.1:${server.port}`;
+      const headers = { cookie: sessionCookie };
+      const approvalResponse = await fetch(`${root}/api/tasks/approval-task/approval`, {
+        method: "POST",
+        headers: {
+          ...headers,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ action: "confirm_session" }),
+      });
+      expect(approvalResponse.status).toBe(200);
+
+      const refreshedResponse = await fetch(
+        `${root}/api/tasks/approval-task/messages`,
+        { headers },
+      );
+      expect(refreshedResponse.status).toBe(200);
+      expect(await refreshedResponse.json()).toMatchObject({
+        pendingApproval: null,
+        approvalResults: [{
+          id: "approval-persisted",
+          action: "confirm_session",
+          turnId: "turn-approval",
+          commandPreview: "npm run quality",
+        }],
+      });
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 describe("Codex mobile task creation", () => {
   test("creates a task for the selected adapter", async () => {
     const authStore = createAuthStore("a configured mobile password");
     const sessionCookie = `codex_mobile_session=${authStore.createSessionToken()}`;
-    const createdAdapters: Array<string | undefined> = [];
+    const createdRequests: Array<{
+      adapter: string | undefined;
+      sourceThreadId: string | undefined;
+    }> = [];
     const server = await startCodexMobileServer({
       host: "127.0.0.1",
       port: 0,
@@ -1884,8 +2292,11 @@ describe("Codex mobile task creation", () => {
       accessToken: "mobile-secret",
       authStore,
       listTasks: async () => [],
-      createTask: async (adapter) => {
-        createdAdapters.push(adapter);
+      createTask: async (adapter, options) => {
+        createdRequests.push({
+          adapter,
+          sourceThreadId: options?.sourceThreadId,
+        });
         return {
           threadId: "new-tclaude-task",
           title: "新任务",
@@ -1904,14 +2315,17 @@ describe("Codex mobile task creation", () => {
 
     try {
       const response = await fetch(
-        `http://127.0.0.1:${server.port}/api/tasks?adapter=tclaude`,
+        `http://127.0.0.1:${server.port}/api/tasks?adapter=tclaude&sourceTask=source-task`,
         {
           method: "POST",
           headers: { cookie: sessionCookie },
         },
       );
       expect(response.status).toBe(201);
-      expect(createdAdapters).toEqual(["tclaude"]);
+      expect(createdRequests).toEqual([{
+        adapter: "tclaude",
+        sourceThreadId: "source-task",
+      }]);
       expect(await response.json()).toEqual({
         task: {
           threadId: "new-tclaude-task",

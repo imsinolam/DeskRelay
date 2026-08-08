@@ -390,13 +390,41 @@ describe("parseWechatControlCommand", () => {
       }),
     ).toBeNull();
 
-    for (const text of ["1", "2", "3"]) {
+    expect(
+      parseWechatControlCommand("3", {
+        adapter: "claude",
+        hasPendingConfirmation: true,
+        hasPendingUserInput: false,
+        canAutoApproveTask: true,
+      }),
+    ).toEqual({ type: "confirm_task" });
+    expect(
+      parseWechatControlCommand("4", {
+        adapter: "codex",
+        hasPendingConfirmation: true,
+        hasPendingUserInput: false,
+        canConfirmForSession: true,
+        canAutoApproveTask: true,
+      }),
+    ).toEqual({ type: "confirm_task" });
+    expect(
+      parseWechatControlCommand("3", {
+        adapter: "codex",
+        hasPendingConfirmation: true,
+        hasPendingUserInput: false,
+        canConfirmForSession: true,
+        canAutoApproveTask: true,
+      }),
+    ).toEqual({ type: "confirm_session" });
+
+    for (const text of ["1", "2", "3", "4"]) {
       expect(
         parseWechatControlCommand(text, {
           adapter: "codex",
           hasPendingConfirmation: false,
           hasPendingUserInput: false,
           canConfirmForSession: true,
+          canAutoApproveTask: true,
         }),
       ).toBeNull();
     }
@@ -1236,12 +1264,27 @@ describe("adapter-aware message formatting", () => {
     expect(formatApprovalMessage(pending, claudeAdapterState)).not.toContain(
       "3 本任务始终允许",
     );
+    expect(
+      formatApprovalMessage(pending, claudeAdapterState, {
+        allowTaskAutoApprove: true,
+      }),
+    ).toContain("3 本任务结束前免审");
     expect(formatPendingApprovalReminder(pending, claudeAdapterState)).toContain("回复数字");
 
     const codexPending = { ...pending, allowForSession: true };
     expect(formatApprovalMessage(codexPending, codexAdapterState)).toContain(
       "3 本任务始终允许",
     );
+    expect(
+      formatApprovalMessage(codexPending, codexAdapterState, {
+        allowTaskAutoApprove: true,
+      }),
+    ).toContain("4 本任务结束前免审");
+    expect(
+      formatPendingApprovalReminder(codexPending, codexAdapterState, {
+        allowTaskAutoApprove: true,
+      }),
+    ).toContain("4 本任务结束前免审");
     expect(formatApprovalMessage(codexPending, codexAdapterState)).not.toMatch(
       /adapter:|summary:|target:/i,
     );

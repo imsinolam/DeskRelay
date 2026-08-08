@@ -7,6 +7,7 @@ import http, {
 } from "node:http";
 import { isIP } from "node:net";
 import os, { type NetworkInterfaceInfo } from "node:os";
+import { BoundedTtlMap } from "../utils/bounded-ttl-cache.ts";
 
 import type {
   BridgeSessionMessage,
@@ -61,6 +62,26 @@ export type CodexMobileTask = {
   activeTurnId?: string;
   selected?: boolean;
   canRename?: boolean;
+  canCreateInProject?: boolean;
+};
+
+export type CodexMobileTaskBoardTask = CodexMobileTask & {
+  adapter: string;
+  adapterLabel: string;
+  completedAt?: string;
+};
+
+export type CodexMobileRecentCompletion = {
+  adapter: string;
+  adapterLabel: string;
+  threadId: string;
+  title: string;
+  completedAt: string;
+};
+
+export type CodexMobileTaskBoard = {
+  tasks: CodexMobileTaskBoardTask[];
+  recentCompleted: CodexMobileRecentCompletion[];
 };
 
 export type CodexMobileAdapter = {
@@ -109,6 +130,26 @@ export type CodexMobileSendResult = {
 
 export type CodexMobileApprovalAction = "confirm" | "confirm_session" | "deny";
 
+export type CodexMobileApprovalResultAction =
+  | CodexMobileApprovalAction
+  | "confirm_task";
+
+export type CodexMobileApprovalResult = {
+  id: string;
+  action: CodexMobileApprovalResultAction;
+  summary: string;
+  commandPreview: string;
+  resolvedAt: string;
+  turnId?: string;
+  detailLabel?: string;
+  detailPreview?: string;
+};
+
+export type CodexMobileApprovalResolution = {
+  count: number;
+  result?: CodexMobileApprovalResult;
+};
+
 export type CodexMobilePendingApproval = {
   summary: string;
   commandPreview: string;
@@ -134,6 +175,7 @@ export type CodexMobileTranscript = {
   queuedMessages: CodexMobileQueuedMessage[];
   runSummary?: BridgeSessionRunSummary | null;
   pendingApproval?: CodexMobilePendingApproval | null;
+  approvalResults?: CodexMobileApprovalResult[];
 };
 
 export type CodexMobileMessagePage = {
@@ -183,8 +225,12 @@ export type StartCodexMobileServerOptions = {
   resolveDesktopPublicAddress?: () => Promise<string | null>;
   listAdapters?: () => Promise<CodexMobileAdapterList>;
   switchAdapter?: (adapter: string) => Promise<CodexMobileAdapterSwitchResult>;
+  listTaskBoard?: () => Promise<CodexMobileTaskBoard>;
   listTasks: (adapter?: string) => Promise<CodexMobileTask[]>;
-  createTask?: (adapter?: string) => Promise<CodexMobileTask>;
+  createTask?: (
+    adapter?: string,
+    options?: { sourceThreadId?: string },
+  ) => Promise<CodexMobileTask>;
   renameTask?: (
     threadId: string,
     title: string,
@@ -209,7 +255,7 @@ export type StartCodexMobileServerOptions = {
     threadId: string,
     action: CodexMobileApprovalAction,
     adapter?: string,
-  ) => Promise<number>;
+  ) => Promise<CodexMobileApprovalResolution>;
   updateQueuedMessage?: (
     threadId: string,
     messageId: string,
@@ -733,11 +779,14 @@ function createRequestHandler(
   const loginAttempts = new Map<string, LoginAttempt>();
   const lanHandoffs = new Map<string, LanHandoff>();
   const lanSessions = new Map<string, LanSession>();
-  const outputImages = new Map<string, {
+  const outputImages = new BoundedTtlMap<string, {
     threadId: string;
     adapter?: string;
     path: string;
-  }>();
+  }>({
+    maxSize: 512,
+    ttlMs: 60 * 60_000,
+  });
   const registerOutputImage = (
     threadId: string,
     adapter: string | undefined,
@@ -1132,6 +1181,14 @@ function createRequestHandler(
         return;
       }
 
+      if (method === "GET" && url.pathname === "/api/task-board") {
+        if (!options.listTaskBoard) {
+          throw new HttpError(409, "当前连接暂不支持任务看板。");
+        }
+        sendJson(response, 200, await options.listTaskBoard());
+        return;
+      }
+
       const adapterSwitchRoute = url.pathname.match(/^\/api\/adapters\/([^/]+)\/switch$/);
       if (method === "POST" && adapterSwitchRoute?.[1]) {
         if (!options.switchAdapter) {
@@ -1159,7 +1216,10 @@ function createRequestHandler(
           throw new HttpError(409, "当前连接暂不支持新建任务。");
         }
         try {
-          sendJson(response, 201, { task: await options.createTask(requestedAdapter) });
+          const sourceThreadId = url.searchParams.get("sourceTask")?.trim() || undefined;
+          sendJson(response, 201, {
+            task: await options.createTask(requestedAdapter, { sourceThreadId }),
+          });
         } catch (error) {
           throw new HttpError(409, error instanceof Error ? error.message : "新建任务失败。");
         }
@@ -1260,6 +1320,7 @@ function createRequestHandler(
             queuedMessages: transcript.queuedMessages,
             runSummary: transcript.runSummary ?? null,
             pendingApproval: transcript.pendingApproval ?? null,
+            approvalResults: transcript.approvalResults ?? [],
           });
           return;
         }
@@ -1372,15 +1433,19 @@ function createRequestHandler(
         ) {
           throw new HttpError(400, "无效的权限处理方式。");
         }
-        const count = await options.resolveApproval(
+        const resolution = await options.resolveApproval(
           task.threadId,
           action,
           requestedAdapter,
         );
-        if (count <= 0) {
+        if (resolution.count <= 0) {
           throw new HttpError(409, "这项权限请求已经处理或不存在。");
         }
-        sendJson(response, 200, { ok: true, count });
+        sendJson(response, 200, {
+          ok: true,
+          count: resolution.count,
+          ...(resolution.result ? { result: resolution.result } : {}),
+        });
         return;
       }
 

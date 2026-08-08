@@ -21,6 +21,7 @@ import {
   SYNC_BUF_FILE,
 } from "./channel-config.ts";
 import { isWechatSyncSessionTimeout } from "./wechat-transport.ts";
+import { writePrivateFileAtomic } from "../utils/private-files.ts";
 
 interface QRCodeResponse {
   qrcode: string;
@@ -221,18 +222,17 @@ async function printQRCode(
 
 function saveCredentials(account: StoredAccount): void {
   ensureChannelDataDir();
-  fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(account, null, 2), "utf-8");
+  writePrivateFileAtomic(
+    CREDENTIALS_FILE,
+    JSON.stringify(account, null, 2),
+    { encoding: "utf-8" },
+  );
   for (const staleStateFile of [SYNC_BUF_FILE, CONTEXT_CACHE_FILE]) {
     try {
       fs.rmSync(staleStateFile, { force: true });
     } catch {
       // Best effort cleanup.
     }
-  }
-  try {
-    fs.chmodSync(CREDENTIALS_FILE, 0o600);
-  } catch {
-    // Best effort on Windows.
   }
 }
 
@@ -243,7 +243,7 @@ function printPostLoginHelp(log: (message: string) => void): void {
   log("  deskrelay --adapter codex");
   log("");
   log("Replace codex with claude, tclaude, grok, codebuddy, reasonix, workbuddy, or opencode when needed.");
-  log("Advanced standalone bridge commands are documented in docs/guides/agent-setup.md.");
+  log("Advanced standalone bridge commands are documented in docs/agent-setup.md.");
   log("");
   log("Run deskrelay-setup again any time you need to refresh the login.");
 }
