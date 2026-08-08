@@ -69,6 +69,7 @@ import type {
 import {
   buildOneTimeCode,
   buildWechatInboundPrompt,
+  CODEX_TASK_LIST_MAX_PAGE_SIZE,
   CODEX_TASK_LIST_PAGE_SIZE,
   type CodexTaskListPagePosition,
   formatApprovalMessage,
@@ -201,6 +202,20 @@ import {
   startDeskRelayRelayClient,
   type DeskRelayRelayClientHandle,
 } from "../relay/relay-client.ts";
+import {
+  activateGlobalTaskCandidate,
+  buildGlobalTaskSnapshot,
+  formatGlobalTaskList,
+  formatGlobalTaskSearchResults,
+  resolveCompactGlobalTaskSearchTarget,
+  resolveGlobalTaskCandidate,
+  resolveGlobalTaskTargetedMessage,
+  searchGlobalTaskCandidates,
+  updateGlobalTaskSnapshot,
+  type GlobalTaskCandidate,
+  type GlobalTaskSnapshot,
+} from "./global-task-index.ts";
+import { listLightweightAdapterSessions } from "./global-task-catalog.ts";
 
 type DaemonCliOptions = {
   cwd: string;
@@ -453,6 +468,8 @@ type DaemonSystemCommand = NonNullable<
   preserveTaskSnapshot?: boolean;
   taskListPosition?: CodexTaskListPagePosition;
   taskListHistory?: CodexTaskListPagePosition[];
+  taskListScope?: "global" | "adapter";
+  sessionAlreadyRestored?: boolean;
 };
 
 const MODULE_FILE = fileURLToPath(import.meta.url);
@@ -652,6 +669,23 @@ export function resolveDaemonWechatCommand(params: {
     canConfirmForSession: params.canConfirmForSession,
     canAutoApproveTask: params.canAutoApproveTask,
   });
+}
+
+export function isExplicitGlobalTaskListRequest(text: string): boolean {
+  const normalized = text.trim();
+  if (normalized.startsWith("任务")) {
+    return true;
+  }
+  return /^\/(?:tasks|threads)(?:$|\s)/i.test(normalized);
+}
+
+export function resolveDaemonTaskListScope(params: {
+  text: string;
+  activeScope: "global" | "adapter";
+}): "global" | "adapter" {
+  return isExplicitGlobalTaskListRequest(params.text)
+    ? "global"
+    : params.activeScope;
 }
 
 export function defaultDaemonSessionStartMode(
@@ -2087,6 +2121,13 @@ class DeskRelayDaemon {
   private readonly deferredInputStore: CodexDeferredInputStore;
   private readonly mobileMessageImageStore: MobileMessageImageStore;
   private readonly slots = new Map<DaemonAdapterKind, DaemonSlot>();
+  private globalTaskListSnapshot: GlobalTaskSnapshot | null = null;
+  private globalTaskListPosition: CodexTaskListPagePosition = {
+    startIndex: 0,
+    pageSize: CODEX_TASK_LIST_PAGE_SIZE,
+  };
+  private globalTaskListHistory: CodexTaskListPagePosition[] = [];
+  private activeTaskListScope: "global" | "adapter" = "global";
   private readonly startedAt = new Date().toISOString();
   private readonly bridgeStartedAtMs = Date.now();
   private backlogNoticeSent = false;
@@ -3375,6 +3416,7 @@ class DeskRelayDaemon {
           try {
             await this.handleSystemCommand(message, switchedSlot, {
               type: "resume",
+              taskListScope: "adapter",
             });
           } catch (error) {
             appendDaemonLog(
@@ -3405,7 +3447,28 @@ class DeskRelayDaemon {
       return;
     }
 
-    const targetedTaskMessage = slot.runtime.sendInputToSession
+    const globalTargetedTaskMessage = this.activeTaskListScope === "global" &&
+        this.globalTaskListSnapshot
+      ? resolveGlobalTaskTargetedMessage({
+          text: message.text,
+          snapshot: this.globalTaskListSnapshot,
+        })
+      : null;
+    if (globalTargetedTaskMessage) {
+      try {
+        await this.handleGlobalTaskTargetedMessage(message, globalTargetedTaskMessage);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        appendDaemonLog(
+          `global_task_targeted_send_error: adapter=${globalTargetedTaskMessage.candidate.adapter} thread=${globalTargetedTaskMessage.candidate.sessionId} error=${truncatePreview(detail, 400)}`,
+        );
+        await this.queueWechatMessage(message.senderId, detail, "inbound_error");
+      }
+      return;
+    }
+
+    const targetedTaskMessage = this.activeTaskListScope === "adapter" &&
+        slot.runtime.sendInputToSession
       ? resolveDaemonTaskTargetedMessage({
           text: message.text,
           snapshot: slot.taskListSnapshot,
@@ -3420,6 +3483,10 @@ class DeskRelayDaemon {
     const pendingApproval = pendingApprovalSlot
       ? this.resolvePendingApproval(pendingApprovalSlot)
       : null;
+    const taskListScope = resolveDaemonTaskListScope({
+      text: message.text,
+      activeScope: this.activeTaskListScope,
+    });
     let command = resolveDaemonWechatCommand({
       adapter: slot.adapter,
       text: message.text,
@@ -3429,6 +3496,25 @@ class DeskRelayDaemon {
       canConfirmForSession: pendingApproval?.allowForSession === true,
       canAutoApproveTask: Boolean(pendingApproval),
     });
+    if (!command && isExplicitGlobalTaskListRequest(message.text)) {
+      try {
+        const snapshot = this.globalTaskListSnapshot ?? buildGlobalTaskSnapshot(
+          await this.listGlobalTaskCandidates(),
+        );
+        const compactTarget = resolveCompactGlobalTaskSearchTarget(
+          message.text,
+          snapshot,
+        );
+        if (compactTarget) {
+          this.globalTaskListSnapshot = snapshot;
+          command = { type: "resume", target: compactTarget };
+        }
+      } catch (error) {
+        appendDaemonLog(
+          `global_compact_task_search_error: error=${truncatePreview(error instanceof Error ? error.message : String(error), 400)}`,
+        );
+      }
+    }
     if (!command && slot.adapter === "codex") {
       try {
         const candidates = slot.taskListSnapshot?.candidates ??
@@ -3450,7 +3536,11 @@ class DeskRelayDaemon {
       if (command.type !== "resume") {
         slot.awaitingBareTaskSelection = false;
       }
-      await this.handleSystemCommand(message, slot, command);
+      const scopedCommand: DaemonSystemCommand = command.type === "resume" ||
+          command.type === "resume_page"
+        ? { ...command, taskListScope }
+        : command;
+      await this.handleSystemCommand(message, slot, scopedCommand);
       return;
     }
     slot.awaitingBareTaskSelection = false;
@@ -3546,6 +3636,16 @@ class DeskRelayDaemon {
     activeSlot: DaemonSlot,
     command: DaemonSystemCommand,
   ): Promise<void> {
+    if (
+      command.taskListScope === "global" &&
+      (command.type === "resume" || command.type === "resume_page")
+    ) {
+      await this.handleGlobalTaskCommand(message, command);
+      return;
+    }
+    if (command.type === "resume" || command.type === "resume_page") {
+      this.activeTaskListScope = "adapter";
+    }
     switch (command.type) {
       case "help":
         await this.queueWechatMessage(
@@ -3783,7 +3883,7 @@ class DeskRelayDaemon {
 
         activeSlot.awaitingBareTaskSelection = false;
         await activeSlot.outputBatcher.flushNow();
-        if (activeSlot.adapter !== "codex") {
+        if (activeSlot.adapter !== "codex" && !command.sessionAlreadyRestored) {
           await activeSlot.runtime.resumeSession(candidate.sessionId);
         }
         activeSlot.wechatReplyThreadId = candidate.sessionId;
@@ -4706,28 +4806,58 @@ class DeskRelayDaemon {
   }
 
   private async listMobileTaskBoard(): Promise<CodexMobileTaskBoard> {
-    const slots = Array.from(this.slots.values());
     const adapterLabels = new Map(
       this.listMobileAdapters().adapters.map((adapter) => [adapter.id, adapter.label]),
     );
-    const taskGroups = await Promise.all(
-      slots.map(async (slot) => {
-        try {
-          return await this.listMobileTasks(slot.adapter);
-        } catch (error) {
-          appendDaemonLog(
-            `mobile_task_board_adapter_error: adapter=${slot.adapter} error=${truncatePreview(error instanceof Error ? error.message : String(error), 400)}`,
-          );
-          return [];
-        }
-      }),
-    );
+    const candidates = await this.listGlobalTaskCandidates();
+    const grouped = new Map<DaemonAdapterKind, CodexMobileTask[]>();
+    for (const candidate of candidates) {
+      const slot = this.slots.get(candidate.adapter);
+      const selectedThreadId = slot ? this.getSlotThreadId(slot) : undefined;
+      const status = slot
+        ? this.resolveMobileTaskStatus(slot, candidate.sessionId, candidate.runtimeStatus)
+        : mapCodexMobileTaskStatus(candidate.runtimeStatus);
+      const activeTask = slot
+        ? this.getSlotActiveTask(slot, candidate.sessionId)
+        : undefined;
+      const observation = candidate.adapter === "codex"
+        ? this.codexTaskObservations.get(candidate.sessionId)
+        : undefined;
+      const startedAtMs = activeTask?.startedAt ?? (
+        isRunningCodexTaskStatus(status) ? observation?.runningSinceMs : undefined
+      );
+      const tasks = grouped.get(candidate.adapter) ?? [];
+      tasks.push({
+        threadId: candidate.sessionId,
+        title: candidate.title,
+        ...(candidate.projectId ? { projectId: candidate.projectId } : {}),
+        ...(candidate.projectName ? { projectName: candidate.projectName } : {}),
+        ...(candidate.projectOrder !== undefined
+          ? { projectOrder: candidate.projectOrder }
+          : {}),
+        ...(candidate.projectThreadOrder !== undefined
+          ? { projectThreadOrder: candidate.projectThreadOrder }
+          : {}),
+        lastUpdatedAt: candidate.lastUpdatedAt,
+        status,
+        ...(startedAtMs !== undefined ? { startedAtMs } : {}),
+        ...(activeTask?.turnId ? { activeTurnId: activeTask.turnId } : {}),
+        selected: candidate.adapter === this.activeAdapter &&
+          candidate.sessionId === selectedThreadId,
+        canRename: Boolean(slot?.runtime.renameSession),
+        canCreateInProject: Boolean(
+          candidate.projectId &&
+          candidate.cwd &&
+          slot?.runtime.createSessionInProject
+        ),
+      });
+      grouped.set(candidate.adapter, tasks);
+    }
     return buildCodexMobileTaskBoard({
-      taskGroups: slots.map((slot, index) => ({
-        adapter: slot.adapter,
-        adapterLabel: adapterLabels.get(slot.adapter) ??
-          formatDaemonAdapterLabel(slot.adapter),
-        tasks: taskGroups[index] ?? [],
+      taskGroups: DAEMON_ADAPTERS.map((adapter) => ({
+        adapter,
+        adapterLabel: adapterLabels.get(adapter) ?? formatDaemonAdapterLabel(adapter),
+        tasks: grouped.get(adapter) ?? [],
       })),
       recentCompletions: this.stateStore.getRecentTaskCompletions(),
     });
@@ -5742,6 +5872,209 @@ class DeskRelayDaemon {
     return slot.pendingUserInputs.find(
       (pending) => pending.threadId === threadId,
     ) ?? null;
+  }
+
+  private async listGlobalTaskCandidates(): Promise<GlobalTaskCandidate[]> {
+    const groups = await Promise.all(DAEMON_ADAPTERS.map(async (adapter) => {
+      try {
+        const slot = this.slots.get(adapter);
+        let candidates: BridgeResumeSessionCandidate[];
+        if (slot) {
+          candidates = slot.adapter === "codex"
+            ? await this.getCodexTaskCandidates(slot)
+            : await slot.runtime.listResumeSessions(100);
+        } else if (adapter === "codex") {
+          const runtime = createRuntimeHost(buildDaemonRuntimeOptions({
+            adapter,
+            cwd: this.cwd,
+            profile: this.profile,
+            sessionStartMode: "restore",
+            initialSharedSessionId: this.stateStore.getAdapterSessionId(adapter),
+          }));
+          runtime.setEventSink(() => undefined);
+          try {
+            await runtime.start();
+            candidates = await runtime.listResumeSessions(100);
+          } finally {
+            await runtime.dispose().catch(() => undefined);
+          }
+        } else {
+          candidates = await listLightweightAdapterSessions(adapter, this.cwd, 100);
+        }
+        return candidates.map((candidate): GlobalTaskCandidate => ({
+          ...candidate,
+          adapter,
+        }));
+      } catch (error) {
+        appendDaemonLog(
+          `global_task_enumeration_error: adapter=${adapter} error=${truncatePreview(error instanceof Error ? error.message : String(error), 400)}`,
+        );
+        return [];
+      }
+    }));
+    const candidates = groups.flat();
+    const identities = new Set(candidates.map((candidate) => (
+      `${candidate.adapter}\u0000${candidate.sessionId}`
+    )));
+    for (const completion of this.stateStore.getRecentTaskCompletions()) {
+      const identity = `${completion.adapter}\u0000${completion.threadId}`;
+      if (identities.has(identity)) continue;
+      candidates.push({
+        adapter: completion.adapter,
+        sessionId: completion.threadId,
+        threadId: completion.threadId,
+        title: completion.title,
+        lastUpdatedAt: completion.completedAt,
+        runtimeStatus: { type: "notLoaded" },
+      });
+      identities.add(identity);
+    }
+    return buildGlobalTaskSnapshot(candidates).candidates;
+  }
+
+  private async activateExactGlobalTask(
+    candidate: GlobalTaskCandidate,
+  ): Promise<DaemonSlot> {
+    const hadConnectedSlot = this.slots.has(candidate.adapter);
+    const slot = await activateGlobalTaskCandidate(candidate, {
+      getConnectedAdapter: (adapter) => this.slots.get(adapter) ?? null,
+      connectAdapter: async (adapter) => {
+        const result = await this.ensureSlot(adapter, {
+          openVisible: true,
+          reuseExistingVisible: true,
+          sessionStartMode: "restore",
+          activate: false,
+        });
+        if (!result.activated) {
+          throw new Error(result.activationReason ?? `${formatDaemonAdapterLabel(adapter)} 不可用。`);
+        }
+        const connected = this.slots.get(adapter);
+        if (!connected) throw new Error(`${formatDaemonAdapterLabel(adapter)} 连接没有建立。`);
+        return connected;
+      },
+      resumeSession: async (connected, sessionId) => {
+        if (candidate.adapter === "codex" && hadConnectedSlot) return;
+        await connected.runtime.resumeSession(sessionId);
+      },
+    });
+    this.activeAdapter = candidate.adapter;
+    this.persistActiveAdapter(candidate.adapter);
+    slot.wechatReplyThreadId = candidate.sessionId;
+    this.persistAdapterSessionId(candidate.adapter, candidate.sessionId);
+    if (candidate.adapter === "codex") {
+      this.persistCodexWechatThreadId(candidate.sessionId);
+    }
+    slot.controller.syncLocalClientEndpoint();
+    return slot;
+  }
+
+  private async handleGlobalTaskTargetedMessage(
+    message: InboundWechatMessage,
+    target: { candidate: GlobalTaskCandidate; text: string },
+  ): Promise<void> {
+    const slot = await this.activateExactGlobalTask(target.candidate);
+    await this.handleDaemonTaskTargetedMessage(message, slot, target);
+  }
+
+  private async handleGlobalTaskCommand(
+    message: InboundWechatMessage,
+    command: DaemonSystemCommand,
+  ): Promise<void> {
+    if (command.type === "resume_page") {
+      const navigation = resolveCodexTaskListPageNavigation({
+        direction: command.direction,
+        current: this.globalTaskListPosition,
+        history: this.globalTaskListHistory,
+        ...(command.count ? { requestedPageSize: command.count } : {}),
+      });
+      await this.handleGlobalTaskCommand(message, {
+        type: "resume",
+        taskListScope: "global",
+        taskListPosition: navigation.current,
+        taskListHistory: navigation.history,
+        preserveTaskSnapshot: true,
+      });
+      return;
+    }
+    if (command.type !== "resume") return;
+    const pageSize = command.taskListPosition?.pageSize ?? CODEX_TASK_LIST_PAGE_SIZE;
+    const page = command.page ?? 1;
+    const pageStart = command.taskListPosition?.startIndex ??
+      (page - 1) * CODEX_TASK_LIST_PAGE_SIZE;
+    const preserveSnapshot = command.preserveTaskSnapshot === true || Boolean(command.target);
+    const latestCandidates = preserveSnapshot && this.globalTaskListSnapshot
+      ? this.globalTaskListSnapshot.candidates
+      : await this.listGlobalTaskCandidates();
+    const snapshot = updateGlobalTaskSnapshot({
+      current: this.globalTaskListSnapshot,
+      latestCandidates,
+      refresh: !preserveSnapshot || !this.globalTaskListSnapshot,
+    });
+    this.globalTaskListSnapshot = snapshot;
+    this.activeTaskListScope = "global";
+    if (!command.target) {
+      this.globalTaskListPosition = { startIndex: pageStart, pageSize };
+      this.globalTaskListHistory = command.taskListHistory ?? [];
+      const activeSlot = this.getActiveSlot();
+      if (activeSlot) {
+        activeSlot.awaitingBareTaskSelection = snapshot.candidates.slice(
+          pageStart,
+          pageStart + pageSize,
+        ).length > 0;
+      }
+      await this.queueWechatMessage(
+        message.senderId,
+        formatGlobalTaskList({ snapshot, startIndex: pageStart, pageSize }),
+      );
+      return;
+    }
+    const candidate = resolveGlobalTaskCandidate(snapshot, command.target);
+    if (!candidate) {
+      const matches = searchGlobalTaskCandidates(snapshot, command.target);
+      const activeSlot = this.getActiveSlot();
+      if (activeSlot) {
+        activeSlot.awaitingBareTaskSelection = true;
+      }
+      await this.queueWechatMessage(
+        message.senderId,
+        matches.length > 1
+          ? formatGlobalTaskSearchResults({
+              snapshot,
+              matches: matches.slice(0, CODEX_TASK_LIST_MAX_PAGE_SIZE),
+              target: command.target,
+            })
+          : [
+              `没有找到任务：${command.target}`,
+              formatGlobalTaskList({ snapshot, startIndex: 0, pageSize }),
+            ].join("\n\n"),
+      );
+      return;
+    }
+    let slot: DaemonSlot;
+    try {
+      slot = await this.activateExactGlobalTask(candidate);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      appendDaemonLog(
+        `global_task_selection_error: adapter=${candidate.adapter} thread=${candidate.sessionId} error=${truncatePreview(detail, 400)}`,
+      );
+      await this.queueWechatMessage(message.senderId, detail, "inbound_error");
+      return;
+    }
+    slot.taskListSnapshot = {
+      candidates: [candidate],
+      numberByThreadId: new Map([[candidate.sessionId, 1]]),
+    };
+    slot.taskNumberByThreadId.clear();
+    slot.taskNumberByThreadId.set(candidate.sessionId, 1);
+    await this.handleSystemCommand(message, slot, {
+      type: "resume",
+      target: "1",
+      preserveTaskSnapshot: true,
+      taskListScope: "adapter",
+      sessionAlreadyRestored: true,
+    });
+    this.activeTaskListScope = "global";
   }
 
   private updateDaemonTaskListSnapshot(

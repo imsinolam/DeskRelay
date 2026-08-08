@@ -27,6 +27,7 @@ import {
   formatDaemonStatus,
   formatMobileTaskListUnavailableMessage,
   isCodexTaskCandidateCacheFresh,
+  isExplicitGlobalTaskListRequest,
   detectOpenMobileAdaptersFromProcessList,
   filterCodexMobileProgressForCurrentTurn,
   mapCodexMobileTaskStatus,
@@ -36,6 +37,7 @@ import {
   prefixDaemonAdapterMessage,
   prefixDaemonTaskMessage,
   resolveDaemonSessionStartMode,
+  resolveDaemonTaskListScope,
   resolveDaemonWechatCommand,
   resolveMobileAdapterDisplayStatus,
   resolveCodexMobileTaskStatusFromSignals,
@@ -741,6 +743,38 @@ describe("deskrelay-daemon helpers", () => {
     ).toBeNull();
   });
 
+  test("uses the global task index for bare task commands and preserves the current list scope for navigation", () => {
+    expect(isExplicitGlobalTaskListRequest("任务")).toBe(true);
+    expect(isExplicitGlobalTaskListRequest("任务列表")).toBe(true);
+    expect(isExplicitGlobalTaskListRequest("任务：canvas")).toBe(true);
+    expect(isExplicitGlobalTaskListRequest("任务 canvas")).toBe(true);
+    expect(isExplicitGlobalTaskListRequest("任务canvas")).toBe(true);
+    expect(isExplicitGlobalTaskListRequest("/tasks")).toBe(true);
+    expect(isExplicitGlobalTaskListRequest("/tasks 2")).toBe(true);
+    expect(isExplicitGlobalTaskListRequest("/threads keyword")).toBe(true);
+    expect(isExplicitGlobalTaskListRequest("/t2")).toBe(false);
+    expect(resolveDaemonTaskListScope({
+      text: "任务",
+      activeScope: "adapter",
+    })).toBe("global");
+    expect(resolveDaemonTaskListScope({
+      text: "任务：canvas",
+      activeScope: "adapter",
+    })).toBe("global");
+    expect(resolveDaemonTaskListScope({
+      text: "任务canvas",
+      activeScope: "adapter",
+    })).toBe("global");
+    expect(resolveDaemonTaskListScope({
+      text: "/t2",
+      activeScope: "adapter",
+    })).toBe("adapter");
+    expect(resolveDaemonTaskListScope({
+      text: "下一页20",
+      activeScope: "global",
+    })).toBe("global");
+  });
+
   test("lets a task-list number switch tasks before interpreting approval shortcuts", () => {
     expect(resolveDaemonWechatCommand({
       adapter: "codex",
@@ -1371,7 +1405,9 @@ describe("deskrelay-daemon helpers", () => {
     expect(switchEnd).toBeGreaterThan(switchStart);
 
     expect(source.slice(targetedStart, targetedEnd)).not.toContain("slot.runtime.resumeSession(threadId)");
-    expect(source.slice(resumeStart, resumeEnd)).toContain('if (activeSlot.adapter !== "codex")');
+    expect(source.slice(resumeStart, resumeEnd)).toContain(
+      'if (activeSlot.adapter !== "codex" && !command.sessionAlreadyRestored)',
+    );
     expect(source.slice(resumeStart, resumeEnd)).toContain("activeSlot.runtime.resumeSession(candidate.sessionId)");
     expect(source.slice(resumeStart, resumeEnd)).toContain("persistCodexWechatThreadId");
     expect(source.slice(switchStart, switchEnd)).not.toContain("slot.wechatReplyThreadId = event.threadId");
@@ -1388,6 +1424,40 @@ describe("deskrelay-daemon helpers", () => {
     expect(switchBlock).toContain("if (result.activated)");
     expect(switchBlock).toContain("await this.handleSystemCommand(message, switchedSlot, {");
     expect(switchBlock).toContain('type: "resume"');
+  });
+
+  test("routes global task commands and number-colon messages through adapter plus session identity", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const inboundStart = source.indexOf("  private async handleInboundMessage(");
+    const inboundEnd = source.indexOf("\n  private async handleDaemonTaskTargetedMessage(", inboundStart);
+    const inboundBlock = source.slice(inboundStart, inboundEnd);
+    const systemStart = source.indexOf("  private async handleSystemCommand(");
+    const systemEnd = source.indexOf('      case "help":', systemStart);
+    const systemBlock = source.slice(systemStart, systemEnd);
+
+    expect(inboundBlock.indexOf("resolveGlobalTaskTargetedMessage")).toBeLessThan(
+      inboundBlock.indexOf("resolveDaemonTaskTargetedMessage"),
+    );
+    expect(inboundBlock).toContain('this.activeTaskListScope === "global"');
+    expect(inboundBlock).toContain("resolveDaemonTaskListScope");
+    expect(inboundBlock).toContain("{ ...command, taskListScope }");
+    expect(systemBlock).toContain('command.taskListScope === "global"');
+    expect(systemBlock).toContain("await this.handleGlobalTaskCommand(message, command)");
+  });
+
+  test("keeps adapter switches scoped to that adapter while mobile task board uses the global catalog", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const switchStart = source.indexOf("    const switchAdapter = parseDaemonSwitchCommand(message.text);");
+    const switchEnd = source.indexOf('\n    if (message.text.trim().toLowerCase() === "/daemon-stop")', switchStart);
+    const switchBlock = source.slice(switchStart, switchEnd);
+    const boardStart = source.indexOf("  private async listMobileTaskBoard()");
+    const boardEnd = source.indexOf("\n  private async recordRecentTaskCompletion(", boardStart);
+    const boardBlock = source.slice(boardStart, boardEnd);
+
+    expect(switchBlock).toContain('taskListScope: "adapter"');
+    expect(boardBlock).toContain("await this.listGlobalTaskCandidates()");
+    expect(boardBlock).toContain("DAEMON_ADAPTERS.map");
+    expect(boardBlock).not.toContain("Array.from(this.slots.values())");
   });
 
   test("does not restrict stable number-colon routing to Codex", () => {

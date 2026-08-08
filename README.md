@@ -3,7 +3,7 @@
 <p align="center"><strong>One real session. Every screen.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/UNLINEARITY/DeskRelay"><img alt="GitHub stars" src="https://img.shields.io/github/stars/UNLINEARITY/DeskRelay?label=Stars&amp;style=for-the-badge&amp;logo=github&amp;color=0891b2&amp;labelColor=1c1917"></a>
+  <a href="https://github.com/imsinolam/DeskRelay"><img alt="GitHub stars" src="https://img.shields.io/github/stars/imsinolam/DeskRelay?label=Stars&amp;style=for-the-badge&amp;logo=github&amp;color=0891b2&amp;labelColor=1c1917"></a>
   <a href="https://www.npmjs.com/package/deskrelay"><img alt="npm version" src="https://img.shields.io/npm/v/deskrelay?label=npm&amp;style=for-the-badge&amp;logo=npm&amp;color=cb3837&amp;labelColor=1c1917"></a>
   <img alt="License" src="https://img.shields.io/badge/License-AGPL--3.0-7c3aed?style=for-the-badge&labelColor=1c1917">
 </p>
@@ -14,23 +14,11 @@ DeskRelay 把电脑上的 AI 编程任务延伸到微信 ClawBot、局域网网�
 
 **电脑 Agent 始终是任务 owner，DeskRelay 和远程界面只是入口；但不同 Agent 当前达到的会话一致性级别并不相同，不能把“命令能接入”都写成“桌面端实时同步”。**
 
-<p align="center"><img src="docs/images/deskrelay-four-panel-white-paper-boy-v2.png" width="100%" alt="DeskRelay 在电脑开工、手机接力、任务完成后再回到电脑继续工作"></p>
+<p align="center"><img src="docs/images/deskrelay-four-panel-white-paper-boy-v10-handoff-comic.png" width="100%" alt="DeskRelay 在电脑开工、手机接力、任务完成后再回到电脑继续工作"></p>
 
 ## 它们是什么关系
 
-```mermaid
-flowchart TB
-    subgraph Mac["用户电脑"]
-        Agent["Codex / WorkBuddy / Grok / Claude Code / 更多 Agent"]
-        Core["DeskRelay\n任务映射 · 状态 · 队列 · 审批"]
-        Agent <--> Core
-    end
-
-    WeChat["微信 ClawBot\n远程发消息与接收通知"] <--> Core
-    LAN["局域网网页\n同一网络内直接访问电脑"] <--> Core
-    Public["公网网页"] <--> Relay["公网 DeskRelay Relay"]
-    Relay <--> Core
-```
+<p align="center"><img src="docs/images/deskrelay-relationship-simple.png" width="100%" alt="手机通过微信、局域网网页或公网网页进入 DeskRelay，继续电脑 Agent 中的真实任务；任务在电脑，手机只是入口"></p>
 
 | 组成部分 | 负责什么 | 不负责什么 |
 | --- | --- | --- |

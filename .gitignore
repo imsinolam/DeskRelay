@@ -37,6 +37,8 @@ mobile-images/
 # Local logs, caches and editor state
 *.log
 coverage/
+tmp/
+output/
 .DS_Store
 .idea/
 .vscode/
@@ -49,7 +51,7 @@ deploy/**/*.local.*
 website/
 
 # Generated illustration sources and alternate exports. The reviewed public
-# asset is docs/images/deskrelay-four-panel-white-paper-boy-v2.png.
+# assets are the privacy-reviewed README images.
 docs/images/deskrelay-four-panel-white-paper-boy-raw.png
 docs/images/deskrelay-four-panel-white-paper-boy.jpg
 docs/images/deskrelay-four-panel-white-paper-boy.png
@@ -58,6 +60,7 @@ docs/images/deskrelay-four-panel-white-paper-boy-v2.jpg
 docs/images/deskrelay-four-panel-white-paper-boy-v[3-7]*
 docs/images/deskrelay-four-panel-white-paper-boy-v8-centered-comic-raw.png
 docs/images/deskrelay-four-panel-white-paper-boy-v8-centered-comic.jpg
+docs/images/deskrelay-four-panel-white-paper-boy-v9-*
 docs/images/deskrelay-four-panel-xiaohei-raw.png
 docs/images/deskrelay-four-panel-xiaohei.jpg
 docs/images/deskrelay-four-panel-xiaohei.png

@@ -776,6 +776,12 @@ function candidateForWorkBuddyRow(row: WorkBuddySessionRow): BridgeResumeSession
   };
 }
 
+export async function listWorkBuddyDesktopSessionCandidates(
+  limit = 10,
+): Promise<BridgeResumeSessionCandidate[]> {
+  return (await listWorkBuddyDesktopSessions(undefined, limit)).map(candidateForWorkBuddyRow);
+}
+
 function contentText(value: unknown): string {
   if (typeof value === "string") return value;
   if (isRecord(value) && typeof value.text === "string") return value.text;

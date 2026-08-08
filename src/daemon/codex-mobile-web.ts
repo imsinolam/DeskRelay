@@ -101,7 +101,7 @@ export const CODEX_MOBILE_HTML = `<!doctype html>
             </button>
             <div class="task-board-heading">
               <h1 id="task-board-title">所有任务</h1>
-              <p id="task-board-subtitle">汇集所有已连接 Agent 的真实任务</p>
+              <p id="task-board-subtitle">汇集所有支持 Agent 的真实任务</p>
             </div>
             <button class="task-board-refresh" id="task-board-refresh" type="button" aria-label="刷新任务看板" title="刷新">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 5v6h-6"/></svg>
@@ -753,6 +753,7 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.75; stro
 .task-board-card[data-lane="running"] .task-board-card-status { color: var(--green); }
 .task-board-card[data-lane="waiting"] .task-board-card-status { color: var(--orange); }
 .task-board-card[data-lane="error"] .task-board-card-status { color: var(--red); }
+.task-board-card-adapter { flex: 0 0 auto; color: var(--muted-strong); font-weight: 560; }
 .task-board-card-project { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-board-card-time { margin-left: auto; flex: 0 0 auto; font-variant-numeric: tabular-nums; }
 .task-board-column-empty { min-height: 104px; display: grid; place-items: center; padding: 18px; border: 1px dashed var(--border-strong); border-radius: 14px; color: var(--muted); font-size: 12px; text-align: center; }
@@ -914,8 +915,8 @@ body.image-viewer-open { overflow: hidden; }
   background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,.94) 32%, #fff 62%);
   z-index: 12;
 }
-.composer-queue, .composer { width: min(100%, var(--thread-max)); margin-left: auto; margin-right: auto; }
-.composer-queue { display: grid; gap: 6px; max-height: 190px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 0 20px; margin-bottom: 0px;}
+.composer { width: min(100%, var(--thread-max)); margin-left: auto; margin-right: auto; }
+.composer-queue { width: calc(100% - 40px); max-width: calc(var(--thread-max) - 40px); display: grid; gap: 0; max-height: 190px; overflow: hidden auto; overscroll-behavior: contain; scrollbar-width: thin; margin: 0 auto; border: 1px solid var(--border); border-radius: 16px; background: var(--page); }
 .composer-queue[hidden], .composer-media[hidden] { display: none; }
 .composer-media { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; padding: 2px 2px 4px; }
 .composer-media-item { position: relative; width: 72px; height: 72px; flex: 0 0 auto; }
@@ -925,7 +926,8 @@ body.image-viewer-open { overflow: hidden; }
 .composer-media-item img { width: 100%; height: 100%; display: block; object-fit: cover; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
 .composer-media-remove { position: absolute; z-index: 1; top: -6px; right: -6px; width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: 2px solid var(--page); border-radius: 50%; background: var(--accent); color: var(--page); cursor: pointer; }
 .composer-media-remove svg { width: 11px; height: 11px; stroke-width: 2.2; }
-.queued-followup { border: 1px solid var(--border); border-radius: 16px 16px 0 0; background: var(--page); overflow: hidden; }
+.queued-followup { min-width: 0; background: var(--page); }
+.queued-followup + .queued-followup { border-top: 1px solid var(--border); }
 .queued-followup-main { display: flex; align-items: center; gap: 9px; padding: 4px 4px 0px 8px; }
 .queued-followup-icon { width: 20px; height: 20px; flex: 0 0 auto; display: grid; place-items: center; color: var(--muted); }
 .queued-followup-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
@@ -1337,6 +1339,14 @@ export const CODEX_MOBILE_JS = String.raw`
       .join(" ")
       .toLowerCase()
       .includes(normalized);
+  }
+
+  function shouldShowTaskAdapterLabels(tasks) {
+    if (!Array.isArray(tasks) || tasks.length <= 1) return false;
+    var adapters = new Set(tasks.map(function (task) {
+      return String(task && task.adapter || "").trim();
+    }).filter(Boolean));
+    return adapters.size > 1;
   }
 
   function formatTaskBoardTime(value, nowMs) {
@@ -2731,7 +2741,7 @@ export const CODEX_MOBILE_JS = String.raw`
     return skeleton;
   }
 
-  function renderTaskBoardCard(task, lane) {
+  function renderTaskBoardCard(task, lane, showAdapterLabel) {
     var card = document.createElement("button");
     var key = task.adapter + "\u0000" + task.threadId;
     card.type = "button";
@@ -2751,6 +2761,12 @@ export const CODEX_MOBILE_JS = String.raw`
     status.innerHTML = '<span class="task-board-card-status-dot"></span><span></span>';
     status.lastChild.textContent = taskBoardStatusLabel(task);
     meta.appendChild(status);
+    if (showAdapterLabel && task.adapterLabel) {
+      var adapter = document.createElement("span");
+      adapter.className = "task-board-card-adapter";
+      adapter.textContent = task.adapterLabel;
+      meta.appendChild(adapter);
+    }
     if (task.projectName) {
       var project = document.createElement("span");
       project.className = "task-board-card-project";
@@ -2798,6 +2814,7 @@ export const CODEX_MOBILE_JS = String.raw`
           : "新任务开始运行后会自动出现在这里。"
       );
     }
+    var showAdapterLabels = shouldShowTaskAdapterLabels(tasks);
     var columns = document.createElement("div");
     columns.className = "task-board-columns";
     laneDefinitions.forEach(function (definition) {
@@ -2819,7 +2836,7 @@ export const CODEX_MOBILE_JS = String.raw`
         list.appendChild(empty);
       } else {
         lanes[definition.id].forEach(function (task) {
-          list.appendChild(renderTaskBoardCard(task, definition.id));
+          list.appendChild(renderTaskBoardCard(task, definition.id, showAdapterLabels));
         });
       }
       section.appendChild(heading);
@@ -2838,6 +2855,7 @@ export const CODEX_MOBILE_JS = String.raw`
           : "任意 Agent 的真实任务完成后，会自动汇入这里。"
       );
     }
+    var showAdapterLabels = shouldShowTaskAdapterLabels(items);
     var list = document.createElement("div");
     list.className = "task-board-completed";
     items.forEach(function (item) {
@@ -2855,7 +2873,9 @@ export const CODEX_MOBILE_JS = String.raw`
       title.textContent = item.title;
       var meta = document.createElement("span");
       meta.className = "task-board-completed-meta";
-      meta.textContent = "已完成";
+      meta.textContent = showAdapterLabels && item.adapterLabel
+        ? item.adapterLabel + " · 已完成"
+        : "已完成";
       copy.appendChild(title);
       copy.appendChild(meta);
       var time = document.createElement("span");

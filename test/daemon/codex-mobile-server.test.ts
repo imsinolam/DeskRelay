@@ -147,6 +147,7 @@ function loadMobileTaskSidebarHelpers(): {
     query: string,
   ) => boolean;
   formatTaskBoardTime: (value: string, nowMs?: number) => string;
+  shouldShowTaskAdapterLabels: (tasks: Array<{ adapter?: string }>) => boolean;
   projectTaskCreationSource: <T extends {
     threadId: string;
     canCreateInProject?: boolean;
@@ -166,6 +167,7 @@ return {
   taskBoardLane,
   taskBoardMatchesQuery,
   formatTaskBoardTime,
+  shouldShowTaskAdapterLabels,
   projectTaskCreationSource
 };`)() as ReturnType<typeof loadMobileTaskSidebarHelpers>;
 }
@@ -748,6 +750,23 @@ describe("Codex mobile web rendering", () => {
       "2026-08-07T02:30:00.000Z",
       Date.parse("2026-08-07T03:00:00.000Z"),
     )).toBe("30 分钟前");
+  });
+
+  test("adapts mobile task terminal labels to the currently rendered page", () => {
+    const { shouldShowTaskAdapterLabels } = loadMobileTaskSidebarHelpers();
+    const pageOne = [{ adapter: "codex" }, { adapter: "codex" }];
+    const pageTwo = [{ adapter: "codex" }, { adapter: "workbuddy" }];
+
+    expect(shouldShowTaskAdapterLabels([])).toBe(false);
+    expect(shouldShowTaskAdapterLabels([{ adapter: "codex" }])).toBe(false);
+    expect(shouldShowTaskAdapterLabels(pageOne)).toBe(false);
+    expect(shouldShowTaskAdapterLabels(pageTwo)).toBe(true);
+    expect(CODEX_MOBILE_JS).toContain(
+      "var showAdapterLabels = shouldShowTaskAdapterLabels(tasks);",
+    );
+    expect(CODEX_MOBILE_JS).toContain(
+      "var showAdapterLabels = shouldShowTaskAdapterLabels(items);",
+    );
   });
 
   test("preserves ordered-list numbers when bullet sections split the list", () => {
@@ -1698,6 +1717,12 @@ describe("Codex mobile server", () => {
       expect(css).toContain(".run-progress-item {");
       expect(css).toContain(".workspace-switch-progress");
       expect(css).toContain(".queued-followup-status");
+      expect(css).toContain(".composer-queue { width: calc(100% - 40px); max-width: calc(var(--thread-max) - 40px); display: grid; gap: 0;");
+      expect(css).toContain("overflow: hidden auto;");
+      expect(css).toContain("border-radius: 16px; background: var(--page);");
+      expect(css).toContain(".queued-followup { min-width: 0; background: var(--page); }");
+      expect(css).toContain(".queued-followup + .queued-followup { border-top: 1px solid var(--border); }");
+      expect(css).not.toContain(".queued-followup { border: 1px solid var(--border);");
       expect(css).toContain("@media (hover: none) and (pointer: coarse)");
       expect(css).toContain(".icon-button:active, .composer-image-button:active");
 

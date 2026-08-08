@@ -57,6 +57,14 @@ const reviewedRasterAssets = new Map([
     "docs/images/deskrelay-four-panel-white-paper-boy-v8-centered-comic.png",
     "56acb7404b6df7fa93ff6c1f412da5150a78871a1aeec0356c9ad6d9f9dc150e",
   ],
+  [
+    "docs/images/deskrelay-four-panel-white-paper-boy-v10-handoff-comic.png",
+    "9b1de869315893a4bfacf8bd3e10818207977f4731ab28861d7b37a8ab6dc4fe",
+  ],
+  [
+    "docs/images/deskrelay-relationship-simple.png",
+    "ff53f9931a77cf17e8a402c43e20a94876cfe8e3d74f46099b399dce32fac1fc",
+  ],
 ]);
 const forbiddenFilePatterns = [
   { pattern: /(^|\/)\.env(?:\.|$)/, allow: /(^|\/)\.env\.example$/, reason: "environment file" },
