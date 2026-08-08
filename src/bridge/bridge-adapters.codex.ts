@@ -23,16 +23,19 @@ import type {
   BridgeTurnOrigin,
 } from "./bridge-types.ts";
 import {
-  compactMirroredUserInputText,
   detectCliApproval,
   normalizeOutput,
   nowIso,
-  sanitizeWechatInboundPromptForDisplay,
+  sanitizeCodexVisibleUserMessageForDisplay,
   truncatePreview,
 } from "./bridge-utils.ts";
 import { AbstractPtyAdapter } from "./bridge-adapters.core.ts";
 import { killProcessTreeSync } from "./bridge-process-reaper.ts";
 import * as shared from "./bridge-adapters.shared.ts";
+import {
+  ensurePrivateDir,
+  writePrivateFileAtomic,
+} from "../utils/private-files.ts";
 import {
   CodexDesktopIpcClient,
   type CodexDesktopConversationState,
@@ -75,6 +78,7 @@ type CodexDesktopTurnState = {
   status: string;
   errorMessage: string | null;
   items: unknown[];
+  startedAtMs?: number;
 };
 
 type CodexDesktopRuntimeStatusCacheEntry = {
@@ -424,28 +428,6 @@ function extractCodexVisibleAgentMessageText(item: unknown): string | null {
   return text || null;
 }
 
-function sanitizeCodexVisibleUserMessage(text: string): string | null {
-  const sanitized = sanitizeWechatInboundPromptForDisplay(
-    normalizeOutput(text)
-      .replace(
-        /<(in-app-browser-context|app-context|environment_context)\b[^>]*>[\s\S]*?<\/\1>/gi,
-        "",
-      ),
-  ).trim();
-  if (!sanitized) {
-    return null;
-  }
-  if (
-    /^#\s+Files mentioned by the user:/im.test(sanitized) ||
-    /^##\s+My request for Codex:/im.test(sanitized) ||
-    /<image\b[^>]*\bpath=/i.test(sanitized)
-  ) {
-    const compact = compactMirroredUserInputText(sanitized).trim();
-    return compact && compact !== "（空消息）" ? compact : null;
-  }
-  return sanitized;
-}
-
 function normalizeCodexSessionMessagePageLimit(limit: number | undefined): number {
   const requested = Number.isFinite(limit)
     ? Math.floor(limit ?? CODEX_SESSION_MESSAGE_PAGE_DEFAULT_LIMIT)
@@ -580,16 +562,9 @@ function materializeCodexInputImage(
     `${crypto.createHash("sha256").update(bytes).digest("hex")}${extension}`,
   );
   try {
-    fs.mkdirSync(imageCacheDir, { recursive: true, mode: 0o700 });
+    ensurePrivateDir(imageCacheDir);
     if (!fs.existsSync(imagePath)) {
-      const tempPath = `${imagePath}.tmp-${process.pid}-${Date.now()}`;
-      fs.writeFileSync(tempPath, bytes, { mode: 0o600 });
-      try {
-        fs.renameSync(tempPath, imagePath);
-      } catch (error) {
-        fs.rmSync(tempPath, { force: true });
-        if (!fs.existsSync(imagePath)) throw error;
-      }
+      writePrivateFileAtomic(imagePath, bytes);
     }
     fs.chmodSync(imagePath, 0o600);
     return { source: "local", path: imagePath, alt };
@@ -657,7 +632,7 @@ function extractCodexRolloutVisibleMessage(
     }).filter(Boolean);
     const rawText = normalizeOutput(textParts.join("\n")).trim();
     const text = role === "user"
-      ? sanitizeCodexVisibleUserMessage(rawText)
+      ? sanitizeCodexVisibleUserMessageForDisplay(rawText)
       : rawText;
     if (!text) {
       return null;
@@ -931,7 +906,7 @@ export function extractCodexThreadMessages(
 
       const userText = extractCodexUserMessageText(item);
       const visibleUserText = userText
-        ? sanitizeCodexVisibleUserMessage(userText)
+        ? sanitizeCodexVisibleUserMessageForDisplay(userText)
         : null;
       if (visibleUserText) {
         messages.push({
@@ -1196,7 +1171,7 @@ export function extractCodexDesktopThreadMessages(
 
       const userText = extractCodexUserMessageText(item);
       const visibleUserText = userText
-        ? sanitizeCodexVisibleUserMessage(userText)
+        ? sanitizeCodexVisibleUserMessageForDisplay(userText)
         : null;
       if (visibleUserText) {
         messages.push({
@@ -2420,6 +2395,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
   private pendingTurnThreadId: string | null = null;
   private pendingDesktopTurnThreadIds = new Set<string>();
   private pendingDesktopTurnTextByThreadId = new Map<string, string>();
+  private desktopQueuedFollowUpCleanupKeys = new Set<string>();
   private desktopBootstrapThreadIds = new Set<string>();
   private recentDesktopTurnTextByThreadId = new Map<
     string,
@@ -2674,6 +2650,48 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
         queuedMessageId: message.id,
         queuePosition: queue.length,
       };
+    });
+  }
+
+  private scheduleConsumedDesktopQueuedFollowUpCleanup(
+    threadId: string,
+    userText: string,
+    turnStartedAtMs: number,
+  ): void {
+    const normalizedText = normalizeOutput(userText).trim();
+    if (!normalizedText) return;
+    const cleanupKey = `${threadId}\u0000${normalizedText}`;
+    if (this.desktopQueuedFollowUpCleanupKeys.has(cleanupKey)) return;
+    const state = readCodexDesktopQueuedFollowUpsState(this.readDesktopGlobalState());
+    const queue = state[threadId] ?? [];
+    const matchesConsumedInput = (value: unknown): boolean => {
+      const message = normalizeCodexDesktopQueuedFollowUp(value);
+      if (!message || normalizeOutput(message.text).trim() !== normalizedText) {
+        return false;
+      }
+      const createdAtMs = typeof message.createdAt === "number" &&
+          Number.isFinite(message.createdAt)
+        ? message.createdAt
+        : undefined;
+      return createdAtMs !== undefined && createdAtMs <= turnStartedAtMs;
+    };
+    const hasMatch = queue.some(matchesConsumedInput);
+    if (!hasMatch) return;
+
+    this.desktopQueuedFollowUpCleanupKeys.add(cleanupKey);
+    void this.withDesktopQueuedFollowUpMutation(async () => {
+      const nextState = readCodexDesktopQueuedFollowUpsState(
+        this.readDesktopGlobalState(),
+      );
+      const nextQueue = nextState[threadId] ?? [];
+      const index = nextQueue.findIndex(matchesConsumedInput);
+      if (index < 0) return;
+      nextQueue.splice(index, 1);
+      if (nextQueue.length > 0) nextState[threadId] = nextQueue;
+      else delete nextState[threadId];
+      await this.writeDesktopQueuedFollowUpsState(threadId, nextState);
+    }).catch(() => undefined).finally(() => {
+      this.desktopQueuedFollowUpCleanupKeys.delete(cleanupKey);
     });
   }
 
@@ -3212,11 +3230,23 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       return;
     }
 
+    await this.createDesktopSession(this.options.cwd);
+  }
+
+  async createSessionInProject(sourceSessionId: string): Promise<void> {
+    if (!this.usesDesktopTransport()) {
+      throw new Error("当前 Codex 连接暂不支持在指定项目中新建任务。");
+    }
+    const cwd = await this.resolveDesktopThreadCwd(sourceSessionId);
+    await this.createDesktopSession(cwd);
+  }
+
+  private async createDesktopSession(cwd: string): Promise<void> {
     const permissionSettings = this.resolveDesktopPermissionSettings();
     const response = await this.sendRpcRequest(
       "thread/start",
       {
-        cwd: this.options.cwd,
+        cwd,
         approvalPolicy: permissionSettings.approvalPolicy,
         approvalsReviewer: permissionSettings.approvalsReviewer,
         sandbox: permissionSettings.sandbox,
@@ -3231,6 +3261,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       throw new Error("Codex 没有返回新任务编号，请稍后重试。");
     }
 
+    this.desktopThreadCwdById.set(threadId, cwd);
     this.desktopBootstrapThreadIds.add(threadId);
     if (this.activeTurn) {
       this.moveActiveTurnToBackground();
@@ -4090,11 +4121,13 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
         ? entity.error.message
         : null;
       const rawStatus = typeof entity.status === "string" ? entity.status : "unknown";
+      const startedAtMs = codexTimestampToMs(entity.startedAt);
       turns.set(entity.turnId, {
         turnId: entity.turnId,
         status: ownerIdle && this.isDesktopTurnActive(rawStatus) ? "completed" : rawStatus,
         errorMessage,
         items: Array.isArray(entity.items) ? entity.items : [],
+        ...(startedAtMs !== undefined ? { startedAtMs } : {}),
       });
     }
     return turns;
@@ -4124,10 +4157,21 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       return;
     }
 
+    if (activeNow && !this.turnStartedAtMs.has(turn.turnId)) {
+      this.turnStartedAtMs.set(turn.turnId, turn.startedAtMs ?? Date.now());
+    }
     const userMessageItem = turn.items.find((item) => Boolean(extractCodexUserMessageText(item)));
     const userText = extractCodexUserMessageText(userMessageItem);
     if (userText) {
       this.turnPreviewById.set(turn.turnId, truncatePreview(userText));
+      const turnStartedAtMs = this.turnStartedAtMs.get(turn.turnId);
+      if (activeNow && turnStartedAtMs !== undefined) {
+        this.scheduleConsumedDesktopQueuedFollowUpCleanup(
+          threadId,
+          userText,
+          turnStartedAtMs,
+        );
+      }
     }
     for (const item of turn.items) {
       if (!isRecord(item) || typeof item.id !== "string") {
@@ -4143,9 +4187,6 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     }
 
     if (activeNow) {
-      if (!this.turnStartedAtMs.has(turn.turnId)) {
-        this.turnStartedAtMs.set(turn.turnId, Date.now());
-      }
       if (origin === "wechat" && this.pendingTurnStart && !existingTurn) {
         this.bindActiveTurn(trackedTurn);
       } else {
@@ -5023,6 +5064,47 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     }
   }
 
+  private reconcilePersistedDesktopCompletionBeforeInput(
+    threadId: string,
+  ): {
+    terminalTurnId: string | null;
+    liveSummary: BridgeSessionRunSummary | null;
+  } {
+    const filePath = this.resolveDesktopSessionFilePath(threadId);
+    const persisted = filePath
+      ? readCodexSessionRunSummaryFromRolloutTail(filePath)
+      : null;
+    const terminalTurnId = persisted &&
+        persisted.status !== "running" &&
+        persisted.status !== "unknown" &&
+        persisted.turnId
+      ? persisted.turnId
+      : null;
+    const liveState = this.getDesktopThreadStateView(threadId);
+    const liveSummary = liveState
+      ? extractCodexDesktopThreadRunSummary(liveState, null, Date.now())
+      : null;
+    if (!terminalTurnId) {
+      return { terminalTurnId: null, liveSummary };
+    }
+
+    if (
+      this.activeTurn?.threadId === threadId &&
+      this.activeTurn.turnId === terminalTurnId
+    ) {
+      this.cleanupTurnArtifacts(terminalTurnId);
+      this.setActiveTurn(null, { followPendingThread: false });
+    }
+    const background = this.backgroundTurns.get(terminalTurnId);
+    if (background?.threadId === threadId) {
+      this.backgroundTurns.delete(terminalTurnId);
+      this.cleanupTurnArtifacts(terminalTurnId);
+    }
+    this.clearPendingApprovalStateForTurn(terminalTurnId);
+    this.clearPendingUserInputStateForTurn(terminalTurnId);
+    return { terminalTurnId, liveSummary };
+  }
+
   private async sendDesktopTurnItemsToThread(
     threadId: string,
     items: BridgeTurnInputItem[],
@@ -5058,7 +5140,13 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       .join("\n")
       .trim();
     const imageCount = items.filter((item) => item.type !== "text").length;
+    const reconciliation = this.reconcilePersistedDesktopCompletionBeforeInput(threadId);
     const queuedInputs = this.getQueuedTaskInputs(threadId);
+    const liveTurnIsStale = Boolean(
+      reconciliation.terminalTurnId &&
+      (!reconciliation.liveSummary?.turnId ||
+        reconciliation.liveSummary.turnId === reconciliation.terminalTurnId),
+    );
     const queued = this.activeTurn?.threadId === threadId ||
       Array.from(this.backgroundTurns.values()).some(
         (trackedTurn) => trackedTurn.threadId === threadId,
@@ -5067,8 +5155,9 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       this.getPendingApprovalRequestsForThread(threadId).length > 0 ||
       this.getPendingUserInputRequestsForThread(threadId).length > 0 ||
       queuedInputs.length > 0 ||
-      codexDesktopRuntimeType(this.getDesktopThreadStateView(threadId)) === "active" ||
-      this.desktopListedRuntimeStatusByThreadId.get(threadId)?.type === "active";
+      (reconciliation.liveSummary?.status === "running" && !liveTurnIsStale) ||
+      (this.desktopListedRuntimeStatusByThreadId.get(threadId)?.type === "active" &&
+        !liveTurnIsStale);
     if (await this.isDuplicateDesktopTurnInput({
       threadId,
       text,
@@ -5294,7 +5383,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       workspacePaths.workspaceDir,
       `codex-app-server-token-${this.localClientInstanceId}.txt`,
     );
-    fs.writeFileSync(tokenFilePath, `${token}\n`, "utf8");
+    writePrivateFileAtomic(tokenFilePath, `${token}\n`, { encoding: "utf8" });
     const spawnTarget = resolveSpawnTarget(this.options.command, "codex");
     const child = spawnChild(
       spawnTarget.file,

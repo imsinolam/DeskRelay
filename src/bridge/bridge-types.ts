@@ -397,6 +397,7 @@ export interface BridgeAdapter {
     messageId: string,
   ): Promise<boolean>;
   createSession?(): Promise<void>;
+  createSessionInProject?(sourceSessionId: string): Promise<void>;
   interrupt(): Promise<boolean>;
   interruptSession?(sessionId: string): Promise<boolean>;
   reset(): Promise<void>;

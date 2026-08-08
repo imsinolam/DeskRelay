@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { CHANNEL_DATA_DIR, ensureChannelDataDir } from "../wechat/channel-config.ts";
+import { writePrivateFileAtomic } from "./private-files.ts";
 
 const UPDATE_CHECK_FILE = path.join(CHANNEL_DATA_DIR, "update-check.json");
 const CACHE_DURATION_MS = 24 * 60 * 60 * 1000; // 24小时
@@ -21,7 +22,7 @@ export interface VersionInfo {
 const NPM_PACKAGE_NAME = "deskrelay";
 const DEFAULT_NPM_REGISTRY_URL = `https://registry.npmjs.org/${NPM_PACKAGE_NAME}/latest`;
 const DEFAULT_GITHUB_TAGS_URL =
-  "https://api.github.com/repos/imsinolam/DeskRelay/tags?per_page=20";
+  "https://api.github.com/repos/UNLINEARITY/DeskRelay/tags?per_page=20";
 const FETCH_TIMEOUT_MS = 10_000;
 
 export interface FetchLatestVersionOptions {
@@ -146,7 +147,7 @@ function readUpdateCache(): UpdateCheckCache | null {
 function writeUpdateCache(cache: UpdateCheckCache): void {
   try {
     ensureChannelDataDir();
-    fs.writeFileSync(UPDATE_CHECK_FILE, JSON.stringify(cache, null, 2));
+    writePrivateFileAtomic(UPDATE_CHECK_FILE, JSON.stringify(cache, null, 2));
   } catch (error) {
     // 静默失败，不影响正常使用
   }
@@ -248,6 +249,6 @@ Update instructions:
    npm install -g .
 
 For more information:
-   https://github.com/imsinolam/DeskRelay/releases
+   https://github.com/UNLINEARITY/DeskRelay/releases
 `;
 }

@@ -12,6 +12,10 @@ import {
   migrateLegacyChannelFiles,
   SYNC_BUF_FILE,
 } from "./channel-config.ts";
+import {
+  ensurePrivateDir,
+  writePrivateFileAtomic,
+} from "../utils/private-files.ts";
 
 export const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 
@@ -566,11 +570,7 @@ export function classifyWechatTransportError(
 function writeJsonFile(filePath: string, value: unknown): void {
   ensureChannelDataDir();
   const data = JSON.stringify(value, null, 2);
-  // Atomic write via temp file + rename, so a crash mid-write cannot leave a
-  // truncated/half-written JSON that would break readers on the next launch.
-  const tempPath = `${filePath}.${process.pid}.tmp`;
-  fs.writeFileSync(tempPath, data, "utf-8");
-  fs.renameSync(tempPath, filePath);
+  writePrivateFileAtomic(filePath, data, { encoding: "utf-8" });
 }
 
 function randomWechatUin(): string {
@@ -1117,8 +1117,8 @@ export function tryClaimInboundMessage(
   const claimPath = buildInboundMessageClaimPath(messageKey, claimsDir);
 
   const attemptClaim = (): boolean => {
-    fs.mkdirSync(claimsDir, { recursive: true });
-    const handle = fs.openSync(claimPath, "wx");
+    ensurePrivateDir(claimsDir);
+    const handle = fs.openSync(claimPath, "wx", 0o600);
     try {
       fs.writeFileSync(
         handle,
@@ -1406,8 +1406,7 @@ export class WeChatTransport {
           fileName: descriptor.fileName,
           createdAtMs: rawMessage.create_time_ms,
         });
-        fs.mkdirSync(path.dirname(filePath), { recursive: true });
-        fs.writeFileSync(filePath, plaintext);
+        writePrivateFileAtomic(filePath, plaintext);
 
         attachments.push({
           kind: descriptor.kind,
@@ -1800,7 +1799,7 @@ export class WeChatTransport {
 
   private saveSyncBuffer(syncBuffer: string): void {
     ensureChannelDataDir();
-    fs.writeFileSync(SYNC_BUF_FILE, syncBuffer, "utf-8");
+    writePrivateFileAtomic(SYNC_BUF_FILE, syncBuffer, { encoding: "utf-8" });
   }
 
   private clearSyncBuffer(): void {

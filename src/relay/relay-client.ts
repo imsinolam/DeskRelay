@@ -11,6 +11,7 @@ import {
   type DeskRelayRelayCommandResponse,
   type DeskRelayRelayHeaderMap,
 } from "./relay-protocol.ts";
+import { writePrivateFileAtomic } from "../utils/private-files.ts";
 
 const DEFAULT_RETRY_DELAY_MS = 1_000;
 const MAX_RETRY_DELAY_MS = 15_000;
@@ -201,11 +202,7 @@ export class DeskRelayRelayCommandJournal {
         response: this.entries.get(commandId) as DeskRelayRelayCommandResponse,
       })),
     };
-    fs.mkdirSync(path.dirname(this.stateFile), { recursive: true, mode: 0o700 });
-    const tempFile = `${this.stateFile}.tmp-${process.pid}-${Date.now()}`;
-    fs.writeFileSync(tempFile, `${JSON.stringify(state)}\n`, { mode: 0o600 });
-    fs.renameSync(tempFile, this.stateFile);
-    fs.chmodSync(this.stateFile, 0o600);
+    writePrivateFileAtomic(this.stateFile, `${JSON.stringify(state)}\n`);
   }
 }
 

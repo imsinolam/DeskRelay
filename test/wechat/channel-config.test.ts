@@ -6,11 +6,14 @@ import { describe, expect, test } from "bun:test";
 
 import {
   buildWorkspaceKey,
+  ensureChannelDataDir,
   getWorkspaceChannelPaths,
   migrateLegacyChannelFiles,
   normalizeWorkspacePath,
   resolveChannelDataDir,
 } from "../../src/wechat/channel-config.ts";
+
+const posixTest = process.platform === "win32" ? test.skip : test;
 
 function makeTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-channel-config-"));
@@ -26,6 +29,29 @@ function readTextFile(filePath: string): string {
 }
 
 describe("workspace channel paths", () => {
+  posixTest("repairs an existing data root to private permissions", () => {
+    const root = makeTempDir();
+    const dataDir = path.join(root, "data");
+    const workspaceDir = path.join(dataDir, "workspaces", "repo");
+    const stateFile = path.join(workspaceDir, "daemon-state.json");
+
+    try {
+      fs.mkdirSync(workspaceDir, { recursive: true, mode: 0o755 });
+      fs.writeFileSync(stateFile, "{}", { mode: 0o644 });
+      fs.chmodSync(dataDir, 0o755);
+      fs.chmodSync(path.join(dataDir, "workspaces"), 0o755);
+      fs.chmodSync(workspaceDir, 0o755);
+
+      ensureChannelDataDir(dataDir);
+
+      expect(fs.statSync(dataDir).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(workspaceDir).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(stateFile).mode & 0o777).toBe(0o600);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("normalizes a workspace path to an absolute path", () => {
     const resolved = normalizeWorkspacePath(".");
     expect(path.isAbsolute(resolved)).toBe(true);

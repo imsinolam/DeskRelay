@@ -9,6 +9,7 @@ import type {
   BridgeSessionMessage,
 } from "../bridge/bridge-types.ts";
 import { ensureWorkspaceChannelDir } from "../wechat/channel-config.ts";
+import { writePrivateFileAtomic } from "../utils/private-files.ts";
 
 const MOBILE_MESSAGE_IMAGE_STORE_VERSION = 1;
 const MOBILE_MESSAGE_IMAGE_STORE_LIMIT = 500;
@@ -216,10 +217,6 @@ export class MobileMessageImageStore {
   }
 
   private write(state: MobileMessageImageStoreState): void {
-    fs.mkdirSync(path.dirname(this.stateFile), { recursive: true, mode: 0o700 });
-    const temporaryFile = `${this.stateFile}.tmp-${process.pid}-${Date.now()}`;
-    fs.writeFileSync(temporaryFile, `${JSON.stringify(state)}\n`, { mode: 0o600 });
-    fs.renameSync(temporaryFile, this.stateFile);
-    fs.chmodSync(this.stateFile, 0o600);
+    writePrivateFileAtomic(this.stateFile, `${JSON.stringify(state)}\n`);
   }
 }

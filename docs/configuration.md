@@ -14,6 +14,8 @@ DeskRelay 通过进程环境变量配置。仓库中的 `.env.example` 只是参
 
 不要把它放进项目仓库、同步盘、公开备份或 issue 附件。需要修改位置时设置 `DESKRELAY_DATA_DIR`。
 
+在 POSIX 系统上，DeskRelay 会把数据根目录、工作区目录和附件目录修复为 `0700`，把状态、令牌、日志和附件文件修复为 `0600`；每次进程启动都会兼容修复旧安装遗留的宽松权限。Windows 仍依赖当前用户账户和系统 ACL。
+
 ## 电脑端变量
 
 | 变量 | 默认值 | 说明 |
@@ -43,6 +45,7 @@ Relay 地址必须是 HTTPS 基础地址，不能包含账号密码、查询参�
 | --- | --- | --- |
 | `DESKRELAY_RELAY_HOST` | `127.0.0.1` | Relay 内部监听地址；生产环境建议保持回环地址 |
 | `DESKRELAY_RELAY_PORT` | `14396` | Relay 内部 HTTP 端口 |
+| `DESKRELAY_RELAY_ALLOW_NON_LOOPBACK` | 未设置 | 危险开关；仅在明确完成防火墙、TLS 和访问控制后允许 Relay 监听非回环地址 |
 | `DESKRELAY_RELAY_DEVICE_ID` | `default` | 允许连接的设备 ID |
 | `DESKRELAY_RELAY_DEVICE_TOKEN` | 无 | 设备密钥；缺失时拒绝启动 |
 

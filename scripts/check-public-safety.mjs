@@ -38,8 +38,24 @@ const binaryExtensions = new Set([
 const rasterImagePattern = /\.(?:gif|jpe?g|png|webp)$/i;
 const reviewedRasterAssets = new Map([
   [
+    "docs/images/deskrelay-clawbot-approval-handoff-demo.png",
+    "418d611c34e4cfd60256a740da0c459274601012e2e27f52a6cd6a87ff5f62bb",
+  ],
+  [
+    "docs/images/deskrelay-clawbot-task-list-demo.png",
+    "a79f2e2857bed3096a5db7dc2dd63d5333e20fae013920e031c41e8fb867c98b",
+  ],
+  [
+    "docs/images/deskrelay-codex-desktop-demo.png",
+    "bc5f76314fd5201fe941b65676519ea58840234ba15b350af9b0cdc6d51226bf",
+  ],
+  [
     "docs/images/deskrelay-four-panel-white-paper-boy-v2.png",
     "ece1db88b7b6e0b649a0ce03a998125712c0332beb500c7a0bc99188dea6a8d7",
+  ],
+  [
+    "docs/images/deskrelay-four-panel-white-paper-boy-v8-centered-comic.png",
+    "56acb7404b6df7fa93ff6c1f412da5150a78871a1aeec0356c9ad6d9f9dc150e",
   ],
 ]);
 const forbiddenFilePatterns = [

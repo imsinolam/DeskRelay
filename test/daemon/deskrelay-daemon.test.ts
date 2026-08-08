@@ -5,7 +5,9 @@ import { describe, expect, test } from "bun:test";
 
 import {
   appendCodexMobileTaskLink,
+  buildCodexMobileTaskBoard,
   buildDaemonApprovalNotificationKey,
+  DaemonTaskApprovalAutoApprover,
   buildMacVisibleClientLaunchScript,
   buildMacVisibleClientOpenArgs,
   buildVisibleClientLaunchArgs,
@@ -44,6 +46,7 @@ import {
   resolveCodexTaskCompletionDurationMs,
   selectCodexCompletionReplyText,
   selectCodexCompletionRequestPreview,
+  sanitizeDaemonVisibleSessionMessage,
   shouldFollowCodexActiveTask,
   shouldClearCodexActiveTaskForCompletion,
   shouldForwardDaemonFinalReply,
@@ -52,6 +55,7 @@ import {
   shouldQueueCodexDaemonInbound,
   shouldQueueCodexMobileMessage,
   shouldSendCodexMobileTaskLink,
+  shouldSendCodexCompletionNotification,
   shouldSendDaemonRestartNotice,
   waitForVisibleClientConnection,
 } from "../../src/daemon/deskrelay-daemon.ts";
@@ -119,9 +123,122 @@ describe("daemon startup resilience", () => {
     const mobileMethodEnd = source.indexOf("\n  async runInitialAdapter", mobileMethodStart);
     expect(source.slice(mobileMethodStart, mobileMethodEnd)).not.toContain('!this.slots.has("codex")');
   });
+
+  test("retries undelivered approvals before handling the inbound message that refreshed WeChat context", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const loopStart = source.indexOf(
+      "      for (const message of pollResult.messages) {",
+    );
+    const loopEnd = source.indexOf("\n      }\n    }\n  }\n\n  async shutdown", loopStart);
+    expect(loopStart).toBeGreaterThan(-1);
+    expect(loopEnd).toBeGreaterThan(loopStart);
+
+    const loopBody = source.slice(loopStart, loopEnd);
+    const retryCompletions = loopBody.indexOf(
+      "await this.retryPendingCodexCompletionNotifications(message.senderId);",
+    );
+    const retryApprovals = loopBody.indexOf(
+      "await this.retryUndeliveredApprovalNotifications(message.senderId);",
+    );
+    const handleInbound = loopBody.indexOf("await this.handleInboundMessage(message);");
+    expect(retryCompletions).toBeGreaterThan(-1);
+    expect(retryApprovals).toBeGreaterThan(-1);
+    expect(handleInbound).toBeGreaterThan(-1);
+    expect(retryCompletions).toBeLessThan(handleInbound);
+    expect(retryApprovals).toBeLessThan(handleInbound);
+  });
+});
+
+describe("mobile transcript visibility", () => {
+  test("filters Codex internal user records from accelerated history", () => {
+    expect(sanitizeDaemonVisibleSessionMessage("codex", {
+      role: "user",
+      text: [
+        "# AGENTS.md instructions",
+        "",
+        "<INSTRUCTIONS>",
+        "始终使用中文对话",
+        "</INSTRUCTIONS>",
+      ].join("\n"),
+    })).toBeNull();
+
+    expect(sanitizeDaemonVisibleSessionMessage("codex", {
+      role: "user",
+      text: "真实用户消息",
+    })).toEqual({
+      role: "user",
+      text: "真实用户消息",
+    });
+  });
+
+  test("preserves user attachment requests while removing desktop metadata", () => {
+    expect(sanitizeDaemonVisibleSessionMessage("codex", {
+      role: "user",
+      text: [
+        "# Files mentioned by the user:",
+        "",
+        "## screenshot.png: /private/tmp/screenshot.png",
+        "",
+        "## My request for Codex:",
+        "请检查这个页面。",
+      ].join("\n"),
+    })).toEqual({
+      role: "user",
+      text: "图片：png1\n请检查这个页面。",
+    });
+  });
 });
 
 describe("deskrelay-daemon helpers", () => {
+  test("merges live tasks and recent completions across adapters into one board", () => {
+    const board = buildCodexMobileTaskBoard({
+      taskGroups: [
+        {
+          adapter: "codex",
+          adapterLabel: "Codex",
+          tasks: [{
+            threadId: "codex-running",
+            title: "统一任务看板",
+            status: "running",
+            lastUpdatedAt: "2026-08-07T03:00:00.000Z",
+          }],
+        },
+        {
+          adapter: "grok",
+          adapterLabel: "Grok",
+          tasks: [{
+            threadId: "grok-complete",
+            title: "检查全部 Agent 聚合",
+            status: "idle",
+            lastUpdatedAt: "2026-08-07T02:00:00.000Z",
+          }],
+        },
+      ],
+      recentCompletions: [{
+        adapter: "grok",
+        threadId: "grok-complete",
+        title: "检查全部 Agent 聚合",
+        completedAt: "2026-08-07T02:01:00.000Z",
+      }],
+    });
+
+    expect(board.tasks.map((task) => `${task.adapter}:${task.threadId}`)).toEqual([
+      "codex:codex-running",
+      "grok:grok-complete",
+    ]);
+    expect(board.tasks[1]).toMatchObject({
+      adapterLabel: "Grok",
+      completedAt: "2026-08-07T02:01:00.000Z",
+    });
+    expect(board.recentCompleted).toEqual([{
+      adapter: "grok",
+      adapterLabel: "Grok",
+      threadId: "grok-complete",
+      title: "检查全部 Agent 聚合",
+      completedAt: "2026-08-07T02:01:00.000Z",
+    }]);
+  });
+
   test("reports an open terminal separately from a daemon-connected adapter", () => {
     expect(resolveMobileAdapterDisplayStatus({
       visibleClientOpen: true,
@@ -198,6 +315,101 @@ describe("deskrelay-daemon helpers", () => {
       requestId: "request-a",
       commandPreview: "npm test",
     }));
+  });
+
+  test("keeps automatic approval scoped to one task and clears it on completion", () => {
+    const autoApprover = new DaemonTaskApprovalAutoApprover();
+
+    expect(autoApprover.enable({
+      threadId: "thread-a",
+      turnId: "turn-1",
+    })).toBe(true);
+    expect(autoApprover.shouldAutoApprove({
+      threadId: "thread-a",
+      turnId: "turn-1",
+    })).toBe(true);
+    expect(autoApprover.shouldAutoApprove({
+      threadId: "thread-a",
+    })).toBe(true);
+    expect(autoApprover.shouldAutoApprove({
+      threadId: "thread-a",
+      turnId: "turn-2",
+    })).toBe(false);
+    expect(autoApprover.shouldAutoApprove({
+      threadId: "thread-b",
+      turnId: "turn-1",
+    })).toBe(false);
+
+    expect(autoApprover.finish({
+      threadId: "thread-a",
+      turnId: "turn-old",
+    })).toBe(false);
+    expect(autoApprover.shouldAutoApprove({
+      threadId: "thread-a",
+      turnId: "turn-1",
+    })).toBe(true);
+    expect(autoApprover.finish({
+      threadId: "thread-a",
+      turnId: "turn-1",
+    })).toBe(true);
+    expect(autoApprover.shouldAutoApprove({
+      threadId: "thread-a",
+      turnId: "turn-1",
+    })).toBe(false);
+  });
+
+  test("wires task-scoped automatic approval into approval and completion events", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const approvalStart = source.indexOf('      case "approval_required":');
+    const approvalEnd = source.indexOf('      case "user_input_required":', approvalStart);
+    const completionStart = source.indexOf('      case "task_complete":');
+    const completionEnd = source.indexOf('      case "task_failed":', completionStart);
+    const confirmStart = source.indexOf('      case "confirm_task":');
+    const confirmEnd = source.indexOf('      case "deny":', confirmStart);
+
+    expect(approvalStart).toBeGreaterThan(-1);
+    expect(approvalEnd).toBeGreaterThan(approvalStart);
+    expect(source.slice(approvalStart, approvalEnd)).toContain(
+      "taskApprovalAutoApprover.shouldAutoApprove",
+    );
+    expect(source.slice(approvalStart, approvalEnd)).toContain(
+      'resolveTaskApprovals(pending.threadId, "confirm")',
+    );
+    expect(completionStart).toBeGreaterThan(-1);
+    expect(completionEnd).toBeGreaterThan(completionStart);
+    expect(source.slice(completionStart, completionEnd)).toContain(
+      "taskApprovalAutoApprover.finish",
+    );
+    expect(confirmStart).toBeGreaterThan(-1);
+    expect(confirmEnd).toBeGreaterThan(confirmStart);
+    expect(source.slice(confirmStart, confirmEnd)).toContain(
+      "enableTaskApprovalAutoConfirm",
+    );
+  });
+
+  test("persists resolved approvals for the mobile task transcript", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const readStart = source.indexOf("  private async readMobileMessages(");
+    const readEnd = source.indexOf("  private async readHistoricalLatestMessage(", readStart);
+    const webStart = source.indexOf("  private async resolveMobileApproval(");
+    const webEnd = source.indexOf("  private async updateMobileQueuedMessage(", webStart);
+    const confirmStart = source.indexOf("  private async confirmPendingApproval(");
+    const confirmEnd = source.indexOf("  private async denyPendingApproval(", confirmStart);
+    const denyStart = confirmEnd;
+    const denyEnd = source.indexOf("  private async answerPendingUserInput(", denyStart);
+
+    expect(source.slice(readStart, readEnd)).toContain(
+      "getMobileApprovalResults(slot.adapter, threadId)",
+    );
+    expect(source.slice(webStart, webEnd)).toContain(
+      "recordMobileApprovalResult(slot, pending, action",
+    );
+    expect(source.slice(confirmStart, confirmEnd)).toContain(
+      "recordMobileApprovalResult(slot, pending, action",
+    );
+    expect(source.slice(denyStart, denyEnd)).toContain(
+      'recordMobileApprovalResult(slot, pending, "deny"',
+    );
   });
 
   test("routes a plain follow-up to the task named by the latest task notification", () => {
@@ -653,6 +865,78 @@ describe("deskrelay-daemon helpers", () => {
     );
   });
 
+  test("keeps only one semantic task link in completion notices", () => {
+    const canonicalUrl = "https://203.0.113.10/?task=thread_a&appv=current";
+    const variantUrl = "https://203.0.113.10/?task=thread_a&adapter=codex&appv=old";
+    const message = formatCodexTaskCompletionMessage({
+      title: "修复重复消息",
+      outcome: "completed",
+      durationMs: 5_000,
+      requestPreview: `${variantUrl} 检查网页消息重复`,
+      url: canonicalUrl,
+    });
+
+    expect(message).toContain("本次任务：检查网页消息重复");
+    expect(message).not.toContain(variantUrl);
+    expect(message.split("https://203.0.113.10/")).toHaveLength(2);
+    expect(appendCodexMobileTaskLink(`已完成\n\n${variantUrl}`, canonicalUrl)).toBe(
+      `已完成\n\n${variantUrl}`,
+    );
+    const fullMessages = formatCodexTaskCompletionMessages({
+      title: "修复重复消息",
+      outcome: "completed",
+      durationMs: 5_000,
+      requestPreview: `${variantUrl} 检查网页消息重复`,
+      text: `已经处理完成。\n\n${variantUrl}`,
+      url: canonicalUrl,
+      mode: "full",
+    });
+    expect(fullMessages.join("\n")).toContain("本次任务：检查网页消息重复");
+    expect(fullMessages.join("\n")).not.toContain(variantUrl);
+    expect(fullMessages.join("\n").split("https://203.0.113.10/")).toHaveLength(2);
+  });
+
+  test("does not announce a synthetic completion while the latest turn is running or user-only", () => {
+    expect(shouldSendCodexCompletionNotification({
+      runSummary: {
+        turnId: "turn_new",
+        status: "running",
+        startedAtMs: 10_000,
+        durationMs: 5_000,
+      },
+      latestMessage: { role: "user", text: "刚提交的新任务", turnId: "turn_new" },
+    })).toBe(false);
+    expect(shouldSendCodexCompletionNotification({
+      runSummary: {
+        turnId: "turn_done",
+        status: "completed",
+        completedAtMs: 20_000,
+        durationMs: 5_000,
+      },
+      latestMessage: {
+        role: "assistant",
+        text: "已经完成",
+        turnId: "turn_done",
+        phase: "final_answer",
+      },
+    })).toBe(true);
+    expect(shouldSendCodexCompletionNotification({
+      eventTurnId: "turn_failed",
+      runSummary: null,
+      latestMessage: null,
+    })).toBe(true);
+    expect(shouldSendCodexCompletionNotification({
+      eventTurnId: "turn_done",
+      runSummary: {
+        turnId: "turn_done",
+        status: "running",
+        startedAtMs: 10_000,
+        durationMs: 5_000,
+      },
+      latestMessage: { role: "user", text: "下一条任务", turnId: "turn_new" },
+    })).toBe(true);
+  });
+
   test("formats full Codex replies as safe WeChat message chunks", () => {
     const fullText = `第一段\n\n${"完整内容".repeat(500)}`;
     const messages = formatCodexTaskCompletionMessages({
@@ -925,12 +1209,12 @@ describe("deskrelay-daemon helpers", () => {
     ).toBe(false);
   });
 
-  test("never retains failed completion notices for a later inbound message", () => {
+  test("retains failed completion notices for retry after context refresh", () => {
     const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
-    expect(source).not.toContain("flushPendingMobileTaskLinks");
-    expect(source).not.toContain("codex_completion_sent_after_refresh");
-    expect(source).not.toContain("codex_completion_deferred");
-    expect(source).toContain("codex_completion_dropped");
+    expect(source).toContain("retryPendingCodexCompletionNotifications");
+    expect(source).toContain("codex_completion_pending");
+    expect(source).toContain("codex_completion_resent");
+    expect(source).not.toContain("codex_completion_dropped");
   });
 
   test("never hides mobile messages in a Bridge-owned Codex queue", () => {

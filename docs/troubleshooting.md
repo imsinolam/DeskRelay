@@ -58,7 +58,7 @@
 npm install -g deskrelay@latest
 ```
 
-如果命令仍不存在，请检查 npm 全局 bin 目录是否已加入 `PATH`。使用源码仓库提供全局命令的方式见 [开发说明](../maintainers/development.md#全局命令开发验证)。
+如果命令仍不存在，请检查 npm 全局 bin 目录是否已加入 `PATH`。使用源码仓库提供全局命令的方式见 [开发说明](development.md#全局命令开发验证)。
 
 ## `spawn <agent> ENOENT` 或“找不到 Agent”
 

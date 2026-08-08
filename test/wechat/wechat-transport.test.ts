@@ -194,7 +194,12 @@ describe("wechat upload limits", () => {
     try {
       expect(tryClaimInboundMessage(scopedMessageKey, { claimsDir })).toBe(true);
       expect(tryClaimInboundMessage(scopedMessageKey, { claimsDir })).toBe(false);
-      expect(fs.existsSync(buildInboundMessageClaimPath(scopedMessageKey, claimsDir))).toBe(true);
+      const claimPath = buildInboundMessageClaimPath(scopedMessageKey, claimsDir);
+      expect(fs.existsSync(claimPath)).toBe(true);
+      if (process.platform !== "win32") {
+        expect(fs.statSync(claimsDir).mode & 0o777).toBe(0o700);
+        expect(fs.statSync(claimPath).mode & 0o777).toBe(0o600);
+      }
     } finally {
       clearInboundMessageClaims(claimsDir);
     }

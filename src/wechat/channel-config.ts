@@ -4,6 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { initLocaleFromEnv } from "../i18n/index.ts";
+import {
+  appendPrivateFile,
+  ensurePrivateDir,
+  repairPrivateTreePermissions,
+  writePrivateFileAtomic,
+} from "../utils/private-files.ts";
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = path.resolve(MODULE_DIR, "..", "..");
@@ -40,6 +46,7 @@ export const BRIDGE_LOG_MAX_BYTES = 5 * 1024 * 1024; // 5 MiB
  * writers (a few lines may be lost during a trim) but keeps the file bounded.
  */
 export function appendBoundedLog(filePath: string, line: string): void {
+  ensurePrivateDir(path.dirname(filePath));
   try {
     const stat = fs.statSync(filePath);
     if (stat.size > BRIDGE_LOG_MAX_BYTES) {
@@ -48,7 +55,7 @@ export function appendBoundedLog(filePath: string, line: string): void {
       try {
         const tail = Buffer.alloc(keepSize);
         const bytesRead = fs.readSync(fd, tail, 0, keepSize, stat.size - keepSize);
-        fs.writeFileSync(filePath, tail.subarray(0, bytesRead));
+        writePrivateFileAtomic(filePath, tail.subarray(0, bytesRead));
       } finally {
         fs.closeSync(fd);
       }
@@ -56,7 +63,7 @@ export function appendBoundedLog(filePath: string, line: string): void {
   } catch {
     // File missing or unreadable: fall through to a plain append.
   }
-  fs.appendFileSync(filePath, line);
+  appendPrivateFile(filePath, line);
 }
 export const BRIDGE_LOCK_FILE = path.join(CHANNEL_DATA_DIR, "bridge.lock.json");
 export const DAEMON_ENDPOINT_FILE = path.join(CHANNEL_DATA_DIR, "daemon-endpoint.json");
@@ -182,8 +189,17 @@ const LEGACY_MIGRATION_ITEMS: LegacyMigrationItem[] = [
   },
 ];
 
-export function ensureChannelDataDir(): void {
-  fs.mkdirSync(CHANNEL_DATA_DIR, { recursive: true });
+const repairedChannelDataDirs = new Set<string>();
+
+export function ensureChannelDataDir(
+  channelDataDir = CHANNEL_DATA_DIR,
+): void {
+  ensurePrivateDir(channelDataDir);
+  const normalized = path.resolve(channelDataDir);
+  if (!repairedChannelDataDirs.has(normalized)) {
+    repairPrivateTreePermissions(normalized);
+    repairedChannelDataDirs.add(normalized);
+  }
 }
 
 export function normalizeWorkspacePath(cwd: string): string {
@@ -237,7 +253,8 @@ export function getWorkspaceAdapterEndpointFile(
 export function ensureWorkspaceChannelDir(cwd: string): WorkspaceChannelPaths {
   ensureChannelDataDir();
   const paths = getWorkspaceChannelPaths(cwd);
-  fs.mkdirSync(paths.workspaceDir, { recursive: true });
+  ensurePrivateDir(WORKSPACES_DIR);
+  ensurePrivateDir(paths.workspaceDir);
   return paths;
 }
 
@@ -287,13 +304,12 @@ export function migrateLegacyChannelFiles(
   );
   const migrated: string[] = [];
   const skippedExisting: string[] = [];
+  ensureChannelDataDir(channelDataDir);
   const legacySource = findLegacyChannelSource(channelDataDir, legacySources);
 
   if (!legacySource) {
     return migrated;
   }
-
-  fs.mkdirSync(channelDataDir, { recursive: true });
 
   for (const item of LEGACY_MIGRATION_ITEMS) {
     const sourcePath = path.join(legacySource.dataDir, item.sourceName);
@@ -316,11 +332,13 @@ export function migrateLegacyChannelFiles(
       if (!stat.isFile()) {
         continue;
       }
-      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      ensurePrivateDir(path.dirname(targetPath));
       fs.copyFileSync(sourcePath, targetPath);
     }
     migrated.push(item.label);
   }
+
+  repairPrivateTreePermissions(channelDataDir);
 
   if (migrated.length && log) {
     const skippedText = skippedExisting.length

@@ -8,8 +8,44 @@ import {
 } from "../wechat/channel-config.ts";
 import type { DaemonAdapterKind } from "./daemon-link.ts";
 import { isDaemonAdapterKind } from "../bridge/bridge-providers.ts";
+import { writePrivateFileAtomic } from "../utils/private-files.ts";
+import {
+  normalizeCodexCompletionDeliveryState,
+  type CodexCompletionDeliveryState,
+} from "./codex-completion-delivery.ts";
 
 export type CodexWechatReplyMode = "preview" | "full";
+
+export type DaemonRecentTaskCompletion = {
+  adapter: DaemonAdapterKind;
+  threadId: string;
+  title: string;
+  completedAt: string;
+  turnId?: string;
+};
+
+const MAX_RECENT_TASK_COMPLETIONS = 80;
+
+export type DaemonMobileApprovalResultAction =
+  | "confirm"
+  | "confirm_session"
+  | "confirm_task"
+  | "deny";
+
+export type DaemonMobileApprovalResult = {
+  id: string;
+  adapter: DaemonAdapterKind;
+  threadId: string;
+  turnId?: string;
+  action: DaemonMobileApprovalResultAction;
+  summary: string;
+  commandPreview: string;
+  detailLabel?: string;
+  detailPreview?: string;
+  resolvedAt: string;
+};
+
+const MAX_MOBILE_APPROVAL_RESULTS = 240;
 
 export type DaemonWorkspaceState = {
   version: 1;
@@ -21,6 +57,9 @@ export type DaemonWorkspaceState = {
   mobileAccessToken?: string;
   codexWechatReplyMode?: CodexWechatReplyMode;
   restartNoticeSentAt?: string;
+  recentTaskCompletions?: DaemonRecentTaskCompletion[];
+  mobileApprovalResults?: DaemonMobileApprovalResult[];
+  codexCompletionDeliveries?: CodexCompletionDeliveryState;
   updatedAt: string;
 };
 
@@ -42,6 +81,145 @@ function isSameWorkspace(left: string, right: string): boolean {
   return process.platform === "win32"
     ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
     : normalizedLeft === normalizedRight;
+}
+
+function normalizeRecentTaskCompletion(
+  value: unknown,
+): DaemonRecentTaskCompletion | null {
+  if (
+    !isRecord(value) ||
+    !isDaemonAdapterKind(value.adapter) ||
+    typeof value.threadId !== "string" ||
+    !value.threadId.trim() ||
+    typeof value.title !== "string" ||
+    !value.title.trim() ||
+    typeof value.completedAt !== "string" ||
+    !Number.isFinite(Date.parse(value.completedAt)) ||
+    (
+      value.turnId !== undefined &&
+      (typeof value.turnId !== "string" || !value.turnId.trim())
+    )
+  ) {
+    return null;
+  }
+  return {
+    adapter: value.adapter,
+    threadId: value.threadId.trim(),
+    title: value.title.trim(),
+    completedAt: value.completedAt.trim(),
+    ...(typeof value.turnId === "string" ? { turnId: value.turnId.trim() } : {}),
+  };
+}
+
+function normalizeRecentTaskCompletions(
+  value: unknown,
+): DaemonRecentTaskCompletion[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const newestByTask = new Map<string, DaemonRecentTaskCompletion>();
+  for (const entry of value) {
+    const completion = normalizeRecentTaskCompletion(entry);
+    if (!completion) {
+      continue;
+    }
+    const key = `${completion.adapter}\u0000${completion.threadId}`;
+    const previous = newestByTask.get(key);
+    if (
+      !previous ||
+      Date.parse(completion.completedAt) > Date.parse(previous.completedAt)
+    ) {
+      newestByTask.set(key, completion);
+    }
+  }
+  const normalized = Array.from(newestByTask.values())
+    .sort((left, right) => Date.parse(right.completedAt) - Date.parse(left.completedAt))
+    .slice(0, MAX_RECENT_TASK_COMPLETIONS);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function isDaemonMobileApprovalResultAction(
+  value: unknown,
+): value is DaemonMobileApprovalResultAction {
+  return value === "confirm" ||
+    value === "confirm_session" ||
+    value === "confirm_task" ||
+    value === "deny";
+}
+
+function normalizeMobileApprovalResult(
+  value: unknown,
+): DaemonMobileApprovalResult | null {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    !value.id.trim() ||
+    !isDaemonAdapterKind(value.adapter) ||
+    typeof value.threadId !== "string" ||
+    !value.threadId.trim() ||
+    (
+      value.turnId !== undefined &&
+      (typeof value.turnId !== "string" || !value.turnId.trim())
+    ) ||
+    !isDaemonMobileApprovalResultAction(value.action) ||
+    typeof value.summary !== "string" ||
+    !value.summary.trim() ||
+    typeof value.commandPreview !== "string" ||
+    (
+      value.detailLabel !== undefined &&
+      (typeof value.detailLabel !== "string" || !value.detailLabel.trim())
+    ) ||
+    (
+      value.detailPreview !== undefined &&
+      (typeof value.detailPreview !== "string" || !value.detailPreview.trim())
+    ) ||
+    typeof value.resolvedAt !== "string" ||
+    !Number.isFinite(Date.parse(value.resolvedAt))
+  ) {
+    return null;
+  }
+  return {
+    id: value.id.trim(),
+    adapter: value.adapter,
+    threadId: value.threadId.trim(),
+    ...(typeof value.turnId === "string" ? { turnId: value.turnId.trim() } : {}),
+    action: value.action,
+    summary: value.summary.trim(),
+    commandPreview: value.commandPreview.trim(),
+    ...(typeof value.detailLabel === "string"
+      ? { detailLabel: value.detailLabel.trim() }
+      : {}),
+    ...(typeof value.detailPreview === "string"
+      ? { detailPreview: value.detailPreview.trim() }
+      : {}),
+    resolvedAt: value.resolvedAt.trim(),
+  };
+}
+
+function normalizeMobileApprovalResults(
+  value: unknown,
+): DaemonMobileApprovalResult[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const newestById = new Map<string, DaemonMobileApprovalResult>();
+  for (const entry of value) {
+    const result = normalizeMobileApprovalResult(entry);
+    if (!result) {
+      continue;
+    }
+    const previous = newestById.get(result.id);
+    if (
+      !previous ||
+      Date.parse(result.resolvedAt) > Date.parse(previous.resolvedAt)
+    ) {
+      newestById.set(result.id, result);
+    }
+  }
+  const normalized = Array.from(newestById.values())
+    .sort((left, right) => Date.parse(right.resolvedAt) - Date.parse(left.resolvedAt))
+    .slice(0, MAX_MOBILE_APPROVAL_RESULTS);
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function normalizeDaemonWorkspaceState(
@@ -113,6 +291,15 @@ function normalizeDaemonWorkspaceState(
   if (typeof value.updatedAt !== "string" || !value.updatedAt.trim()) {
     return null;
   }
+  const recentTaskCompletions = normalizeRecentTaskCompletions(
+    value.recentTaskCompletions,
+  );
+  const mobileApprovalResults = normalizeMobileApprovalResults(
+    value.mobileApprovalResults,
+  );
+  const codexCompletionDeliveries = value.codexCompletionDeliveries === undefined
+    ? undefined
+    : normalizeCodexCompletionDeliveryState(value.codexCompletionDeliveries);
 
   return {
     version: 1,
@@ -136,6 +323,9 @@ function normalizeDaemonWorkspaceState(
       typeof value.restartNoticeSentAt === "string"
         ? value.restartNoticeSentAt.trim()
         : undefined,
+    recentTaskCompletions,
+    mobileApprovalResults,
+    codexCompletionDeliveries,
     updatedAt: value.updatedAt,
   };
 }
@@ -192,7 +382,39 @@ export class DaemonWorkspaceStateStore {
   }
 
   getState(): DaemonWorkspaceState {
-    return { ...this.state };
+    return {
+      ...this.state,
+      ...(this.state.recentTaskCompletions
+        ? { recentTaskCompletions: this.state.recentTaskCompletions.map((entry) => ({ ...entry })) }
+        : {}),
+      ...(this.state.mobileApprovalResults
+        ? { mobileApprovalResults: this.state.mobileApprovalResults.map((entry) => ({ ...entry })) }
+        : {}),
+      ...(this.state.codexCompletionDeliveries
+        ? {
+            codexCompletionDeliveries: {
+              pending: this.state.codexCompletionDeliveries.pending.map((entry) => ({
+                ...entry,
+                texts: [...entry.texts],
+              })),
+              delivered: this.state.codexCompletionDeliveries.delivered.map((entry) => ({
+                ...entry,
+              })),
+            },
+          }
+        : {}),
+    };
+  }
+
+  getCodexCompletionDeliveryState(): CodexCompletionDeliveryState {
+    return normalizeCodexCompletionDeliveryState(
+      this.state.codexCompletionDeliveries,
+    );
+  }
+
+  setCodexCompletionDeliveryState(state: CodexCompletionDeliveryState): void {
+    this.state.codexCompletionDeliveries = normalizeCodexCompletionDeliveryState(state);
+    this.persist();
   }
 
   setActiveAdapter(adapter: DaemonAdapterKind): void {
@@ -250,6 +472,60 @@ export class DaemonWorkspaceStateStore {
     this.persist();
   }
 
+  getRecentTaskCompletions(): DaemonRecentTaskCompletion[] {
+    return (this.state.recentTaskCompletions ?? []).map((entry) => ({ ...entry }));
+  }
+
+  recordRecentTaskCompletion(entry: DaemonRecentTaskCompletion): void {
+    const normalized = normalizeRecentTaskCompletion(entry);
+    if (!normalized) {
+      throw new Error("最近完成任务记录无效。");
+    }
+    const taskKey = `${normalized.adapter}\u0000${normalized.threadId}`;
+    this.state.recentTaskCompletions = [
+      normalized,
+      ...(this.state.recentTaskCompletions ?? []).filter(
+        (candidate) => `${candidate.adapter}\u0000${candidate.threadId}` !== taskKey,
+      ),
+    ]
+      .sort((left, right) => Date.parse(right.completedAt) - Date.parse(left.completedAt))
+      .slice(0, MAX_RECENT_TASK_COMPLETIONS);
+    this.persist();
+  }
+
+  getMobileApprovalResults(
+    adapter: DaemonAdapterKind,
+    threadId: string,
+  ): DaemonMobileApprovalResult[] {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) {
+      return [];
+    }
+    return (this.state.mobileApprovalResults ?? [])
+      .filter(
+        (entry) =>
+          entry.adapter === adapter && entry.threadId === normalizedThreadId,
+      )
+      .sort((left, right) => Date.parse(left.resolvedAt) - Date.parse(right.resolvedAt))
+      .map((entry) => ({ ...entry }));
+  }
+
+  recordMobileApprovalResult(entry: DaemonMobileApprovalResult): void {
+    const normalized = normalizeMobileApprovalResult(entry);
+    if (!normalized) {
+      throw new Error("网页审批结果记录无效。");
+    }
+    this.state.mobileApprovalResults = [
+      normalized,
+      ...(this.state.mobileApprovalResults ?? []).filter(
+        (candidate) => candidate.id !== normalized.id,
+      ),
+    ]
+      .sort((left, right) => Date.parse(right.resolvedAt) - Date.parse(left.resolvedAt))
+      .slice(0, MAX_MOBILE_APPROVAL_RESULTS);
+    this.persist();
+  }
+
   setCodexThreadId(threadId: string | null | undefined): void {
     this.setAdapterSessionId("codex", threadId);
   }
@@ -284,13 +560,8 @@ export class DaemonWorkspaceStateStore {
 
   private persist(): void {
     this.state.updatedAt = new Date().toISOString();
-    fs.mkdirSync(path.dirname(this.stateFile), { recursive: true });
-    const tempFile = `${this.stateFile}.${process.pid}.tmp`;
-    try {
-      fs.writeFileSync(tempFile, JSON.stringify(this.state, null, 2), "utf8");
-      fs.renameSync(tempFile, this.stateFile);
-    } finally {
-      fs.rmSync(tempFile, { force: true });
-    }
+    writePrivateFileAtomic(this.stateFile, JSON.stringify(this.state, null, 2), {
+      encoding: "utf8",
+    });
   }
 }

@@ -58,6 +58,13 @@ export const CODEX_MOBILE_HTML = `<!doctype html>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
       </div>
+      <nav class="sidebar-primary-nav" aria-label="工作区视图">
+        <button class="sidebar-primary-button" id="task-board-open" type="button" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="16" rx="1.5"/><rect x="14" y="4" width="6" height="9" rx="1.5"/></svg>
+          <span>任务看板</span>
+          <span class="sidebar-primary-count" id="task-board-count" hidden></span>
+        </button>
+      </nav>
       <div class="task-view-switch" role="tablist" aria-label="任务列表视图">
         <button class="task-view-button is-active" id="task-view-projects" type="button" role="tab" aria-selected="true">项目</button>
         <button class="task-view-button" id="task-view-recent" type="button" role="tab" aria-selected="false">最近</button>
@@ -85,6 +92,34 @@ export const CODEX_MOBILE_HTML = `<!doctype html>
           </button>
         </div>
       </header>
+
+      <section class="task-board" id="task-board" aria-labelledby="task-board-title" hidden>
+        <header class="task-board-header">
+          <div class="task-board-heading-row">
+            <button class="icon-button task-board-menu-button" id="task-board-menu-button" type="button" aria-label="打开任务列表">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14M5 16h14"/></svg>
+            </button>
+            <div class="task-board-heading">
+              <h1 id="task-board-title">所有任务</h1>
+              <p id="task-board-subtitle">汇集所有已连接 Agent 的真实任务</p>
+            </div>
+            <button class="task-board-refresh" id="task-board-refresh" type="button" aria-label="刷新任务看板" title="刷新">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 5v6h-6"/></svg>
+            </button>
+          </div>
+          <div class="task-board-toolbar">
+            <div class="task-board-view-switch" role="tablist" aria-label="任务看板视图">
+              <button class="task-board-view-button is-active" id="task-board-view-active" type="button" role="tab" aria-selected="true">任务看板</button>
+              <button class="task-board-view-button" id="task-board-view-completed" type="button" role="tab" aria-selected="false">最近完成</button>
+            </div>
+            <label class="task-board-search">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>
+              <input id="task-board-search" type="search" placeholder="搜索全部任务" autocomplete="off">
+            </label>
+          </div>
+        </header>
+        <div class="task-board-body" id="task-board-body" aria-live="polite"></div>
+      </section>
 
       <section class="messages" id="messages" aria-live="polite">
         <div class="empty-state" id="empty-state">
@@ -406,6 +441,32 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.75; stro
 .icon-button:hover { background: var(--surface-hover); }
 .icon-button:active { background: #dfdfdf; }
 .sidebar-close { display: none; margin-left: auto; }
+.sidebar-primary-nav { flex: 0 0 auto; margin: 0 2px 8px; }
+.sidebar-primary-button {
+  width: 100%;
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted-strong);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 520;
+  text-align: left;
+  cursor: pointer;
+  transition: background .16s cubic-bezier(.2,.8,.2,1), color .16s cubic-bezier(.2,.8,.2,1);
+}
+.sidebar-primary-button:hover { background: var(--surface-hover); color: var(--text); }
+.sidebar-primary-button:active { transform: translateY(1px); }
+.sidebar-primary-button:focus-visible { outline: 2px solid rgba(16,163,127,.42); outline-offset: 2px; }
+.sidebar-primary-button.is-active { background: var(--surface-selected); color: var(--text); }
+.sidebar-primary-button svg { width: 18px; height: 18px; stroke-width: 1.7; }
+.sidebar-primary-count { min-width: 22px; padding: 2px 7px; border-radius: 999px; background: var(--page); color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; text-align: center; }
 .task-view-switch {
   flex: 0 0 auto;
   display: grid;
@@ -447,13 +508,22 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.75; stro
 .search-box input::placeholder { color: var(--muted-strong); }
 .task-list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 0; overscroll-behavior: contain; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
 .task-group { margin: 0; }
+.task-group-head {
+  min-height: 36px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 2px;
+  padding-right: 4px;
+}
+.task-group.is-recent .task-group-head { grid-template-columns: minmax(0, 1fr); padding-right: 0; }
 .task-group-title {
   width: 100%;
-  min-height: 30px;
+  min-height: 32px;
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 8px 10px 4px;
+  padding: 8px 6px 4px 10px;
   overflow: hidden;
   border: 0;
   border-radius: 7px;
@@ -472,7 +542,27 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.75; stro
 .task-group-chevron { width: 13px; height: 13px; flex: 0 0 auto; transition: transform .15s ease; }
 .task-group.is-collapsed .task-group-chevron { transform: rotate(-90deg); }
 .task-group-title.is-static .task-group-chevron { display: none; }
+.task-group:first-child .task-group-head { min-height: 32px; }
 .task-group:first-child .task-group-title { padding-top: 4px; }
+.task-group-create {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.task-group-create:hover { color: var(--text); background: var(--surface-hover); }
+.task-group-create:focus-visible { outline: 2px solid rgba(16,163,127,.42); outline-offset: 1px; }
+.task-group-create:disabled { opacity: .38; cursor: wait; }
+.task-group-create svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 1.8; }
+.task-group-create-spinner { display: none; stroke-dasharray: 26; stroke-dashoffset: 9; }
+.task-group-create.is-loading .task-group-create-plus { display: none; }
+.task-group-create.is-loading .task-group-create-spinner { display: block; animation: switch-spin .8s linear infinite; transform-origin: center; }
 .task-group:not(.is-recent) .task-group-items .task-item,
 .task-group:not(.is-recent) .task-group-more { padding-left: 28px; }
 .task-group-more, .task-list-more {
@@ -568,6 +658,129 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.75; stro
 .status-label { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 8px; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .new-task-button { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 9px; background: transparent; color: var(--text); cursor: pointer; }
 .new-task-button:hover { background: var(--surface-hover); }
+.task-board {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--canvas);
+}
+.task-board[hidden] { display: none; }
+.app-shell.board-open .topbar,
+.app-shell.board-open .messages,
+.app-shell.board-open .message-navigation,
+.app-shell.board-open .composer-wrap { display: none; }
+.task-board-header {
+  flex: 0 0 auto;
+  padding: 22px 24px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--page);
+}
+.task-board-heading-row { display: flex; align-items: center; gap: 12px; }
+.task-board-menu-button { display: none; }
+.task-board-heading { min-width: 0; flex: 1; }
+.task-board-heading h1 { margin: 0; color: var(--text); font-size: 24px; font-weight: 650; letter-spacing: -0.035em; line-height: 1.2; }
+.task-board-heading p { margin: 5px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.task-board-refresh {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--page);
+  color: var(--muted-strong);
+  cursor: pointer;
+  transition: background .16s cubic-bezier(.2,.8,.2,1), color .16s cubic-bezier(.2,.8,.2,1), transform .16s cubic-bezier(.2,.8,.2,1);
+}
+.task-board-refresh:hover { background: var(--surface); color: var(--text); }
+.task-board-refresh:active { transform: scale(.97); }
+.task-board-refresh:focus-visible { outline: 2px solid rgba(16,163,127,.42); outline-offset: 2px; }
+.task-board-refresh:disabled { opacity: .48; cursor: default; }
+.task-board-refresh.is-loading svg { animation: board-refresh-spin .8s linear infinite; }
+.task-board-refresh svg { width: 18px; height: 18px; stroke-width: 1.8; }
+@keyframes board-refresh-spin { to { transform: rotate(360deg); } }
+.task-board-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 20px; }
+.task-board-view-switch { display: inline-grid; grid-template-columns: repeat(2, auto); gap: 3px; padding: 3px; border-radius: 10px; background: var(--surface); }
+.task-board-view-button { min-height: 32px; padding: 0 13px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; font-weight: 560; cursor: pointer; }
+.task-board-view-button:hover { color: var(--text); }
+.task-board-view-button.is-active { background: var(--page); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.task-board-view-button:focus-visible { outline: 2px solid rgba(16,163,127,.42); outline-offset: 1px; }
+.task-board-search { width: min(320px, 42vw); min-height: 38px; display: flex; align-items: center; gap: 9px; padding: 0 11px; border: 1px solid var(--border); border-radius: 10px; background: var(--page); color: var(--muted); }
+.task-board-search:focus-within { border-color: rgba(13,13,13,.28); box-shadow: 0 0 0 3px rgba(13,13,13,.05); }
+.task-board-search svg { width: 17px; height: 17px; flex: 0 0 auto; }
+.task-board-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 14px; }
+.task-board-search input::placeholder { color: var(--muted); }
+.task-board-body { min-width: 0; min-height: 0; flex: 1; overflow: auto; padding: 20px 24px 28px; overscroll-behavior: contain; scrollbar-width: thin; }
+.task-board-columns { min-width: 900px; display: grid; grid-template-columns: repeat(4, minmax(210px, 1fr)); align-items: start; gap: 16px; }
+.task-board-column { min-width: 0; }
+.task-board-column-head { min-height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 2px 8px; color: var(--muted-strong); }
+.task-board-column-mark { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--muted); }
+.task-board-column[data-lane="running"] .task-board-column-mark { background: var(--green); }
+.task-board-column[data-lane="waiting"] .task-board-column-mark { background: var(--orange); }
+.task-board-column[data-lane="error"] .task-board-column-mark { background: var(--red); }
+.task-board-column[data-lane="queued"] .task-board-column-mark { background: #7c8798; }
+.task-board-column-title { font-size: 13px; font-weight: 620; }
+.task-board-column-count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.task-board-card-list { display: grid; gap: 10px; }
+.task-board-card {
+  width: 100%;
+  min-height: 112px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--page);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .16s cubic-bezier(.2,.8,.2,1), transform .16s cubic-bezier(.2,.8,.2,1), box-shadow .16s cubic-bezier(.2,.8,.2,1);
+}
+.task-board-card:hover { border-color: var(--border-strong); transform: translateY(-1px); box-shadow: 0 8px 22px rgba(0,0,0,.06); }
+.task-board-card:active { transform: translateY(0) scale(.99); }
+.task-board-card:focus-visible { outline: 2px solid rgba(16,163,127,.42); outline-offset: 2px; }
+.task-board-card.is-opening { opacity: .58; cursor: wait; }
+.task-board-card-title { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; color: var(--text); font-size: 14px; font-weight: 560; line-height: 1.48; overflow-wrap: anywhere; }
+.task-board-card-meta { margin-top: auto; display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--muted); font-size: 11px; }
+.task-board-card-status { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.task-board-card-status-dot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: currentColor; }
+.task-board-card[data-lane="running"] .task-board-card-status { color: var(--green); }
+.task-board-card[data-lane="waiting"] .task-board-card-status { color: var(--orange); }
+.task-board-card[data-lane="error"] .task-board-card-status { color: var(--red); }
+.task-board-card-project { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-board-card-time { margin-left: auto; flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.task-board-column-empty { min-height: 104px; display: grid; place-items: center; padding: 18px; border: 1px dashed var(--border-strong); border-radius: 14px; color: var(--muted); font-size: 12px; text-align: center; }
+.task-board-completed { width: min(920px, 100%); margin: 0 auto; display: grid; gap: 0; border-top: 1px solid var(--border); }
+.task-board-completed-item { width: 100%; min-height: 72px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 15px 4px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.task-board-completed-item:hover .task-board-completed-title { text-decoration: underline; text-underline-offset: 3px; }
+.task-board-completed-item.is-opening { opacity: .58; cursor: wait; }
+.task-board-completed-item:focus-visible { outline: 2px solid rgba(16,163,127,.42); outline-offset: 2px; border-radius: 8px; }
+.task-board-completed-copy { min-width: 0; display: block; }
+.task-board-completed-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 540; }
+.task-board-completed-meta { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; }
+.task-board-completed-time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.task-board-empty { min-height: 54vh; display: grid; place-items: center; padding: 40px 20px; text-align: center; }
+.task-board-empty-copy { max-width: 360px; }
+.task-board-empty-icon { width: 44px; height: 44px; display: grid; place-items: center; margin: 0 auto 16px; border: 1px solid var(--border); border-radius: 14px; color: var(--muted); }
+.task-board-empty-icon svg { width: 22px; height: 22px; }
+.task-board-empty h2 { margin: 0; color: var(--text); font-size: 17px; font-weight: 620; letter-spacing: -0.02em; }
+.task-board-empty p { margin: 7px 0 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.task-board-skeleton { min-width: 900px; display: grid; grid-template-columns: repeat(4, minmax(210px, 1fr)); gap: 16px; }
+.task-board-skeleton-column { display: grid; gap: 10px; }
+.task-board-skeleton-line, .task-board-skeleton-card { border-radius: 10px; background: var(--surface); animation: board-skeleton-pulse 1.4s ease-in-out infinite; }
+.task-board-skeleton-line { width: 92px; height: 18px; }
+.task-board-skeleton-card { height: 116px; }
+@keyframes board-skeleton-pulse { 0%, 100% { opacity: .58; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .task-board-refresh.is-loading svg, .task-board-skeleton-line, .task-board-skeleton-card { animation: none; }
+  .task-board-card, .sidebar-primary-button { transition: none; }
+}
 .new-task-button:disabled { opacity: .36; cursor: default; }
 .new-task-button svg { width: 18px; height: 18px; }
 .status-label::before { content: ""; width: 7px; height: 7px; visibility: hidden; border-radius: 50%; background: transparent; }
@@ -627,6 +840,15 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.75; stro
 .approval-action.primary { border-color: var(--accent); background: var(--accent); color: var(--page); }
 .approval-action.danger { color: var(--red); }
 .approval-action:disabled { opacity: .5; cursor: default; }
+.approval-result { width: min(100%, var(--thread-max)); margin: 0 auto 18px; padding: 12px 14px; border: 1px solid rgba(22,163,74,.18); border-radius: 14px; background: rgba(22,163,74,.055); color: var(--muted-strong); }
+.approval-result.denied { border-color: rgba(208,14,23,.16); background: rgba(208,14,23,.045); }
+.approval-result-heading { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 13px; font-weight: 650; line-height: 1.4; }
+.approval-result-icon { display: inline-grid; width: 19px; height: 19px; place-items: center; flex: 0 0 auto; border-radius: 50%; background: rgba(22,163,74,.12); color: var(--green); font-size: 12px; }
+.approval-result.denied .approval-result-icon { background: rgba(208,14,23,.1); color: var(--red); }
+.approval-result-summary { margin-top: 6px; font-size: 12px; line-height: 1.5; }
+.approval-result-detail { margin-top: 8px; }
+.approval-result-detail-label { margin-bottom: 4px; color: var(--muted); font-size: 10px; }
+.approval-result-detail pre { margin: 0; padding: 8px 10px; overflow-x: auto; border-radius: 9px; background: rgba(127,127,127,.055); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted-strong); font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .message-row.user.pending .message-card { opacity: .76; }
 .message-row.user.failed .message-card { border: 1px solid rgba(208,14,23,.22); }
 .message-delivery { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.3; }
@@ -853,6 +1075,22 @@ body.task-rename-open { overflow: hidden; }
   .menu-button { border-radius: 8px; }
   .topbar-copy { gap: 7px; }
   .sidebar-head .workspace-product { font-size: 15px; }
+  .task-board-header { padding: max(12px, env(safe-area-inset-top)) 16px 14px; }
+  .task-board-heading-row { gap: 8px; }
+  .task-board-menu-button { display: grid; margin-left: -4px; }
+  .task-board-heading h1 { font-size: 20px; }
+  .task-board-heading p { max-width: 64vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .task-board-toolbar { align-items: stretch; flex-direction: column; gap: 10px; margin-top: 15px; }
+  .task-board-view-switch { width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .task-board-search { width: 100%; }
+  .task-board-body { padding: 16px 16px max(24px, env(safe-area-inset-bottom)); scroll-snap-type: x proximity; }
+  .task-board-columns { min-width: 0; display: flex; gap: 12px; }
+  .task-board-column { width: min(84vw, 320px); flex: 0 0 min(84vw, 320px); scroll-snap-align: start; }
+  .task-board-card { min-height: 108px; }
+  .task-board-completed-item { min-height: 78px; padding-left: 2px; padding-right: 2px; }
+  .task-board-completed-title { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .task-board-skeleton { min-width: 0; display: flex; gap: 12px; }
+  .task-board-skeleton-column { width: min(84vw, 320px); flex: 0 0 min(84vw, 320px); }
   .topbar-title { max-width: 46vw; font-size: 11px; }
   .status-label { width: 28px; padding: 0; justify-content: center; font-size: 0; }
   .topbar-actions { gap: 1px; }
@@ -915,6 +1153,9 @@ body.task-rename-open { overflow: hidden; }
   .composer-wrap { background: linear-gradient(to bottom, rgba(33,33,33,0), rgba(33,33,33,.94) 32%, #212121 62%); }
   .composer-image-button:hover { background: #3a3a3a; }
   .message-content a { color: #7ab7ff; }
+  .task-board-search:focus-within { border-color: rgba(255,255,255,.24); box-shadow: 0 0 0 3px rgba(255,255,255,.05); }
+  .task-board-view-button.is-active { box-shadow: 0 1px 3px rgba(0,0,0,.32); }
+  .task-board-card:hover { box-shadow: 0 8px 22px rgba(0,0,0,.22); }
 }
 `;
 
@@ -936,6 +1177,16 @@ export const CODEX_MOBILE_JS = String.raw`
   var authHint = document.getElementById("auth-hint");
   var authLogout = document.getElementById("auth-logout");
   var taskList = document.getElementById("task-list");
+  var taskBoard = document.getElementById("task-board");
+  var taskBoardOpen = document.getElementById("task-board-open");
+  var taskBoardCount = document.getElementById("task-board-count");
+  var taskBoardMenuButton = document.getElementById("task-board-menu-button");
+  var taskBoardBody = document.getElementById("task-board-body");
+  var taskBoardSubtitle = document.getElementById("task-board-subtitle");
+  var taskBoardRefresh = document.getElementById("task-board-refresh");
+  var taskBoardViewActive = document.getElementById("task-board-view-active");
+  var taskBoardViewCompleted = document.getElementById("task-board-view-completed");
+  var taskBoardSearch = document.getElementById("task-board-search");
   var taskViewProjects = document.getElementById("task-view-projects");
   var taskViewRecent = document.getElementById("task-view-recent");
   var searchInput = document.getElementById("task-search");
@@ -987,6 +1238,15 @@ export const CODEX_MOBILE_JS = String.raw`
     projectVisibleLimits: Object.create(null),
     recentVisibleLimit: 20,
     recentMoreNode: null,
+    boardOpen: false,
+    boardView: "active",
+    boardTasks: [],
+    boardRecentCompleted: [],
+    boardLoading: false,
+    boardError: "",
+    boardRequestId: 0,
+    boardOpeningKey: "",
+    boardLastLoadedAtMs: 0,
     currentThreadId: "",
     serverMessages: [],
     historyMessages: [],
@@ -1008,6 +1268,7 @@ export const CODEX_MOBILE_JS = String.raw`
     runSummary: null,
     localRunSummary: null,
     pendingApproval: null,
+    approvalResults: [],
     resolvingApproval: false,
     stopRequestedThreadId: "",
     loadingMessages: false,
@@ -1059,6 +1320,41 @@ export const CODEX_MOBILE_JS = String.raw`
     }).map(function (entry) { return entry.task; });
   }
 
+  function taskBoardLane(task) {
+    if (!task) return "queued";
+    if (task.status === "running") return "running";
+    if (task.status === "approval" || task.status === "input") return "waiting";
+    if (task.status === "error") return "error";
+    if (task.completedAt) return "completed";
+    return "queued";
+  }
+
+  function taskBoardMatchesQuery(task, query) {
+    var normalized = String(query || "").trim().toLowerCase();
+    if (!normalized) return true;
+    return [task && task.title, task && task.projectName, task && task.adapterLabel]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(normalized);
+  }
+
+  function formatTaskBoardTime(value, nowMs) {
+    var timestamp = Date.parse(String(value || ""));
+    if (!Number.isFinite(timestamp)) return "";
+    var elapsedMs = Math.max(0, Number(nowMs || Date.now()) - timestamp);
+    var minutes = Math.floor(elapsedMs / 60000);
+    if (minutes < 1) return "刚刚";
+    if (minutes < 60) return minutes + " 分钟前";
+    var hours = Math.floor(minutes / 60);
+    if (hours < 24) return hours + " 小时前";
+    var days = Math.floor(hours / 24);
+    if (days === 1) return "昨天";
+    if (days < 7) return days + " 天前";
+    var date = new Date(timestamp);
+    return (date.getMonth() + 1) + " 月 " + date.getDate() + " 日";
+  }
+
   function resolveTaskSelector(tasks, selector) {
     var normalized = String(selector || "").trim();
     if (!normalized) return null;
@@ -1085,6 +1381,15 @@ export const CODEX_MOBILE_JS = String.raw`
     }
     delete collapsedGroups[groupKey];
     visibleLimits[groupKey] = PROJECT_TASK_BATCH_SIZE;
+  }
+
+  function projectTaskCreationSource(tasks, currentThreadId) {
+    var supported = (Array.isArray(tasks) ? tasks : []).filter(function (task) {
+      return task && task.canCreateInProject === true;
+    });
+    return supported.find(function (task) {
+      return task.threadId === currentThreadId;
+    }) || supported[0] || null;
   }
 
   function readSetupToken() {
@@ -1484,6 +1789,7 @@ export const CODEX_MOBILE_JS = String.raw`
     state.runSummary = null;
     state.localRunSummary = null;
     state.pendingApproval = null;
+    state.approvalResults = [];
     state.adapterError = "";
     state.pendingImages = [];
     composerInput.value = "";
@@ -1618,6 +1924,10 @@ export const CODEX_MOBILE_JS = String.raw`
     var pageUrl = new URL(window.location.href);
     var requestedAdapter = pageUrl.searchParams.get("adapter") || "";
     var requestedTask = pageUrl.searchParams.get("task") || "";
+    var requestedBoard = pageUrl.searchParams.get("view") === "board";
+    state.boardView = pageUrl.searchParams.get("board") === "completed"
+      ? "completed"
+      : "active";
     if (requestedAdapter) state.currentAdapter = requestedAdapter;
     state.loadingTasks = needsInitialTask;
     renderAdapterMenu();
@@ -1628,6 +1938,7 @@ export const CODEX_MOBILE_JS = String.raw`
     }
     bootScreen.hidden = true;
     app.hidden = false;
+    setTaskBoardOpen(requestedBoard, false);
     syncComposerInset();
     updateUserMessageNavigation();
 
@@ -2013,6 +2324,7 @@ export const CODEX_MOBILE_JS = String.raw`
         return;
       }
       closeTaskContextMenu();
+      if (state.boardOpen) setTaskBoardOpen(false, true);
       selectTask(threadId, true);
     });
     button.addEventListener("contextmenu", function (event) {
@@ -2106,6 +2418,8 @@ export const CODEX_MOBILE_JS = String.raw`
       section = document.createElement("section");
       section.className = "task-group";
       section.dataset.groupKey = group.key;
+      var head = document.createElement("div");
+      head.className = "task-group-head";
       var heading = document.createElement("button");
       heading.type = "button";
       heading.className = "task-group-title";
@@ -2141,7 +2455,20 @@ export const CODEX_MOBILE_JS = String.raw`
         );
         renderTasks();
       });
-      section.appendChild(heading);
+      var create = document.createElement("button");
+      create.type = "button";
+      create.className = "task-group-create";
+      create.title = "在这个项目中新建任务";
+      create.setAttribute("aria-label", "在这个项目中新建任务");
+      create.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path class="task-group-create-plus" d="M10 4v12M4 10h12"/><circle class="task-group-create-spinner" cx="10" cy="10" r="6"/></svg>';
+      create.addEventListener("click", function () {
+        var sourceThreadId = section.dataset.createSourceThreadId || "";
+        var projectName = section.dataset.projectName || "这个项目";
+        if (sourceThreadId) void createTask(sourceThreadId, projectName);
+      });
+      head.appendChild(heading);
+      head.appendChild(create);
+      section.appendChild(head);
       section.appendChild(items);
       section.appendChild(more);
       state.taskGroupNodes[group.key] = section;
@@ -2155,6 +2482,11 @@ export const CODEX_MOBILE_JS = String.raw`
     section.dataset.groupKey = group.key;
     section.dataset.collapsible = collapsible ? "true" : "false";
     section.dataset.taskCount = String(group.tasks.length);
+    section.dataset.projectName = group.title;
+    var createSource = collapsible
+      ? projectTaskCreationSource(group.tasks, state.currentThreadId)
+      : null;
+    section.dataset.createSourceThreadId = createSource?.threadId || "";
 
     var headingNode = section.querySelector(".task-group-title");
     var headingText = section.querySelector(".task-group-title-text");
@@ -2167,6 +2499,18 @@ export const CODEX_MOBILE_JS = String.raw`
       headingNode.setAttribute("aria-label", collapsible
         ? group.title + (collapsed ? "，展开项目" : "，收起项目")
         : group.title);
+    }
+    var createNode = section.querySelector(".task-group-create");
+    if (createNode) {
+      createNode.hidden = !createSource;
+      createNode.disabled = Boolean(state.creatingTask || state.switchingAdapter);
+      createNode.classList.toggle(
+        "is-loading",
+        Boolean(state.creatingTask && state.creatingProjectKey === group.key)
+      );
+      var createLabel = "在“" + group.title + "”中新建任务";
+      createNode.title = createLabel;
+      createNode.setAttribute("aria-label", createLabel);
     }
 
     var configuredLimit = Number(state.projectVisibleLimits[group.key]) || PROJECT_TASK_BATCH_SIZE;
@@ -2323,6 +2667,340 @@ export const CODEX_MOBILE_JS = String.raw`
     renderProjectTasks(filtered, Boolean(query));
   }
 
+  function taskBoardStatusLabel(task) {
+    if (task.status === "running") return "处理中";
+    if (task.status === "approval") return "待审批";
+    if (task.status === "input") return "待输入";
+    if (task.status === "error") return "异常";
+    return "待继续";
+  }
+
+  function updateTaskBoardControls() {
+    taskBoardOpen.classList.toggle("is-active", state.boardOpen);
+    taskBoardOpen.setAttribute("aria-pressed", state.boardOpen ? "true" : "false");
+    var activeCount = state.boardTasks.filter(function (task) {
+      return taskBoardLane(task) !== "completed";
+    }).length;
+    taskBoardCount.hidden = activeCount === 0;
+    taskBoardCount.textContent = activeCount > 99 ? "99+" : String(activeCount);
+    taskBoardViewActive.classList.toggle("is-active", state.boardView === "active");
+    taskBoardViewActive.setAttribute(
+      "aria-selected",
+      state.boardView === "active" ? "true" : "false"
+    );
+    taskBoardViewCompleted.classList.toggle("is-active", state.boardView === "completed");
+    taskBoardViewCompleted.setAttribute(
+      "aria-selected",
+      state.boardView === "completed" ? "true" : "false"
+    );
+    taskBoardRefresh.disabled = state.boardLoading;
+    taskBoardRefresh.classList.toggle("is-loading", state.boardLoading);
+    taskBoardSubtitle.textContent = state.boardView === "completed"
+      ? "按完成时间查看所有 Agent 的真实任务"
+      : "统一汇总，不按 Agent 分栏";
+  }
+
+  function renderTaskBoardEmpty(title, description) {
+    var empty = document.createElement("div");
+    empty.className = "task-board-empty";
+    empty.innerHTML =
+      '<div class="task-board-empty-copy">' +
+      '<div class="task-board-empty-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="16" rx="1.5"/><rect x="14" y="4" width="6" height="9" rx="1.5"/></svg></div>' +
+      '<h2>' + escapeHtml(title) + '</h2>' +
+      '<p>' + escapeHtml(description) + '</p>' +
+      '</div>';
+    return empty;
+  }
+
+  function renderTaskBoardSkeleton() {
+    var skeleton = document.createElement("div");
+    skeleton.className = "task-board-skeleton";
+    for (var columnIndex = 0; columnIndex < 4; columnIndex += 1) {
+      var column = document.createElement("div");
+      column.className = "task-board-skeleton-column";
+      var line = document.createElement("div");
+      line.className = "task-board-skeleton-line";
+      column.appendChild(line);
+      for (var cardIndex = 0; cardIndex < 2; cardIndex += 1) {
+        var card = document.createElement("div");
+        card.className = "task-board-skeleton-card";
+        column.appendChild(card);
+      }
+      skeleton.appendChild(column);
+    }
+    return skeleton;
+  }
+
+  function renderTaskBoardCard(task, lane) {
+    var card = document.createElement("button");
+    var key = task.adapter + "\u0000" + task.threadId;
+    card.type = "button";
+    card.className = "task-board-card" + (state.boardOpeningKey === key ? " is-opening" : "");
+    card.dataset.lane = lane;
+    card.disabled = Boolean(state.boardOpeningKey);
+    card.setAttribute("aria-label", "打开任务：" + task.title);
+
+    var title = document.createElement("span");
+    title.className = "task-board-card-title";
+    title.textContent = task.title;
+
+    var meta = document.createElement("span");
+    meta.className = "task-board-card-meta";
+    var status = document.createElement("span");
+    status.className = "task-board-card-status";
+    status.innerHTML = '<span class="task-board-card-status-dot"></span><span></span>';
+    status.lastChild.textContent = taskBoardStatusLabel(task);
+    meta.appendChild(status);
+    if (task.projectName) {
+      var project = document.createElement("span");
+      project.className = "task-board-card-project";
+      project.textContent = task.projectName;
+      meta.appendChild(project);
+    }
+    var time = document.createElement("span");
+    time.className = "task-board-card-time";
+    time.textContent = formatTaskBoardTime(task.lastUpdatedAt);
+    meta.appendChild(time);
+
+    card.appendChild(title);
+    card.appendChild(meta);
+    card.addEventListener("click", function () {
+      void openTaskFromBoard(task);
+    });
+    return card;
+  }
+
+  function renderActiveTaskBoard(tasks) {
+    var laneDefinitions = [
+      { id: "running", title: "处理中", empty: "当前没有正在执行的任务" },
+      { id: "waiting", title: "等待你", empty: "没有待审批或待输入的任务" },
+      { id: "error", title: "需要关注", empty: "当前没有异常任务" },
+      { id: "queued", title: "待继续", empty: "没有等待继续的任务" }
+    ];
+    var lanes = {
+      running: [],
+      waiting: [],
+      error: [],
+      queued: []
+    };
+    tasks.forEach(function (task) {
+      var lane = taskBoardLane(task);
+      if (lane !== "completed") lanes[lane].push(task);
+    });
+    var activeCount = laneDefinitions.reduce(function (count, lane) {
+      return count + lanes[lane.id].length;
+    }, 0);
+    if (!activeCount) {
+      return renderTaskBoardEmpty(
+        taskBoardSearch.value.trim() ? "没有匹配的任务" : "当前没有待处理任务",
+        taskBoardSearch.value.trim()
+          ? "换一个关键词搜索全部 Agent 的任务。"
+          : "新任务开始运行后会自动出现在这里。"
+      );
+    }
+    var columns = document.createElement("div");
+    columns.className = "task-board-columns";
+    laneDefinitions.forEach(function (definition) {
+      var section = document.createElement("section");
+      section.className = "task-board-column";
+      section.dataset.lane = definition.id;
+      var heading = document.createElement("div");
+      heading.className = "task-board-column-head";
+      heading.innerHTML =
+        '<span class="task-board-column-mark"></span>' +
+        '<span class="task-board-column-title">' + escapeHtml(definition.title) + '</span>' +
+        '<span class="task-board-column-count">' + lanes[definition.id].length + '</span>';
+      var list = document.createElement("div");
+      list.className = "task-board-card-list";
+      if (!lanes[definition.id].length) {
+        var empty = document.createElement("div");
+        empty.className = "task-board-column-empty";
+        empty.textContent = definition.empty;
+        list.appendChild(empty);
+      } else {
+        lanes[definition.id].forEach(function (task) {
+          list.appendChild(renderTaskBoardCard(task, definition.id));
+        });
+      }
+      section.appendChild(heading);
+      section.appendChild(list);
+      columns.appendChild(section);
+    });
+    return columns;
+  }
+
+  function renderCompletedTaskBoard(items) {
+    if (!items.length) {
+      return renderTaskBoardEmpty(
+        taskBoardSearch.value.trim() ? "没有匹配的已完成任务" : "还没有最近完成",
+        taskBoardSearch.value.trim()
+          ? "换一个关键词搜索最近完成的任务。"
+          : "任意 Agent 的真实任务完成后，会自动汇入这里。"
+      );
+    }
+    var list = document.createElement("div");
+    list.className = "task-board-completed";
+    items.forEach(function (item) {
+      var button = document.createElement("button");
+      var key = item.adapter + "\u0000" + item.threadId;
+      button.type = "button";
+      button.className = "task-board-completed-item" +
+        (state.boardOpeningKey === key ? " is-opening" : "");
+      button.disabled = Boolean(state.boardOpeningKey);
+      button.setAttribute("aria-label", "打开已完成任务：" + item.title);
+      var copy = document.createElement("span");
+      copy.className = "task-board-completed-copy";
+      var title = document.createElement("span");
+      title.className = "task-board-completed-title";
+      title.textContent = item.title;
+      var meta = document.createElement("span");
+      meta.className = "task-board-completed-meta";
+      meta.textContent = "已完成";
+      copy.appendChild(title);
+      copy.appendChild(meta);
+      var time = document.createElement("span");
+      time.className = "task-board-completed-time";
+      time.textContent = formatTaskBoardTime(item.completedAt);
+      button.appendChild(copy);
+      button.appendChild(time);
+      button.addEventListener("click", function () {
+        void openTaskFromBoard(item);
+      });
+      list.appendChild(button);
+    });
+    return list;
+  }
+
+  function renderTaskBoard() {
+    updateTaskBoardControls();
+    if (!state.boardOpen) return;
+    taskBoardBody.innerHTML = "";
+    if (state.boardLoading && !state.boardLastLoadedAtMs) {
+      taskBoardBody.appendChild(renderTaskBoardSkeleton());
+      return;
+    }
+    if (state.boardError && !state.boardLastLoadedAtMs) {
+      taskBoardBody.appendChild(renderTaskBoardEmpty(
+        "任务看板暂时不可用",
+        state.boardError + " 请稍后刷新重试。"
+      ));
+      return;
+    }
+    var query = taskBoardSearch.value.trim();
+    if (state.boardView === "completed") {
+      taskBoardBody.appendChild(renderCompletedTaskBoard(
+        state.boardRecentCompleted.filter(function (item) {
+          return taskBoardMatchesQuery(item, query);
+        })
+      ));
+      return;
+    }
+    taskBoardBody.appendChild(renderActiveTaskBoard(
+      state.boardTasks.filter(function (task) {
+        return taskBoardMatchesQuery(task, query);
+      })
+    ));
+  }
+
+  async function loadTaskBoard(force) {
+    if (!state.authenticated || state.boardLoading) return;
+    var requestId = ++state.boardRequestId;
+    state.boardLoading = true;
+    state.boardError = "";
+    renderTaskBoard();
+    try {
+      var payload = await api("/api/task-board");
+      if (requestId !== state.boardRequestId || !state.authenticated) return;
+      state.boardTasks = Array.isArray(payload.tasks) ? payload.tasks : [];
+      state.boardRecentCompleted = Array.isArray(payload.recentCompleted)
+        ? payload.recentCompleted
+        : [];
+      state.boardLastLoadedAtMs = Date.now();
+    } catch (error) {
+      if (requestId !== state.boardRequestId || error.status === 401) return;
+      state.boardError = error.message || "任务看板读取失败";
+    } finally {
+      if (requestId === state.boardRequestId) {
+        state.boardLoading = false;
+        renderTaskBoard();
+      }
+    }
+  }
+
+  function setTaskBoardView(view, updateUrl) {
+    state.boardView = view === "completed" ? "completed" : "active";
+    if (updateUrl) {
+      var url = new URL(window.location.href);
+      url.searchParams.set("view", "board");
+      if (state.boardView === "completed") url.searchParams.set("board", "completed");
+      else url.searchParams.delete("board");
+      history.replaceState(null, "", url.pathname + url.search + url.hash);
+    }
+    renderTaskBoard();
+  }
+
+  function setTaskBoardOpen(open, updateUrl) {
+    state.boardOpen = Boolean(open);
+    app.classList.toggle("board-open", state.boardOpen);
+    taskBoard.hidden = !state.boardOpen;
+    if (updateUrl) {
+      var url = new URL(window.location.href);
+      if (state.boardOpen) url.searchParams.set("view", "board");
+      else {
+        url.searchParams.delete("view");
+        url.searchParams.delete("board");
+      }
+      history.replaceState(null, "", url.pathname + url.search + url.hash);
+    }
+    updateTaskBoardControls();
+    if (state.boardOpen) {
+      closeSidebar();
+      renderTaskBoard();
+      if (!state.boardLastLoadedAtMs || Date.now() - state.boardLastLoadedAtMs > 8000) {
+        void loadTaskBoard(false);
+      }
+    }
+  }
+
+  async function openTaskFromBoard(task) {
+    var key = task.adapter + "\u0000" + task.threadId;
+    if (state.boardOpeningKey) return;
+    state.boardOpeningKey = key;
+    renderTaskBoard();
+    try {
+      if (task.adapter !== state.currentAdapter) {
+        var switched = await switchAdapter(task.adapter, true);
+        if (!switched) return;
+      }
+      var url = new URL(window.location.href);
+      url.searchParams.set("adapter", task.adapter);
+      url.searchParams.set("task", task.threadId);
+      url.searchParams.delete("view");
+      url.searchParams.delete("board");
+      history.replaceState(null, "", url.pathname + url.search + url.hash);
+      setTaskBoardOpen(false, false);
+      if (!state.tasks.some(function (candidate) {
+        return candidate.threadId === task.threadId;
+      })) {
+        state.tasks.push({
+          threadId: task.threadId,
+          title: task.title,
+          status: task.status || "idle",
+          lastUpdatedAt: task.lastUpdatedAt || task.completedAt || "",
+          selected: true
+        });
+      }
+      await selectTask(task.threadId, false);
+      await loadTasks(false);
+    } catch (error) {
+      setTaskBoardOpen(true, false);
+      showToast("任务打开失败：" + (error.message || "请稍后重试"));
+    } finally {
+      state.boardOpeningKey = "";
+      renderTaskBoard();
+    }
+  }
+
   function toggleWorkspaceMenu(forceOpen) {
     var nextOpen = typeof forceOpen === "boolean"
       ? forceOpen
@@ -2392,6 +3070,7 @@ export const CODEX_MOBILE_JS = String.raw`
         state.progressItems = [];
         state.runSummary = null;
         state.pendingApproval = null;
+        state.approvalResults = [];
       }
       renderTasks();
       renderMessages(false);
@@ -2418,8 +3097,42 @@ export const CODEX_MOBILE_JS = String.raw`
     return imageCount ? "图片 " + imageCount + " 张" : "（空消息）";
   }
 
-  function mergeQueuedMessagesForDisplay(queuedMessages, pendingMessages) {
-    var confirmed = Array.isArray(queuedMessages) ? queuedMessages.slice() : [];
+  function mergeQueuedMessagesForDisplay(
+    queuedMessages,
+    pendingMessages,
+    transcriptMessages,
+    runSummary
+  ) {
+    var activeTurnId = runSummary && runSummary.status === "running"
+      ? String(runSummary.turnId || "")
+      : "";
+    var latestActiveUser = (Array.isArray(transcriptMessages) ? transcriptMessages : [])
+      .slice()
+      .reverse()
+      .find(function (message) {
+        return message && message.role === "user" &&
+          (!activeTurnId || !message.turnId || message.turnId === activeTurnId);
+      });
+    var activeUserText = latestActiveUser
+      ? String(latestActiveUser.text || "").replace(/\s+/g, " ").trim()
+      : "";
+    var activeStartedAtMs = runSummary && Number(runSummary.startedAtMs);
+    var consumedMatchHidden = false;
+    var confirmed = (Array.isArray(queuedMessages) ? queuedMessages : []).filter(
+      function (message) {
+        if (!activeUserText || consumedMatchHidden) return true;
+        var queuedText = String(message && message.text || "")
+          .replace(/\s+/g, " ").trim();
+        if (queuedText !== activeUserText) return true;
+        var createdAtMs = Number(message && message.createdAtMs);
+        var wasQueuedBeforeTurn = Number.isFinite(activeStartedAtMs) &&
+          Number.isFinite(createdAtMs) &&
+          createdAtMs <= activeStartedAtMs;
+        if (!wasQueuedBeforeTurn) return true;
+        consumedMatchHidden = true;
+        return false;
+      }
+    );
     var confirmedIds = {};
     confirmed.forEach(function (message) { confirmedIds[message.id] = true; });
     var optimistic = (Array.isArray(pendingMessages) ? pendingMessages : []).flatMap(
@@ -2571,12 +3284,27 @@ export const CODEX_MOBILE_JS = String.raw`
     }
   }
 
+  function queuedMessagesRenderSignature(messages) {
+    var latestUser = (Array.isArray(state.serverMessages) ? state.serverMessages : [])
+      .slice()
+      .reverse()
+      .find(function (message) { return message && message.role === "user"; });
+    var summary = effectiveRunSummary();
+    return JSON.stringify([
+      messages,
+      latestUser && [latestUser.turnId, latestUser.text],
+      summary && [summary.status, summary.turnId]
+    ]);
+  }
+
   function renderQueuedMessages(messages) {
     state.queuedMessages = Array.isArray(messages) ? messages : [];
-    state.queueSignature = JSON.stringify(state.queuedMessages);
+    state.queueSignature = queuedMessagesRenderSignature(state.queuedMessages);
     var visibleMessages = mergeQueuedMessagesForDisplay(
       state.queuedMessages,
-      state.pendingMessages
+      state.pendingMessages,
+      state.serverMessages,
+      effectiveRunSummary()
     ).filter(function (message) {
       return message.id !== state.editingQueuedMessageId;
     });
@@ -2926,16 +3654,62 @@ export const CODEX_MOBILE_JS = String.raw`
     return card;
   }
 
+  function approvalResultTitle(action) {
+    if (action === "deny") return "已拒绝此操作";
+    if (action === "confirm_session") return "本任务后续同类操作已允许";
+    if (action === "confirm_task") return "已按本任务免审允许";
+    return "已允许本次操作";
+  }
+
+  function approvalResultInsertIndex(messages, result) {
+    if (result && result.turnId) {
+      for (var index = messages.length - 1; index >= 0; index -= 1) {
+        if (messages[index] && messages[index].turnId === result.turnId) {
+          return index + 1;
+        }
+      }
+    }
+    return messages.length;
+  }
+
+  function renderApprovalResult(result) {
+    var card = document.createElement("section");
+    var denied = result.action === "deny";
+    card.className = "approval-result" + (denied ? " denied" : "");
+    card.id = "approval-result-" + (result.id || "resolved");
+    card.setAttribute("role", "status");
+    var detail = result.detailPreview || result.commandPreview || "";
+    var detailLabel = result.detailLabel || "审批操作";
+    card.innerHTML =
+      '<div class="approval-result-heading"><span class="approval-result-icon" aria-hidden="true">' +
+        (denied ? "×" : "✓") + '</span><span>' + escapeHtml(approvalResultTitle(result.action)) + "</span></div>" +
+      (result.summary
+        ? '<div class="approval-result-summary">' + escapeHtml(result.summary) + "</div>"
+        : "") +
+      (detail
+        ? '<div class="approval-result-detail"><div class="approval-result-detail-label">' + escapeHtml(detailLabel) + '</div><pre>' + escapeHtml(detail) + "</pre></div>"
+        : "");
+    return card;
+  }
+
   async function resolvePendingApproval(action) {
     if (state.resolvingApproval || !state.currentThreadId || !state.pendingApproval) return;
     state.resolvingApproval = true;
     renderMessages(false);
     try {
-      await api(adapterApiPath("/api/tasks/" + encodeURIComponent(state.currentThreadId) + "/approval"), {
+      var payload = await api(adapterApiPath("/api/tasks/" + encodeURIComponent(state.currentThreadId) + "/approval"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: action })
       });
+      if (payload.result) {
+        state.approvalResults = state.approvalResults
+          .filter(function (result) { return result.id !== payload.result.id; })
+          .concat([payload.result])
+          .sort(function (left, right) {
+            return Date.parse(left.resolvedAt || "") - Date.parse(right.resolvedAt || "");
+          });
+      }
       state.pendingApproval = null;
       showToast(action === "deny"
         ? "已拒绝，" + currentAdapterName() + " 将停止这项操作"
@@ -3260,7 +4034,7 @@ export const CODEX_MOBILE_JS = String.raw`
     );
     var headerIndex = runHeaderInsertIndex(messages, summary);
     messagesEl.innerHTML = "";
-    if (!messages.length && !summary && !state.pendingApproval && state.progressItems.length === 0) {
+    if (!messages.length && !summary && !state.pendingApproval && state.approvalResults.length === 0 && state.progressItems.length === 0) {
       if (state.adapterError) {
         var capabilityLimited = isAdapterCapabilityError();
         messagesEl.innerHTML = '<div class="empty-state"><div class="empty-wordmark">' + escapeHtml(currentAdapterName()) + '</div><h1>' +
@@ -3279,6 +4053,17 @@ export const CODEX_MOBILE_JS = String.raw`
     }
     var approvalRendered = false;
     var progressRendered = false;
+    var approvalResultsByIndex = Object.create(null);
+    state.approvalResults.forEach(function (result) {
+      var insertIndex = approvalResultInsertIndex(messages, result);
+      if (!approvalResultsByIndex[insertIndex]) approvalResultsByIndex[insertIndex] = [];
+      approvalResultsByIndex[insertIndex].push(result);
+    });
+    function appendApprovalResultsAt(index) {
+      (approvalResultsByIndex[index] || []).forEach(function (result) {
+        messagesEl.appendChild(renderApprovalResult(result));
+      });
+    }
     function appendRunProgress() {
       if (progressRendered) return;
       var progress = renderProgressList(state.progressItems);
@@ -3295,7 +4080,9 @@ export const CODEX_MOBILE_JS = String.raw`
         }
       }
       messagesEl.appendChild(renderMessageRow(message, index, messages[index + 1]));
+      appendApprovalResultsAt(index + 1);
     });
+    if (messages.length === 0) appendApprovalResultsAt(0);
     if (summary && headerIndex >= messages.length) {
       messagesEl.appendChild(renderRunHeader(summary));
       appendRunProgress();
@@ -3613,6 +4400,9 @@ export const CODEX_MOBILE_JS = String.raw`
       if (taskIndex >= 0 && payload.task) state.tasks[taskIndex] = payload.task;
       if (!historyOnly) {
         state.pendingApproval = payload.pendingApproval || null;
+        state.approvalResults = Array.isArray(payload.approvalResults)
+          ? payload.approvalResults
+          : [];
         updateRunSummary(payload.runSummary || null, payload.task || null);
         state.progressItems = filterProgressItemsForCurrentTurn(
           payload.progressItems || [],
@@ -3637,6 +4427,7 @@ export const CODEX_MOBILE_JS = String.raw`
         payload.task && [payload.task.status, payload.task.startedAtMs, payload.task.activeTurnId],
         state.stopRequestedThreadId,
         state.pendingApproval,
+        state.approvalResults,
         state.progressItems
       ]);
       if (signature !== state.transcriptSignature) {
@@ -3644,7 +4435,7 @@ export const CODEX_MOBILE_JS = String.raw`
         renderMessages(forceBottom);
       }
       var queuedMessages = payload.queuedMessages || [];
-      var queueSignature = JSON.stringify(queuedMessages);
+      var queueSignature = queuedMessagesRenderSignature(queuedMessages);
       if (queueSignature !== state.queueSignature) renderQueuedMessages(queuedMessages);
       updateHeader();
       renderTasks();
@@ -3661,23 +4452,37 @@ export const CODEX_MOBILE_JS = String.raw`
     }
   }
 
-  async function createTask() {
+  async function createTask(sourceThreadId, projectName) {
     if (state.creatingTask || state.switchingAdapter) return;
     state.creatingTask = true;
+    state.creatingProjectKey = sourceThreadId
+      ? taskGroupKey(taskById(sourceThreadId) || {})
+      : "";
     updateHeader();
+    renderTasks();
     try {
-      var payload = await api(adapterApiPath("/api/tasks"), { method: "POST" });
+      var createPath = adapterApiPath("/api/tasks");
+      if (sourceThreadId) {
+        var createUrl = new URL(createPath, window.location.origin);
+        createUrl.searchParams.set("sourceTask", sourceThreadId);
+        createPath = createUrl.pathname + createUrl.search;
+      }
+      var payload = await api(createPath, { method: "POST" });
       var task = payload && payload.task;
       if (!task || !task.threadId) throw new Error("电脑端没有返回新任务。");
       state.adapterError = "";
       await loadTasks(false);
       await selectTask(task.threadId, true);
-      showToast("已新建 " + currentAdapterName() + " 任务");
+      showToast(sourceThreadId
+        ? "已在“" + (projectName || "这个项目") + "”中新建任务"
+        : "已新建 " + currentAdapterName() + " 任务");
     } catch (error) {
       showToast(error.message || "新建任务失败");
     } finally {
       state.creatingTask = false;
+      state.creatingProjectKey = "";
       updateHeader();
+      renderTasks();
     }
   }
 
@@ -3708,6 +4513,7 @@ export const CODEX_MOBILE_JS = String.raw`
     state.runSummary = null;
     state.localRunSummary = null;
     state.pendingApproval = null;
+    state.approvalResults = [];
     state.resolvingApproval = false;
     state.stopRequestedThreadId = "";
     state.transcriptSignature = "";
@@ -4174,6 +4980,7 @@ export const CODEX_MOBILE_JS = String.raw`
     state.runSummary = null;
     state.localRunSummary = null;
     state.pendingApproval = null;
+    state.approvalResults = [];
     state.resolvingApproval = false;
     state.stopRequestedThreadId = "";
     showAuthentication("login", "已退出。", false);
@@ -4222,7 +5029,23 @@ export const CODEX_MOBILE_JS = String.raw`
     navigateToUserMessage(Number(nextUserMessage.dataset.messageIndex));
   });
   workspaceSwitcher.addEventListener("click", function () { toggleWorkspaceMenu(); });
-  newTaskButton.addEventListener("click", function () { void createTask(); });
+  taskBoardOpen.addEventListener("click", function () {
+    setTaskBoardOpen(!state.boardOpen, true);
+  });
+  taskBoardMenuButton.addEventListener("click", function () {
+    app.classList.add("sidebar-open");
+  });
+  taskBoardRefresh.addEventListener("click", function () {
+    void loadTaskBoard(true);
+  });
+  taskBoardViewActive.addEventListener("click", function () {
+    setTaskBoardView("active", true);
+  });
+  taskBoardViewCompleted.addEventListener("click", function () {
+    setTaskBoardView("completed", true);
+  });
+  taskBoardSearch.addEventListener("input", renderTaskBoard);
+  newTaskButton.addEventListener("click", function () { void createTask("", ""); });
   messagesEl.addEventListener("selectstart", closeTaskContextMenu);
   messagesEl.addEventListener("contextmenu", closeTaskContextMenu);
   messagesEl.addEventListener("pointerdown", closeTaskContextMenu);
@@ -4262,8 +5085,12 @@ export const CODEX_MOBILE_JS = String.raw`
     if (state.liveRefreshTimer) clearTimeout(state.liveRefreshTimer);
     state.liveRefreshTimer = setTimeout(async function () {
       if (await checkForAppUpdate(false)) return;
-      var refreshes = [loadMessages(false, false)];
-      if (Date.now() >= state.nextTaskRefreshAtMs) {
+      var refreshes = state.boardOpen
+        ? Date.now() - state.boardLastLoadedAtMs >= TASK_REFRESH_INTERVAL_MS
+          ? [loadTaskBoard(false)]
+          : []
+        : [loadMessages(false, false)];
+      if (!state.boardOpen && Date.now() >= state.nextTaskRefreshAtMs) {
         refreshes.push(loadTasks(false));
       }
       await Promise.all(refreshes);
@@ -4281,7 +5108,8 @@ export const CODEX_MOBILE_JS = String.raw`
       void (async function () {
         if (await checkForAppUpdate(true)) return;
         state.nextTaskRefreshAtMs = 0;
-        await Promise.all([loadTasks(false), loadMessages(false, false)]);
+        if (state.boardOpen) await loadTaskBoard(true);
+        else await Promise.all([loadTasks(false), loadMessages(false, false)]);
       })();
     }
     scheduleLiveRefresh(document.hidden ? 10000 : 300);

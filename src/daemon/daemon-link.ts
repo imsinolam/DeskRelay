@@ -8,6 +8,7 @@ import {
 } from "../wechat/channel-config.ts";
 import type { BridgeSessionStartMode } from "../bridge/bridge-types.ts";
 import type { DaemonAdapterKind } from "../bridge/bridge-providers.ts";
+import { writePrivateFileAtomic } from "../utils/private-files.ts";
 
 export const DAEMON_PROTOCOL_VERSION = 1;
 export type { DaemonAdapterKind } from "../bridge/bridge-providers.ts";
@@ -114,7 +115,7 @@ export function buildDaemonToken(): string {
 
 export function writeDaemonEndpoint(endpoint: DaemonEndpoint): void {
   ensureChannelDataDir();
-  fs.writeFileSync(
+  writePrivateFileAtomic(
     DAEMON_ENDPOINT_FILE,
     JSON.stringify(
       {
@@ -124,7 +125,7 @@ export function writeDaemonEndpoint(endpoint: DaemonEndpoint): void {
       null,
       2,
     ),
-    "utf8",
+    { encoding: "utf8" },
   );
 }
 

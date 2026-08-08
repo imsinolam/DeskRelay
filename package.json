@@ -1,6 +1,6 @@
 {
   "name": "deskrelay",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Extend real desktop coding-agent sessions to WeChat, LAN web, and an optional public relay without forking context",
   "type": "module",
   "files": [
@@ -9,9 +9,14 @@
     "scripts/ensure-node-pty-permissions.mjs",
     ".env.example",
     "README.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
     "NOTICE.md",
     "LICENSE.txt",
-    "docs/",
+    "docs/*.md",
+    "docs/releases/",
+    "docs/images/deskrelay-logo.svg",
+    "docs/images/deskrelay-four-panel-white-paper-boy-v2.png",
     "deploy/"
   ],
   "keywords": [
@@ -31,12 +36,12 @@
   "license": "AGPL-3.0-or-later",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/imsinolam/DeskRelay.git"
+    "url": "git+https://github.com/UNLINEARITY/DeskRelay.git"
   },
   "bugs": {
-    "url": "https://github.com/imsinolam/DeskRelay/issues"
+    "url": "https://github.com/UNLINEARITY/DeskRelay/issues"
   },
-  "homepage": "https://github.com/imsinolam/DeskRelay#readme",
+  "homepage": "https://github.com/UNLINEARITY/DeskRelay#readme",
   "publishConfig": {
     "access": "public"
   },
@@ -75,7 +80,7 @@
     "postinstall": "node scripts/ensure-node-pty-permissions.mjs",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc -p tsconfig.build.json",
-    "prepack": "npm run build",
+    "prepack": "npm run typecheck:src && npm run build",
     "lint": "eslint bin scripts src test",
     "lint:fix": "eslint bin src test --fix",
     "typecheck:src": "tsc -p tsconfig.typecheck.src.json --noEmit --pretty false",
