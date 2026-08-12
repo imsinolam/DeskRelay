@@ -71,15 +71,34 @@ const CLAUDE_BRACKETED_PASTE_START = "\u001b[200~";
 const CLAUDE_BRACKETED_PASTE_END = "\u001b[201~";
 const CLAUDE_REMOTE_ENTER_DELAY_MS = 40;
 const CLAUDE_STARTUP_OUTPUT_BUFFER_LIMIT = 4_000;
+const CLAUDE_TUI_READY_BUFFER_LIMIT = 12_000;
+const CLAUDE_LOGIN_REQUIRED_RE = /Not logged in|Please run\s+\/login/i;
+
+function claudeAdapterLabel(kind: AdapterOptions["kind"]): string {
+  return kind === "tclaude" ? "TClaude" : "Claude Code";
+}
+
+export function resolveClaudeRuntimeDirectoryName(
+  kind: "claude" | "tclaude",
+): "claude-runtime" | "tclaude-runtime" {
+  return kind === "tclaude" ? "tclaude-runtime" : "claude-runtime";
+}
 
 function isClaudeWorkspaceTrustPrompt(text: string): boolean {
-  const compact = text.replace(/\s+/g, " ").trim();
+  const compact = text.replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase();
   return (
-    /Accessing workspace:/i.test(compact) &&
-    /Quick safety check:/i.test(compact) &&
-    /project you created or one you trust/i.test(compact) &&
-    /I trust this folder/i.test(compact)
+    compact.includes("accessingworkspace") &&
+    compact.includes("quicksafetycheck") &&
+    compact.includes("projectyoucreatedoroneyoutrust") &&
+    compact.includes("itrustthisfolder")
   );
+}
+
+function isClaudeInteractivePromptReady(text: string): boolean {
+  const compact = text.replace(/[^\p{L}\p{N}❯]+/gu, "").toLowerCase();
+  return compact.includes("claudecodev") &&
+    compact.includes("forshortcuts") &&
+    compact.includes("❯");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -373,6 +392,17 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
   private transcriptTailOffset = 0;
   private polledTranscriptSessionId: string | null = null;
   private readonly storedSessionsById = new Map<string, ClaudeStoredSession>();
+  private cliSessionReady = false;
+  private loginRequired = false;
+  private tuiReadinessBuffer = "";
+  private tclaudeSessionBaseline = new Set<string>();
+  private tclaudeTranscriptDiscoveryTimer: ReturnType<typeof setInterval> | null = null;
+  private tclaudeTranscriptDiscoveryDeadlineMs = 0;
+  private pendingStartupInput: {
+    text: string;
+    resolve: () => void;
+    reject: (error: Error) => void;
+  } | null = null;
 
   constructor(options: AdapterOptions) {
     super(options);
@@ -404,7 +434,19 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
     }
 
     this.startupOutputBuffer = "";
+    this.tuiReadinessBuffer = "";
     this.hasAutoConfirmedWorkspaceTrustPrompt = false;
+    this.cliSessionReady = false;
+    this.loginRequired = false;
+    this.rejectPendingStartupInput(new Error(`${claudeAdapterLabel(this.options.kind)} 正在重新启动，请稍后重试。`));
+    this.clearTClaudeTranscriptDiscovery();
+    if (this.options.kind === "tclaude" && !this.transcriptPath) {
+      this.tclaudeSessionBaseline = new Set(
+        listClaudeStoredSessions("tclaude", 100)
+          .filter((session) => this.isCurrentWorkspaceSession(session))
+          .map((session) => session.sessionId),
+      );
+    }
     ensureClaudeWorkspaceTrustAccepted(this.options.cwd);
 
     // Validate transcript file exists before launching Claude CLI.
@@ -416,7 +458,7 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
       } catch {
         this.setStatus("error");
         throw new Error(
-          "无法读取原 Claude 任务的会话记录。请确认任务仍存在后重试；为避免会话分叉，未创建新任务。",
+          `无法读取原 ${claudeAdapterLabel(this.options.kind)} 任务的会话记录。请确认任务仍存在后重试；为避免会话分叉，未创建新任务。`,
         );
       }
     }
@@ -424,6 +466,12 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
     await this.startHookServer();
     try {
       await super.start();
+      if (!this.cliSessionReady && this.pty) {
+        this.setStatus(
+          "starting",
+          `正在等待 ${claudeAdapterLabel(this.options.kind)} 准备完成。`,
+        );
+      }
     } catch (error) {
       await this.stopHookServer();
       throw error;
@@ -432,15 +480,33 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
 
   override async sendInput(text: string): Promise<void> {
     if (!this.pty) {
-      throw new Error("claude adapter is not running.");
+      throw new Error(`${claudeAdapterLabel(this.options.kind)} 尚未启动，请先切换到该终端后再试。`);
     }
-    if (this.state.status === "busy") {
-      throw new Error("claude is still working. Wait for the current reply or use /stop.");
+    if (this.state.status === "busy" || this.pendingStartupInput) {
+      throw new Error(`${claudeAdapterLabel(this.options.kind)} 正在处理，请等待当前回复或发送 /stop。`);
     }
     if (this.pendingApproval) {
-      throw new Error("A Claude approval request is pending. Reply with /confirm or /deny.");
+      throw new Error(`${claudeAdapterLabel(this.options.kind)} 正在等待审批，请先确认或拒绝。`);
     }
 
+    const normalizedText = normalizeOutput(text).trim();
+    if (this.loginRequired && normalizedText.toLowerCase() !== "/login") {
+      throw new Error("Claude Code 尚未登录，请发送 /login 完成登录后再试。");
+    }
+    if (!this.cliSessionReady && normalizedText.toLowerCase() !== "/login") {
+      await new Promise<void>((resolve, reject) => {
+        this.pendingStartupInput = {
+          text,
+          resolve,
+          reject: (error) => reject(error),
+        };
+      });
+      return;
+    }
+    await this.dispatchRemoteInput(text);
+  }
+
+  private async dispatchRemoteInput(text: string): Promise<void> {
     const normalizedText = normalizeOutput(text).trim();
     this.pendingInjectedInputs.push({
       normalizedText,
@@ -458,7 +524,88 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
     this.writeToPty(this.buildRemoteInputPayload(text));
     await delay(CLAUDE_REMOTE_ENTER_DELAY_MS);
     this.writeToPty("\r");
+    if (this.options.kind === "tclaude" && !this.transcriptPath) {
+      this.startTClaudeTranscriptDiscovery();
+    }
     this.armWechatWorkingNotice();
+  }
+
+  private markClaudeSessionReady(): void {
+    this.cliSessionReady = true;
+    this.loginRequired = false;
+    if (this.options.kind === "tclaude") {
+      this.clearHookHealthCheck();
+    }
+    if (this.state.status === "starting") {
+      this.setStatus("idle", `${claudeAdapterLabel(this.options.kind)} 已准备完成。`);
+    }
+    const pending = this.pendingStartupInput;
+    if (!pending) {
+      return;
+    }
+    this.pendingStartupInput = null;
+    void this.dispatchRemoteInput(pending.text).then(pending.resolve, pending.reject);
+  }
+
+  private rejectPendingStartupInput(error: Error): void {
+    const pending = this.pendingStartupInput;
+    if (!pending) {
+      return;
+    }
+    this.pendingStartupInput = null;
+    pending.reject(error);
+  }
+
+  private isCurrentWorkspaceSession(session: ClaudeStoredSession): boolean {
+    return Boolean(session.cwd) && path.resolve(session.cwd!) === path.resolve(this.options.cwd);
+  }
+
+  private startTClaudeTranscriptDiscovery(): void {
+    if (this.options.kind !== "tclaude" || this.transcriptPath) {
+      return;
+    }
+    this.clearTClaudeTranscriptDiscovery();
+    this.tclaudeTranscriptDiscoveryDeadlineMs = Date.now() + 10_000;
+    const discover = () => {
+      const candidates = listClaudeStoredSessions("tclaude", 100)
+        .filter((session) => this.isCurrentWorkspaceSession(session));
+      const candidate = candidates.find(
+        (session) => !this.tclaudeSessionBaseline.has(session.sessionId),
+      ) ?? candidates.find((session) => {
+        const lastInputAtMs = Date.parse(this.state.lastInputAt ?? "") || 0;
+        return lastInputAtMs > 0 &&
+          Date.parse(session.lastUpdatedAt) >= lastInputAtMs - 2_000;
+      });
+      if (candidate) {
+        this.runtimeSessionId = candidate.sessionId;
+        this.resumeConversationId = candidate.sessionId;
+        this.transcriptPath = candidate.transcriptPath;
+        this.state.sharedSessionId = candidate.sessionId;
+        this.state.activeRuntimeSessionId = candidate.sessionId;
+        this.state.resumeConversationId = candidate.sessionId;
+        this.state.transcriptPath = candidate.transcriptPath;
+        this.tclaudeSessionBaseline.add(candidate.sessionId);
+        this.clearTClaudeTranscriptDiscovery();
+        this.startTranscriptThinkingWatch(true);
+        return;
+      }
+      if (Date.now() >= this.tclaudeTranscriptDiscoveryDeadlineMs) {
+        this.clearTClaudeTranscriptDiscovery();
+      }
+    };
+    discover();
+    if (!this.transcriptPath) {
+      this.tclaudeTranscriptDiscoveryTimer = setInterval(discover, 500);
+      this.tclaudeTranscriptDiscoveryTimer.unref?.();
+    }
+  }
+
+  private clearTClaudeTranscriptDiscovery(): void {
+    if (this.tclaudeTranscriptDiscoveryTimer) {
+      clearInterval(this.tclaudeTranscriptDiscoveryTimer);
+      this.tclaudeTranscriptDiscoveryTimer = null;
+    }
+    this.tclaudeTranscriptDiscoveryDeadlineMs = 0;
   }
 
   async sendInputToSession(
@@ -503,11 +650,11 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
       throw new Error("请选择要继续的任务。");
     }
     if (this.state.status === "busy" || this.state.status === "awaiting_approval") {
-      throw new Error(`${this.options.kind} 正在处理，请先等待完成或停止当前任务。`);
+      throw new Error(`${claudeAdapterLabel(this.options.kind)} 正在处理，请先等待完成或停止当前任务。`);
     }
     const stored = this.findStoredSession(normalizedSessionId);
     if (!stored) {
-      throw new Error(`没有找到这个 ${this.options.kind === "tclaude" ? "TClaude" : "Claude"} 任务。`);
+      throw new Error(`没有找到这个 ${claudeAdapterLabel(this.options.kind)} 任务。`);
     }
 
     await this.dispose();
@@ -534,7 +681,7 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
 
   async createSession(): Promise<void> {
     if (this.state.status === "busy" || this.state.status === "awaiting_approval") {
-      throw new Error(`${this.options.kind} 正在处理，请先等待完成或停止当前任务。`);
+      throw new Error(`${claudeAdapterLabel(this.options.kind)} 正在处理，请先等待完成或停止当前任务。`);
     }
     await this.reset();
     for (let attempt = 0; attempt < 40 && !this.runtimeSessionId; attempt += 1) {
@@ -662,6 +809,9 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
   }
 
   override async dispose(): Promise<void> {
+    this.rejectPendingStartupInput(new Error(`${claudeAdapterLabel(this.options.kind)} 已关闭，消息未发送。`));
+    this.cliSessionReady = false;
+    this.clearTClaudeTranscriptDiscovery();
     this.detachLocalTerminal();
     this.clearWechatWorkingNotice(true);
     this.pendingCliApprovalHints = null;
@@ -689,6 +839,16 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
     this.attachLocalTerminal();
     this.resizePtyToTerminal();
     this.startHookHealthCheck();
+    if (!this.cliSessionReady) {
+      this.setStatus(
+        "starting",
+        `正在等待 ${claudeAdapterLabel(this.options.kind)} 准备完成。`,
+      );
+    }
+  }
+
+  protected override shouldMarkReadyAfterStart(): boolean {
+    return false;
   }
 
   protected override handleData(rawText: string): void {
@@ -697,6 +857,15 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
     const text = normalizeOutput(rawText);
     if (!text) {
       return;
+    }
+
+    if (this.options.kind === "tclaude" && !this.cliSessionReady && !this.hasAcceptedInput) {
+      this.tuiReadinessBuffer = `${this.tuiReadinessBuffer}${text}`.slice(
+        -CLAUDE_TUI_READY_BUFFER_LIMIT,
+      );
+      if (isClaudeInteractivePromptReady(this.tuiReadinessBuffer)) {
+        this.markClaudeSessionReady();
+      }
     }
 
     if (
@@ -721,6 +890,18 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
     const compactFailure = this.extractClaudeCompactFailure(text);
     if (compactFailure) {
       this.failClaudeTurn(compactFailure);
+      return;
+    }
+
+    if (CLAUDE_LOGIN_REQUIRED_RE.test(text)) {
+      this.loginRequired = true;
+      const message = `${claudeAdapterLabel(this.options.kind)} 尚未登录，请发送 /login 完成登录后再试。`;
+      this.rejectPendingStartupInput(new Error(message));
+      if (this.hasAcceptedInput) {
+        this.failClaudeTurn(message);
+      } else {
+        this.setStatus("idle", message);
+      }
       return;
     }
 
@@ -770,6 +951,15 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
     this.detachLocalTerminal();
     this.clearWechatWorkingNotice(true);
     this.pendingCliApprovalHints = null;
+    this.cliSessionReady = false;
+    this.clearTClaudeTranscriptDiscovery();
+    this.rejectPendingStartupInput(
+      new Error(
+        this.loginRequired
+          ? "Claude Code 尚未登录，请发送 /login 完成登录后再试。"
+          : `${claudeAdapterLabel(this.options.kind)} 已关闭，消息未发送。`,
+      ),
+    );
     void this.stopHookServer();
     if (this.recoveringInvalidResume && !this.shuttingDown) {
       this.clearCompletionTimer();
@@ -781,8 +971,8 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
       this.state.pendingApproval = null;
       return;
     }
-    if (cleanExternalExit) {
-      const label = this.options.kind === "tclaude" ? "TClaude" : "Claude";
+    if (cleanExternalExit && !this.loginRequired) {
+      const label = claudeAdapterLabel(this.options.kind);
       this.emitClaudeNotice(
         `${label} 已关闭。\n发送“/${this.options.kind}”可重新打开。`,
         "warning",
@@ -886,6 +1076,7 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
   }
 
   private async stopHookServer(): Promise<void> {
+    this.clearHookHealthCheck();
     this.flushPendingClaudeHookApprovals();
     if (!this.hookServer) {
       this.hookPort = null;
@@ -908,7 +1099,10 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
     }
 
     const { workspaceDir } = ensureWorkspaceChannelDir(this.options.cwd);
-    const runtimeDir = path.join(workspaceDir, "claude-runtime");
+    const runtimeDir = path.join(
+      workspaceDir,
+      resolveClaudeRuntimeDirectoryName(this.options.kind as "claude" | "tclaude"),
+    );
     ensurePrivateDir(runtimeDir);
 
     const hookScriptPath = path.join(
@@ -1034,7 +1228,7 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
       }
 
       this.workingNoticeSent = true;
-      this.emitClaudeNotice(`Claude is still working on:\n${this.currentPreview}`);
+      this.emitClaudeNotice(`${claudeAdapterLabel(this.options.kind)} 正在处理：\n${this.currentPreview}`);
     }, this.workingNoticeDelayMs);
     this.workingNoticeTimer.unref?.();
   }
@@ -1054,22 +1248,35 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
     this.clearHookHealthCheck();
     this.hookHealthCheckTimer = setTimeout(() => {
       this.hookHealthCheckTimer = null;
-      if (this.hookReceivedCount === 0 && !this.shuttingDown) {
-        const logHint = this.hookErrorLogPath
-          ? t("hook.healthCheck.logHint", { logPath: this.hookErrorLogPath })
-          : "";
-        this.emit({
-          type: "stdout",
-          text: [
-            t("hook.healthCheck.warning"),
-            logHint,
-            t("hook.healthCheck.fixes"),
-          ].filter(Boolean).join("\n"),
-          timestamp: nowIso(),
-        });
-      }
+      this.handleClaudeHookHealthCheckTimeout();
     }, 15_000);
     this.hookHealthCheckTimer.unref?.();
+  }
+
+  private handleClaudeHookHealthCheckTimeout(): void {
+    if (this.hookReceivedCount !== 0 || this.shuttingDown) {
+      return;
+    }
+    if (this.options.kind === "tclaude" && this.cliSessionReady) {
+      return;
+    }
+    const message = `${claudeAdapterLabel(this.options.kind)} 启动后没有建立消息通道，请重新发送 /${this.options.kind}；如果仍失败，请在电脑端查看启动错误。`;
+    if (this.pendingStartupInput) {
+      this.rejectPendingStartupInput(new Error(message));
+      this.setStatus("error", message);
+    }
+    const logHint = this.hookErrorLogPath
+      ? t("hook.healthCheck.logHint", { logPath: this.hookErrorLogPath })
+      : "";
+    this.emit({
+      type: "stdout",
+      text: [
+        message,
+        logHint,
+        t("hook.healthCheck.fixes"),
+      ].filter(Boolean).join("\n"),
+      timestamp: nowIso(),
+    });
   }
 
   private clearHookHealthCheck(): void {
@@ -1348,6 +1555,7 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
     this.transcriptPath = nextTranscriptPath;
     this.state.transcriptPath = nextTranscriptPath ?? undefined;
     this.startTranscriptThinkingWatch();
+    this.markClaudeSessionReady();
 
     if (previousRuntimeSessionId === payload.session_id) {
       return;
@@ -1417,7 +1625,7 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
     this.setStatus("error");
     this.emit({
       type: "fatal_error",
-      message: `原 Claude 任务 ${failedResumeConversationId} 已不可用。请在电脑端确认任务状态后重试；为避免会话分叉，未创建新任务。`,
+      message: `原 ${claudeAdapterLabel(this.options.kind)} 任务 ${failedResumeConversationId} 已不可用。请在电脑端确认任务状态后重试；为避免会话分叉，未创建新任务。`,
       timestamp: nowIso(),
     });
   }
@@ -1568,19 +1776,20 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
     this.failClaudeTurn(buildClaudeFailureMessage(payload));
   }
 
-  private startTranscriptThinkingWatch(): void {
+  private startTranscriptThinkingWatch(fromStart = false): void {
     this.stopTranscriptThinkingWatch();
     if (!this.transcriptPath) {
       return;
     }
-    if (!isThinkingForwardEnabled()) {
+    const forwardThinking = isThinkingForwardEnabled();
+    if (!forwardThinking && this.options.kind !== "tclaude") {
       return;
     }
 
     this.transcriptTailOffset = 0;
     try {
       const stat = fs.statSync(this.transcriptPath);
-      this.transcriptTailOffset = stat.size;
+      this.transcriptTailOffset = fromStart ? 0 : stat.size;
     } catch {
       return;
     }
@@ -1629,8 +1838,11 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
             continue;
           }
 
+          this.handleTClaudeTranscriptAssistant(parsed);
+
           for (const block of parsed.message.content) {
             if (
+              forwardThinking &&
               block.type === "thinking" &&
               typeof block.thinking === "string" &&
               block.thinking.trim()
@@ -1651,6 +1863,33 @@ export class ClaudeCompanionAdapter extends AbstractPtyAdapter {
       }
     }, 800);
     this.transcriptPollTimer.unref?.();
+  }
+
+  private handleTClaudeTranscriptAssistant(parsed: {
+    message?: {
+      stop_reason?: string | null;
+      content?: Array<{ type?: string; text?: string }>;
+    };
+  }): void {
+    if (
+      this.options.kind !== "tclaude" ||
+      !this.hasAcceptedInput ||
+      this.state.status !== "busy" ||
+      parsed.message?.stop_reason !== "end_turn" ||
+      !Array.isArray(parsed.message.content)
+    ) {
+      return;
+    }
+    const finalText = normalizeOutput(
+      parsed.message.content
+        .filter((block) => block?.type === "text" && typeof block.text === "string")
+        .map((block) => block.text)
+        .join("\n"),
+    ).trim();
+    if (!finalText) {
+      return;
+    }
+    this.handleClaudeStop({ last_assistant_message: finalText });
   }
 
   private stopTranscriptThinkingWatch(): void {

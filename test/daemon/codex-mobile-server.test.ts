@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 
 import { CodexMobileAuthStore } from "../../src/daemon/codex-mobile-auth.ts";
-import { CODEX_MOBILE_CSS, CODEX_MOBILE_JS } from "../../src/daemon/codex-mobile-web.ts";
+import {
+  CODEX_MOBILE_CSS,
+  CODEX_MOBILE_HTML,
+  CODEX_MOBILE_JS,
+} from "../../src/daemon/codex-mobile-web.ts";
 import { DaemonWorkspaceStateStore } from "../../src/daemon/daemon-state.ts";
 import {
   CODEX_MOBILE_ASSET_VERSION,
@@ -14,6 +18,176 @@ import {
   resolvePreferredLanAddress,
   startCodexMobileServer,
 } from "../../src/daemon/codex-mobile-server.ts";
+
+describe("mobile document title", () => {
+  test("tracks task selection, async task loading, rename, and stable fallback", () => {
+    const state = {
+      currentThreadId: "task-a",
+      tasks: [] as Array<{ threadId: string; title: string }>,
+    };
+    const updateTitle = loadMobileDocumentTitleUpdater({ state, adapterName: "Codex" });
+
+    expect(updateTitle()).toBe("DeskRelay · Codex");
+    state.tasks = [
+      { threadId: "task-a", title: "任务 A" },
+      { threadId: "task-b", title: "任务 B" },
+    ];
+    expect(updateTitle()).toBe("任务 A");
+
+    state.currentThreadId = "task-b";
+    expect(updateTitle()).toBe("任务 B");
+
+    state.tasks[1]!.title = "任务 B（已重命名）";
+    expect(updateTitle()).toBe("任务 B（已重命名）");
+
+    state.currentThreadId = "";
+    expect(updateTitle()).toBe("DeskRelay · Codex");
+  });
+});
+
+describe("mobile boot connection states", () => {
+  test("distinguishes Relay waiting, connected, and direct LAN startup", () => {
+    const resolve = loadMobileBootConnectionStateResolver();
+
+    expect(resolve({ ok: true, deviceOnline: false })).toEqual({
+      mode: "relay",
+      ready: false,
+      label: "正在等待你的电脑主动连接服务器…",
+    });
+    expect(resolve({ ok: true, deviceOnline: true })).toEqual({
+      mode: "relay",
+      ready: true,
+      label: "电脑已连接，正在读取任务…",
+    });
+    expect(resolve({ ok: true })).toEqual({
+      mode: "direct",
+      ready: true,
+      label: "正在读取电脑上的任务…",
+    });
+  });
+
+  test("waits for the computer before starting authentication", () => {
+    expect(CODEX_MOBILE_HTML).toContain("正在检查电脑连接状态…");
+    expect(CODEX_MOBILE_JS).toContain("async function waitForComputerConnection");
+    expect(CODEX_MOBILE_JS).toContain("await waitForComputerConnection();");
+    expect(CODEX_MOBILE_JS).toContain("await initializeAuthentication();");
+  });
+});
+
+describe("mobile fetch resilience", () => {
+  test("classifies browser transport failures without hiding HTTP errors", () => {
+    const helpers = loadMobileFetchResilienceHelpers();
+
+    expect(helpers.isNetworkError(new TypeError("Failed to fetch"))).toBe(true);
+    expect(helpers.isNetworkError(new TypeError("Load failed"))).toBe(true);
+    expect(helpers.isNetworkError(new Error("NetworkError when attempting to fetch resource."))).toBe(true);
+    expect(helpers.isNetworkError(Object.assign(new Error("电脑当前离线"), { status: 503 }))).toBe(false);
+    expect(helpers.isNetworkError(new Error("业务失败"))).toBe(false);
+  });
+
+  test("retries one read-only request and translates the final network failure", () => {
+    const helpers = loadMobileFetchResilienceHelpers();
+    const failure = new TypeError("Failed to fetch");
+
+    expect(helpers.shouldRetry(failure, "GET", 0)).toBe(true);
+    expect(helpers.shouldRetry(failure, "GET", 1)).toBe(false);
+    expect(helpers.shouldRetry(failure, "POST", 0)).toBe(false);
+
+    const normalized = helpers.normalize(failure) as Error & { network?: boolean };
+    expect(normalized.message).toBe("网络连接暂时中断，请稍后重试。");
+    expect(normalized.network).toBe(true);
+  });
+
+  test("retries an idempotent GET once but never replays a POST", async () => {
+    let getAttempts = 0;
+    const fetchGet = loadMobileFetchJson(async () => {
+      getAttempts += 1;
+      if (getAttempts === 1) throw new TypeError("Failed to fetch");
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true }),
+      };
+    });
+    await expect(fetchGet("/api/tasks")).resolves.toEqual({ ok: true });
+    expect(getAttempts).toBe(2);
+
+    let postAttempts = 0;
+    const fetchPost = loadMobileFetchJson(async () => {
+      postAttempts += 1;
+      throw new TypeError("Failed to fetch");
+    });
+    await expect(fetchPost("/api/tasks/task/messages", { method: "POST" })).rejects.toMatchObject({
+      message: "网络连接暂时中断，请稍后重试。",
+      network: true,
+    });
+    expect(postAttempts).toBe(1);
+  });
+
+  test("keeps transient background refresh failures quiet and treats POST delivery as uncertain", () => {
+    expect(CODEX_MOBILE_JS).toContain("if (error.network && !initial && state.tasks.length)");
+    expect(CODEX_MOBILE_JS).toContain("if (!error.network) showToast");
+    expect(CODEX_MOBILE_JS).toContain('var uncertain = Boolean(error && error.network) ||');
+  });
+});
+
+describe("mobile optimistic progress isolation", () => {
+  const oldProgress = [
+    { id: "old-command", turnId: "turn-old" },
+    { id: "old-tool", turnId: "turn-old" },
+    { id: "old-plan", turnId: "turn-old" },
+  ];
+
+  test("clears completed progress immediately when a new direct turn starts", () => {
+    const state = {
+      progressItems: oldProgress.slice(),
+      localRunSummary: null,
+      optimisticProgressTurnId: null as string | null,
+    };
+    const start = loadMobileOptimisticRunStarter({ state, visibleSummary: null });
+    const pending = { optimisticRun: false };
+
+    start(pending);
+
+    expect(pending.optimisticRun).toBe(true);
+    expect(state.progressItems).toEqual([]);
+    expect(state.optimisticProgressTurnId).toBe("");
+  });
+
+  test("does not clear the current real turn progress for a queued follow-up", () => {
+    const state = {
+      progressItems: oldProgress.slice(),
+      localRunSummary: null,
+      optimisticProgressTurnId: null as string | null,
+    };
+    const start = loadMobileOptimisticRunStarter({
+      state,
+      visibleSummary: { status: "running" },
+    });
+    const pending = { optimisticRun: false };
+
+    start(pending);
+
+    expect(pending.optimisticRun).toBe(false);
+    expect(state.progressItems).toEqual(oldProgress);
+    expect(state.optimisticProgressTurnId).toBeNull();
+  });
+
+  test("keeps old progress hidden until the new turn id and progress arrive", () => {
+    const filter = loadMobileOptimisticProgressFilter();
+    expect(filter(oldProgress, "")).toEqual([]);
+    expect(filter(oldProgress, "")).toEqual([]);
+    expect(filter([
+      ...oldProgress,
+      { id: "new-progress", turnId: "turn-new" },
+    ], "turn-new")).toEqual([{ id: "new-progress", turnId: "turn-new" }]);
+  });
+
+  test("leaves progress unchanged when no optimistic direct turn is active", () => {
+    const filter = loadMobileOptimisticProgressFilter();
+    expect(filter(oldProgress, null)).toEqual(oldProgress);
+  });
+});
 
 describe("paginateCodexMobileMessages", () => {
   test("returns the latest page first and walks backwards with an opaque boundary", () => {
@@ -64,16 +238,79 @@ describe("mobile approval result helpers", () => {
     expect(helpers.title("deny")).toBe("已拒绝此操作");
   });
 
-  test("places an approval result after the matching turn", () => {
+  test("interleaves messages, progress, pending approvals, and approval results by occurrence time", () => {
     const helpers = loadMobileApprovalResultHelpers();
-    const messages = [
-      { turnId: "turn-1" },
-      { turnId: "turn-1" },
-      { turnId: "turn-2" },
-    ];
-    expect(helpers.insertIndex(messages, { turnId: "turn-1" })).toBe(2);
-    expect(helpers.insertIndex(messages, { turnId: "turn-missing" })).toBe(3);
-    expect(helpers.insertIndex(messages, {})).toBe(3);
+    const timeline = helpers.buildTimeline({
+      messages: [
+        { id: "commentary-1", turnId: "turn-1", createdAtMs: 10_000 },
+        { id: "commentary-2", turnId: "turn-1", createdAtMs: 12_000 },
+        { id: "final", turnId: "turn-1", createdAtMs: 15_000 },
+      ],
+      progressItems: [{ id: "command", turnId: "turn-1", createdAtMs: 10_500 }],
+      approvalResults: [
+        { id: "approval-2", turnId: "turn-1", resolvedAt: "1970-01-01T00:00:13.000Z" },
+        { id: "approval-1", turnId: "turn-1", resolvedAt: "1970-01-01T00:00:11.000Z" },
+      ],
+      pendingApproval: { requestId: "pending", turnId: "turn-1", createdAtMs: 14_000 },
+    });
+
+    expect(timeline.map((item) =>
+      item.message?.id ?? item.progressItem?.id ?? item.approvalResult?.id ?? item.pendingApproval?.requestId
+    )).toEqual([
+      "commentary-1",
+      "command",
+      "approval-1",
+      "commentary-2",
+      "approval-2",
+      "pending",
+      "final",
+    ]);
+  });
+
+  test("places an approval between timestamped messages even when the earlier message lacks a turn id", () => {
+    const helpers = loadMobileApprovalResultHelpers();
+    const timeline = helpers.buildTimeline({
+      messages: [
+        { id: "user", role: "user", turnId: "turn-1", createdAtMs: 10_000 },
+        { id: "commentary-without-turn", role: "assistant", createdAtMs: 12_000 },
+        { id: "final", role: "assistant", turnId: "turn-1", createdAtMs: 15_000 },
+      ],
+      approvalResults: [{
+        id: "approval",
+        turnId: "turn-1",
+        resolvedAt: "1970-01-01T00:00:13.000Z",
+      }],
+    });
+
+    expect(timeline.map((item) => item.message?.id ?? item.approvalResult?.id)).toEqual([
+      "user",
+      "commentary-without-turn",
+      "approval",
+      "final",
+    ]);
+  });
+
+  test("keeps equal-time items stable and scopes undated approval fallbacks to their turn", () => {
+    const helpers = loadMobileApprovalResultHelpers();
+    const timeline = helpers.buildTimeline({
+      messages: [
+        { id: "turn-1-message", turnId: "turn-1", createdAtMs: 10_000 },
+        { id: "turn-2-message", turnId: "turn-2", createdAtMs: 10_000 },
+      ],
+      approvalResults: [
+        { id: "same-time", turnId: "turn-1", resolvedAt: "1970-01-01T00:00:10.000Z" },
+        { id: "legacy", turnId: "turn-1" },
+      ],
+    });
+
+    expect(timeline.map((item) =>
+      item.message?.id ?? item.approvalResult?.id
+    )).toEqual([
+      "turn-1-message",
+      "same-time",
+      "legacy",
+      "turn-2-message",
+    ]);
   });
 });
 
@@ -93,12 +330,114 @@ function createAuthStore(password?: string): CodexMobileAuthStore {
   return store;
 }
 
+function loadMobileFetchJson(
+  fetchImpl: (...args: unknown[]) => Promise<unknown>,
+): (path: string, options?: Record<string, unknown>) => Promise<unknown> {
+  const start = CODEX_MOBILE_JS.indexOf("  function isMobileFetchNetworkError");
+  const end = CODEX_MOBILE_JS.indexOf("\n  async function checkForAppUpdate", start);
+  if (start < 0 || end < 0) throw new Error("Mobile fetchJson source not found");
+  const source = CODEX_MOBILE_JS.slice(start, end);
+  return new Function("fetch", "setTimeout", "document", `${source}
+return fetchJson;`)(
+    fetchImpl,
+    (resolve: () => void) => resolve(),
+    { hidden: false },
+  ) as (path: string, options?: Record<string, unknown>) => Promise<unknown>;
+}
+
+function loadMobileFetchResilienceHelpers(): {
+  isNetworkError: (error: unknown) => boolean;
+  shouldRetry: (error: unknown, method: string, attempt: number) => boolean;
+  normalize: (error: unknown) => Error & { network?: boolean };
+} {
+  const start = CODEX_MOBILE_JS.indexOf("  function isMobileFetchNetworkError");
+  const end = CODEX_MOBILE_JS.indexOf("\n  async function waitForMobileFetchRetry", start);
+  if (start < 0 || end < 0) throw new Error("Mobile fetch resilience helpers not found");
+  const source = CODEX_MOBILE_JS.slice(start, end);
+  return new Function(`${source}
+return {
+  isNetworkError: isMobileFetchNetworkError,
+  shouldRetry: shouldRetryMobileFetch,
+  normalize: normalizeMobileFetchError
+};`)() as ReturnType<typeof loadMobileFetchResilienceHelpers>;
+}
+
 function loadMobileMarkdownRenderer(): (markdown: string, foldPrefix?: string) => string {
   const start = CODEX_MOBILE_JS.indexOf("  function escapeHtml");
   const end = CODEX_MOBILE_JS.indexOf("\n  async function fetchJson", start);
   if (start < 0 || end < 0) throw new Error("Mobile markdown renderer not found");
   const source = CODEX_MOBILE_JS.slice(start, end);
   return new Function(`${source}\nreturn renderMarkdown;`)() as (markdown: string) => string;
+}
+
+function loadMobileDocumentTitleUpdater(params: {
+  state: {
+    currentThreadId: string;
+    tasks: Array<{ threadId: string; title: string }>;
+  };
+  adapterName?: string;
+}): () => string {
+  const start = CODEX_MOBILE_JS.indexOf("  function updateDocumentTitle");
+  const end = CODEX_MOBILE_JS.indexOf("\n  function isAdapterCapabilityError", start);
+  if (start < 0 || end < 0) throw new Error("Mobile document-title updater not found");
+  const source = CODEX_MOBILE_JS.slice(start, end);
+  const document = { title: "" };
+  const update = new Function("document", "currentTask", "currentAdapterName", `
+${source}
+return updateDocumentTitle;
+`)(
+    document,
+    () => params.state.tasks.find((task) => task.threadId === params.state.currentThreadId) ?? null,
+    () => params.adapterName ?? "Codex",
+  ) as () => void;
+  return () => {
+    update();
+    return document.title;
+  };
+}
+
+function loadMobileBootConnectionStateResolver(): (
+  health: { ok?: boolean; deviceOnline?: boolean } | null,
+) => { mode: "relay" | "direct"; ready: boolean; label: string } {
+  const start = CODEX_MOBILE_JS.indexOf("  function resolveBootConnectionState");
+  const end = CODEX_MOBILE_JS.indexOf("\n  function bootReadyStatus", start);
+  if (start < 0 || end < 0) throw new Error("Mobile boot connection resolver not found");
+  const source = CODEX_MOBILE_JS.slice(start, end);
+  return new Function(`${source}\nreturn resolveBootConnectionState;`)() as ReturnType<
+    typeof loadMobileBootConnectionStateResolver
+  >;
+}
+
+function loadMobileOptimisticRunStarter(params: {
+  state: {
+    progressItems: Array<{ id: string; turnId?: string }>;
+    localRunSummary: unknown;
+    optimisticProgressTurnId?: string | null;
+  };
+  visibleSummary: { status: string } | null;
+}): (pending: { optimisticRun: boolean }) => void {
+  const start = CODEX_MOBILE_JS.indexOf("  function beginOptimisticRunIfNeeded");
+  const end = CODEX_MOBILE_JS.indexOf("\n  function retryPendingMessage", start);
+  if (start < 0 || end < 0) throw new Error("Mobile optimistic-run starter not found");
+  const source = CODEX_MOBILE_JS.slice(start, end);
+  return new Function("state", "visibleSummary", `
+function currentVisibleRunSummary() { return visibleSummary; }
+${source}
+return beginOptimisticRunIfNeeded;
+`)(params.state, params.visibleSummary) as (pending: { optimisticRun: boolean }) => void;
+}
+
+function loadMobileOptimisticProgressFilter(): (
+  progressItems: Array<{ id: string; turnId?: string }>,
+  optimisticTurnId: string | null,
+) => Array<{ id: string; turnId?: string }> {
+  const start = CODEX_MOBILE_JS.indexOf("  function filterProgressItemsForOptimisticTurn");
+  const end = CODEX_MOBILE_JS.indexOf("\n  function resolveVisibleRunSummary", start);
+  if (start < 0 || end < 0) throw new Error("Mobile optimistic-progress filter not found");
+  const source = CODEX_MOBILE_JS.slice(start, end);
+  return new Function(`${source}\nreturn filterProgressItemsForOptimisticTurn;`)() as ReturnType<
+    typeof loadMobileOptimisticProgressFilter
+  >;
 }
 
 function loadMobileRunSummaryResolver(): (
@@ -142,6 +481,7 @@ function loadMobileTaskSidebarHelpers(): {
   ) => void;
   sortTasksByRecency: <T extends { lastUpdatedAt?: string }>(tasks: T[]) => T[];
   taskBoardLane: (task: { status?: string; completedAt?: string }) => string;
+  isTaskBoardInProgress: (task: { status?: string }) => boolean;
   taskBoardMatchesQuery: (
     task: { title?: string; projectName?: string; adapterLabel?: string },
     query: string,
@@ -165,11 +505,112 @@ return {
   setProjectGroupCollapsed,
   sortTasksByRecency,
   taskBoardLane,
+  isTaskBoardInProgress,
   taskBoardMatchesQuery,
   formatTaskBoardTime,
   shouldShowTaskAdapterLabels,
   projectTaskCreationSource
 };`)() as ReturnType<typeof loadMobileTaskSidebarHelpers>;
+}
+
+function loadMobileConversationCacheHelpers(): {
+  conversationStateKey: (adapter: string, threadId: string) => string;
+  setBoundedConversationValue: <T>(
+    values: Record<string, T>,
+    order: string[],
+    key: string,
+    value: T,
+    limit: number,
+  ) => string[];
+  getBoundedConversationValue: <T>(
+    values: Record<string, T>,
+    order: string[],
+    key: string,
+  ) => T | null;
+  deleteConversationValue: <T>(
+    values: Record<string, T>,
+    order: string[],
+    key: string,
+  ) => void;
+} {
+  const start = CODEX_MOBILE_JS.indexOf("  function conversationStateKey");
+  const end = CODEX_MOBILE_JS.indexOf("\n  function readSetupToken", start);
+  if (start < 0 || end < 0) throw new Error("Mobile conversation cache helpers not found");
+  const source = CODEX_MOBILE_JS.slice(start, end);
+  return new Function(`${source}
+return {
+  conversationStateKey,
+  setBoundedConversationValue,
+  getBoundedConversationValue,
+  deleteConversationValue
+};`)() as ReturnType<typeof loadMobileConversationCacheHelpers>;
+}
+
+function loadMobileConversationSnapshotRuntime(params: {
+  state: Record<string, any>;
+  composerInput?: { value: string; placeholder?: string };
+  messagesEl?: { scrollTop: number };
+}): {
+  restoreConversationSnapshot: (adapter: string, threadId: string) => boolean;
+  setBoundedConversationValue: (
+    values: Record<string, unknown>,
+    order: string[],
+    key: string,
+    value: unknown,
+    limit: number,
+  ) => string[];
+  conversationStateKey: (adapter: string, threadId: string) => string;
+  renderEvents: string[];
+} {
+  const start = CODEX_MOBILE_JS.indexOf("  function conversationStateKey");
+  const end = CODEX_MOBILE_JS.indexOf("\n  function readSetupToken", start);
+  if (start < 0 || end < 0) throw new Error("Mobile conversation snapshot runtime not found");
+  const source = CODEX_MOBILE_JS.slice(start, end);
+  const renderEvents: string[] = [];
+  const runtime = new Function(
+    "state",
+    "composerInput",
+    "composerImageButton",
+    "messagesEl",
+    "renderPendingImages",
+    "renderQueuedMessages",
+    "resizeComposer",
+    "renderMessages",
+    "requestAnimationFrame",
+    "scrollToLatest",
+    "updateUserMessageNavigation",
+    "isNearBottom",
+    "MAX_COMPOSER_DRAFTS",
+    "MAX_CONVERSATION_SNAPSHOTS",
+    `${source}
+return { restoreConversationSnapshot, setBoundedConversationValue, conversationStateKey };`,
+  )(
+    params.state,
+    params.composerInput ?? { value: "", placeholder: "" },
+    { disabled: false },
+    params.messagesEl ?? { scrollTop: 0 },
+    () => renderEvents.push("images"),
+    () => renderEvents.push("queue"),
+    () => renderEvents.push("composer"),
+    () => renderEvents.push("messages"),
+    (callback: () => void) => callback(),
+    () => renderEvents.push("latest"),
+    () => renderEvents.push("navigation"),
+    () => true,
+    40,
+    12,
+  ) as {
+    restoreConversationSnapshot: (adapter: string, threadId: string) => boolean;
+    setBoundedConversationValue: (
+      values: Record<string, unknown>,
+      order: string[],
+      key: string,
+      value: unknown,
+      limit: number,
+    ) => string[];
+    conversationStateKey: (adapter: string, threadId: string) => string;
+  };
+  return { ...runtime, renderEvents };
 }
 
 function loadMobileTaskSelector(): <T extends { threadId: string }>(
@@ -183,6 +624,18 @@ function loadMobileTaskSelector(): <T extends { threadId: string }>(
   return new Function(`${source}\nreturn resolveTaskSelector;`)() as ReturnType<
     typeof loadMobileTaskSelector
   >;
+}
+
+function loadMobileTaskBoardHref(currentHref: string): (
+  task: { adapter: string; threadId: string },
+) => string {
+  const start = CODEX_MOBILE_JS.indexOf("  function taskBoardTaskHref");
+  const end = CODEX_MOBILE_JS.indexOf("\n  function formatTaskBoardTime", start);
+  if (start < 0 || end < 0) throw new Error("Mobile task-board href helper not found");
+  const source = CODEX_MOBILE_JS.slice(start, end);
+  return new Function("window", `${source}\nreturn taskBoardTaskHref;`)({
+    location: { href: currentHref },
+  }) as ReturnType<typeof loadMobileTaskBoardHref>;
 }
 
 function loadMobileMessagePageMerger(): (
@@ -248,20 +701,27 @@ function loadMobileRunSummaryRenderKey(): (
 
 function loadMobileApprovalResultHelpers(): {
   title: (action: string) => string;
-  insertIndex: (
-    messages: Array<{ turnId?: string }>,
-    result: { turnId?: string },
-  ) => number;
+  buildTimeline: (params: {
+    messages: Array<Record<string, unknown>>;
+    approvalResults?: Array<Record<string, unknown>>;
+    pendingApproval?: Record<string, unknown> | null;
+    progressItems?: Array<Record<string, unknown>>;
+  }) => Array<{
+    kind: string;
+    message?: Record<string, unknown>;
+    approvalResult?: Record<string, unknown>;
+    pendingApproval?: Record<string, unknown>;
+    progressItem?: Record<string, unknown>;
+  }>;
 } {
   const start = CODEX_MOBILE_JS.indexOf("  function approvalResultTitle");
   const end = CODEX_MOBILE_JS.indexOf("\n  function renderApprovalResult", start);
   if (start < 0 || end < 0) throw new Error("Mobile approval-result helpers not found");
   const source = CODEX_MOBILE_JS.slice(start, end);
-  return new Function(`${source}\nreturn { title: approvalResultTitle, insertIndex: approvalResultInsertIndex };`)() as ReturnType<
+  return new Function(`${source}\nreturn { title: approvalResultTitle, buildTimeline: buildConversationTimeline };`)() as ReturnType<
     typeof loadMobileApprovalResultHelpers
   >;
 }
-
 function loadVisibleMessageModel(): (message: {
   role?: string;
   phase?: string;
@@ -273,6 +733,32 @@ function loadVisibleMessageModel(): (message: {
   const source = CODEX_MOBILE_JS.slice(start, end);
   return new Function(`${source}\nreturn visibleMessageModel;`)() as ReturnType<
     typeof loadVisibleMessageModel
+  >;
+}
+
+function loadMobileMessageNodeCache(): {
+  messageNodeKey: (message: Record<string, unknown>, duplicateIndex: number) => string;
+  getMessageNode: (
+    message: Record<string, unknown>,
+    index: number,
+    nextMessage: Record<string, unknown> | undefined,
+    nodeKey: string,
+  ) => { renderCount: number; __deskRelayMessageRenderKey?: string };
+} {
+  const start = CODEX_MOBILE_JS.indexOf("  function messageNodeBaseKey");
+  const end = CODEX_MOBILE_JS.indexOf("\n  function renderMessageRow", start);
+  if (start < 0 || end < 0) throw new Error("Mobile message-node cache helpers not found");
+  const source = CODEX_MOBILE_JS.slice(start, end);
+  const state = { messageNodes: Object.create(null) };
+  let renderCount = 0;
+  const renderMessageRow = () => ({
+    renderCount: ++renderCount,
+  });
+  return new Function("state", "currentAdapterName", "renderMessageRow", `
+${source}
+return { messageNodeKey, getMessageNode };
+`)(state, () => "Codex", renderMessageRow) as ReturnType<
+    typeof loadMobileMessageNodeCache
   >;
 }
 
@@ -358,6 +844,114 @@ function loadMobileUserMessageNavigator(): (
     typeof loadMobileUserMessageNavigator
   >;
 }
+
+describe("Codex mobile conversation cache", () => {
+  test("isolates snapshots by adapter and task id", () => {
+    const { conversationStateKey } = loadMobileConversationCacheHelpers();
+
+    expect(conversationStateKey("codex", "same-id")).toBe("codex\u0000same-id");
+    expect(conversationStateKey("claude", "same-id")).not.toBe(
+      conversationStateKey("codex", "same-id"),
+    );
+  });
+
+  test("restores a recently used snapshot and evicts the least recently used one", () => {
+    const helpers = loadMobileConversationCacheHelpers();
+    const snapshots: Record<string, { messages: string[] }> = Object.create(null);
+    const order: string[] = [];
+    const a = helpers.conversationStateKey("codex", "a");
+    const b = helpers.conversationStateKey("codex", "b");
+    const c = helpers.conversationStateKey("codex", "c");
+
+    helpers.setBoundedConversationValue(snapshots, order, a, { messages: ["A"] }, 2);
+    helpers.setBoundedConversationValue(snapshots, order, b, { messages: ["B"] }, 2);
+    expect(helpers.getBoundedConversationValue(snapshots, order, a)).toEqual({ messages: ["A"] });
+    helpers.setBoundedConversationValue(snapshots, order, c, { messages: ["C"] }, 2);
+
+    expect(snapshots[b]).toBeUndefined();
+    expect(helpers.getBoundedConversationValue(snapshots, order, a)).toEqual({ messages: ["A"] });
+    expect(helpers.getBoundedConversationValue(snapshots, order, c)).toEqual({ messages: ["C"] });
+  });
+
+  test("keeps independent drafts and clears only the submitted task", () => {
+    const helpers = loadMobileConversationCacheHelpers();
+    const drafts: Record<string, { text: string }> = Object.create(null);
+    const order: string[] = [];
+    const a = helpers.conversationStateKey("codex", "a");
+    const b = helpers.conversationStateKey("codex", "b");
+
+    helpers.setBoundedConversationValue(drafts, order, a, { text: "草稿 A" }, 20);
+    helpers.setBoundedConversationValue(drafts, order, b, { text: "草稿 B" }, 20);
+    helpers.deleteConversationValue(drafts, order, a);
+
+    expect(helpers.getBoundedConversationValue(drafts, order, a)).toBeNull();
+    expect(helpers.getBoundedConversationValue(drafts, order, b)).toEqual({ text: "草稿 B" });
+  });
+  test("restores cached messages and the task draft synchronously before live refresh", () => {
+    const state: Record<string, any> = {
+      currentThreadId: "task-a",
+      conversationSnapshots: Object.create(null),
+      conversationSnapshotOrder: [],
+      composerDrafts: Object.create(null),
+      composerDraftOrder: [],
+      messageNodes: Object.create(null),
+      pendingImages: [],
+    };
+    const composerInput = { value: "", placeholder: "" };
+    const runtime = loadMobileConversationSnapshotRuntime({ state, composerInput });
+    const key = runtime.conversationStateKey("codex", "task-a");
+    runtime.setBoundedConversationValue(
+      state.composerDrafts,
+      state.composerDraftOrder,
+      key,
+      { text: "尚未发送的草稿" },
+      40,
+    );
+    runtime.setBoundedConversationValue(
+      state.conversationSnapshots,
+      state.conversationSnapshotOrder,
+      key,
+      {
+        serverMessages: [{ role: "assistant", text: "已缓存回复" }],
+        historyMessages: [],
+        latestMessages: [{ role: "assistant", text: "已缓存回复" }],
+        oldestMessageCursor: null,
+        hasOlderMessages: false,
+        historySource: "native",
+        historyCaughtUp: true,
+        progressItems: [],
+        optimisticProgressTurnId: null,
+        pendingMessages: [],
+        transcriptSignature: "cached",
+        queueSignature: "",
+        queuedMessages: [],
+        editingQueuedMessageId: "",
+        editingQueuedImageCount: 0,
+        editingQueuedText: "",
+        pendingImages: [{ fileName: "草稿图片.png", previewUrl: "data:image/png;base64,AA==" }],
+        runSummary: null,
+        localRunSummary: null,
+        pendingApproval: null,
+        approvalResults: [],
+        stopRequestedThreadId: "",
+        scrollTop: 18,
+        nearBottom: false,
+      },
+      12,
+    );
+
+    expect(runtime.restoreConversationSnapshot("codex", "task-a")).toBe(true);
+    expect(state.serverMessages).toEqual([{ role: "assistant", text: "已缓存回复" }]);
+    expect(composerInput.value).toBe("尚未发送的草稿");
+    expect(state.pendingImages).toEqual([
+      { fileName: "草稿图片.png", previewUrl: "data:image/png;base64,AA==" },
+    ]);
+    expect(runtime.renderEvents).toContain("messages");
+    expect(runtime.renderEvents.indexOf("messages")).toBeLessThan(
+      runtime.renderEvents.indexOf("navigation"),
+    );
+  });
+});
 
 describe("Codex mobile web rendering", () => {
   test("resolves full task ids and rejects ambiguous legacy prefixes", () => {
@@ -729,6 +1323,7 @@ describe("Codex mobile web rendering", () => {
   test("classifies one unified task board without grouping by agent", () => {
     const {
       taskBoardLane,
+      isTaskBoardInProgress,
       taskBoardMatchesQuery,
       formatTaskBoardTime,
     } = loadMobileTaskSidebarHelpers();
@@ -741,6 +1336,14 @@ describe("Codex mobile web rendering", () => {
     expect(taskBoardLane({ status: "idle", completedAt: "2026-08-07T01:00:00.000Z" }))
       .toBe("completed");
     expect(taskBoardLane({ status: "idle" })).toBe("queued");
+    expect(isTaskBoardInProgress({ status: "running" })).toBe(true);
+    expect(isTaskBoardInProgress({ status: "approval" })).toBe(true);
+    expect(isTaskBoardInProgress({ status: "input" })).toBe(true);
+    expect(isTaskBoardInProgress({ status: "idle" })).toBe(false);
+    expect(isTaskBoardInProgress({ status: "error" })).toBe(false);
+    expect(CODEX_MOBILE_JS).toContain(
+      "var activeCount = state.boardTasks.filter(isTaskBoardInProgress).length;",
+    );
     expect(taskBoardMatchesQuery({
       title: "统一任务看板",
       projectName: "DeskRelay",
@@ -767,6 +1370,25 @@ describe("Codex mobile web rendering", () => {
     expect(CODEX_MOBILE_JS).toContain(
       "var showAdapterLabels = shouldShowTaskAdapterLabels(items);",
     );
+  });
+
+  test("uses a single-column touch layout for the task board on phones", () => {
+    expect(CODEX_MOBILE_CSS).toContain(".task-board-columns { width: 100%; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr);");
+    expect(CODEX_MOBILE_CSS).toContain(".task-board-column.is-empty { display: none; }");
+    expect(CODEX_MOBILE_CSS).toContain(".task-board-body { overflow-x: hidden;");
+    expect(CODEX_MOBILE_CSS).not.toContain(".task-board-column { width: min(84vw, 320px);");
+  });
+
+  test("gives every task-board card a direct task link", () => {
+    const href = loadMobileTaskBoardHref(
+      "https://deskrelay.sinolin.com/?view=board&board=completed&appv=123",
+    );
+
+    expect(href({ adapter: "workbuddy", threadId: "task-123" })).toBe(
+      "/?appv=123&adapter=workbuddy&task=task-123",
+    );
+    expect(CODEX_MOBILE_JS).toContain("card.href = taskBoardTaskHref(task);");
+    expect(CODEX_MOBILE_JS).toContain("button.href = taskBoardTaskHref(item);");
   });
 
   test("preserves ordered-list numbers when bullet sections split the list", () => {
@@ -1363,6 +1985,7 @@ describe("Codex mobile server", () => {
       limit?: number;
       lightweight?: boolean;
     }> = [];
+    const sends: Array<{ threadId: string; text: string }> = [];
     const server = await startCodexMobileServer({
       host: "127.0.0.1",
       port: 0,
@@ -1382,7 +2005,10 @@ describe("Codex mobile server", () => {
           queuedMessages: [],
         };
       },
-      sendMessage: async () => ({ queued: false }),
+      sendMessage: async (threadId, input) => {
+        sends.push({ threadId, text: input.text });
+        return { queued: false, turnId: "new-turn" };
+      },
     });
 
     try {
@@ -1405,6 +2031,29 @@ describe("Codex mobile server", () => {
         task: null,
         threadId: "direct-thread",
         messages: [{ role: "assistant", text: "历史正文" }],
+      });
+
+      const sendResponse = await fetch(
+        `http://127.0.0.1:${server.port}/api/tasks/direct-thread/messages`,
+        {
+          method: "POST",
+          headers: {
+            cookie: sessionCookie,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ text: "第一条消息" }),
+        },
+      );
+      expect(sendResponse.status).toBe(202);
+      expect(listCalls).toBe(0);
+      expect(sends).toEqual([{
+        threadId: "direct-thread",
+        text: "第一条消息",
+      }]);
+      expect(await sendResponse.json()).toMatchObject({
+        ok: true,
+        queued: false,
+        turnId: "new-turn",
       });
     } finally {
       await server.close();
@@ -1732,7 +2381,7 @@ describe("Codex mobile server", () => {
       expect(js).toContain("scheduleLiveRefresh");
       expect(js).toContain('document.addEventListener("visibilitychange"');
       expect(js).toContain("renderQueuedMessages");
-      expect(js).toContain('var continues = message.role === "assistant" && nextMessage && nextMessage.role === "assistant"');
+      expect(js).toContain("var continues = messageContinues(message, nextMessage);");
       expect(js).not.toContain('message.phase === "commentary" ? "工作过程" : ""');
       expect(js).toContain('group.key === "recent" ? " is-recent" : ""');
       expect(js).toContain("resolveUserMessageNavigation");
@@ -1746,7 +2395,9 @@ describe("Codex mobile server", () => {
       expect(js).toContain('closeTaskContextMenu');
       expect(js).toContain('nextUserMessage.addEventListener("click"');
       expect(js).toContain("toggleWorkspaceMenu");
-      expect(js).toContain('document.title = "DeskRelay \\u00B7 " + currentAdapterName();');
+      expect(js).toContain("var task = currentTask();");
+      expect(js).toContain("? task.title");
+      expect(js).toContain(': "DeskRelay \\u00B7 " + currentAdapterName();');
       expect(js).toContain('var requestedAdapter = pageUrl.searchParams.get("adapter") || "";');
       expect(js).toContain('requestedAdapter !== adapterPayload.activeAdapter');
       expect(js).toContain('if (!initial) canonicalUrl.searchParams.delete("task");');
@@ -1754,7 +2405,8 @@ describe("Codex mobile server", () => {
       expect(js).toContain("state.loadingTasks = needsInitialTask;");
       expect(js).toContain('messagesEl.innerHTML = \'<div class="loading-row">');
       expect(js).toContain("escapeHtml(currentAdapterName())");
-      expect(js).toContain('updateDocumentTitle();\n  initializeAuthentication();');
+      expect(js).toContain('updateDocumentTitle();\n  async function startMobileApplication()');
+      expect(js).toContain('await waitForComputerConnection();\n    await initializeAuthentication();');
       expect(js).toContain("mergeQueuedMessagesForDisplay");
       expect(js).toContain("switchingAdapterId");
       expect(js).toContain("switchProgressLabel");
@@ -1775,6 +2427,12 @@ describe("Codex mobile server", () => {
       expect(js).toContain("pendingMessages");
       expect(js).toContain("messageRequestId");
       expect(js).toContain("taskRequestId");
+      expect(js).toContain("conversationSnapshots");
+      expect(js).toContain("composerDrafts");
+      expect(js).toContain("saveCurrentConversationSnapshot");
+      expect(js).toContain("restoreConversationSnapshot");
+      expect(js).toContain("if (restored) {");
+      expect(js).toContain("void loadMessages(false, false, false);");
       expect(js).toContain("requestedThreadId !== state.currentThreadId");
       expect(js).toContain("pending.threadId");
       expect(js).toContain("composerRevision");
@@ -1788,7 +2446,8 @@ describe("Codex mobile server", () => {
       expect(js).toContain('class="message-model"');
       expect(js).toContain("progressItems");
       expect(js).toContain("filterProgressItemsForCurrentTurn");
-      expect(js).toContain("state.progressItems = filterProgressItemsForCurrentTurn(");
+      expect(js).toContain("state.progressItems = filterProgressItemsForOptimisticTurn(");
+      expect(js).toContain("filterProgressItemsForCurrentTurn(");
       expect(js).toContain("\\u7B49\\u5F85\\u786E\\u8BA4");
       expect(js).toContain("resolveVisibleRunSummary");
       expect(js).toContain("stopCurrentTask");
@@ -1874,7 +2533,8 @@ describe("Codex mobile server", () => {
       expect(js).toContain('if (result.duplicate)');
       expect(js).toContain("\\u4E0E\\u6700\\u8FD1\\u4E00\\u6761\\u6D88\\u606F\\u76F8\\u540C\\uFF0C\\u672A\\u91CD\\u590D\\u53D1\\u9001");
       expect(js).toContain("renderResponsePendingIndicator");
-      expect(js).toContain("messagesEl.appendChild(responsePending)");
+      expect(js).toContain("if (responsePending) nodes.push(responsePending)");
+      expect(js).toContain("syncChildOrder(messagesEl, nodes)");
       expect(js).toContain("captureOpenFoldState");
       expect(js).toContain("restoreOpenFoldState");
       expect(js).toContain('messagesEl.dataset.threadId !== state.currentThreadId');
@@ -2146,6 +2806,26 @@ describe("Codex mobile server", () => {
         },
       ]);
 
+      const nativeCommandResponse = await fetch(
+        `${root}/api/tasks/0000000a/messages`,
+        {
+          method: "POST",
+          headers: {
+            ...headers,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ text: "/model claude-sonnet-4-6" }),
+        },
+      );
+      expect(nativeCommandResponse.status).toBe(202);
+      expect(sent[1]).toEqual({
+        threadId: "0000000a-0000-7000-8000-00000000000a",
+        input: {
+          text: "/model claude-sonnet-4-6",
+          images: [],
+        },
+      });
+
       const imageResponse = await fetch(
         `${root}/api/tasks/0000000a/messages`,
         {
@@ -2168,7 +2848,7 @@ describe("Codex mobile server", () => {
         },
       );
       expect(imageResponse.status).toBe(202);
-      expect(sent[1]).toMatchObject({
+      expect(sent[2]).toMatchObject({
         threadId: "0000000a-0000-7000-8000-00000000000a",
         input: {
           text: "请分析图片",
@@ -2177,7 +2857,7 @@ describe("Codex mobile server", () => {
           ],
         },
       });
-      expect(Buffer.isBuffer(sent[1]?.input.images[0]?.data)).toBe(true);
+      expect(Buffer.isBuffer(sent[2]?.input.images[0]?.data)).toBe(true);
 
       const rejectedResponse = await fetch(
         `${root}/api/tasks/0000000a/messages`,
@@ -2452,6 +3132,34 @@ describe("Codex mobile generated image messages", () => {
       "var pendingImages = message.pending && Array.isArray(message.images)",
     );
     expect(CODEX_MOBILE_JS).toContain("if (state.loadingMessages) return null;");
+  });
+
+  test("reuses unchanged message rows when polling only changes progress or approval state", () => {
+    const { messageNodeKey, getMessageNode } = loadMobileMessageNodeCache();
+    const message = {
+      id: "message-1",
+      role: "user",
+      text: "只发一张图",
+      images: [{ url: "/api/tasks/task-1/images/image-1", alt: "截图.jpg" }],
+    };
+    const nodeKey = messageNodeKey(message, 0);
+    const first = getMessageNode(message, 0, undefined, nodeKey);
+
+    const unrelatedPollingState = {
+      progressItems: [{ id: "progress-2", text: "继续分析" }],
+      pendingApproval: { code: "4" },
+    };
+    expect(unrelatedPollingState.progressItems).toHaveLength(1);
+
+    const second = getMessageNode({ ...message }, 0, undefined, nodeKey);
+    expect(second).toBe(first);
+    expect(second.renderCount).toBe(1);
+
+    const changed = getMessageNode({ ...message, text: "图片说明已修改" }, 0, undefined, nodeKey);
+    expect(changed).not.toBe(first);
+    expect(changed.renderCount).toBe(2);
+    expect(CODEX_MOBILE_JS).toContain("messageNodes: Object.create(null)");
+    expect(CODEX_MOBILE_JS).toContain("syncChildOrder(messagesEl, nodes)");
   });
 
   test("opens selected input images in the same full-screen viewer", () => {

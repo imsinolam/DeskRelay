@@ -655,12 +655,16 @@ function extractCodexRolloutVisibleMessage(
         metadata.turn_id.trim()
       ? metadata.turn_id.trim()
       : undefined;
+    const createdAtMs = typeof parsed.timestamp === "string"
+      ? Date.parse(parsed.timestamp)
+      : Number.NaN;
     return {
       role,
       text,
       ...(id ? { id } : {}),
       ...(turnId ? { turnId } : {}),
       ...(phase ? { phase } : {}),
+      ...(Number.isFinite(createdAtMs) ? { createdAtMs } : {}),
       ...(images.length ? { images } : {}),
     };
   } catch {
@@ -993,11 +997,32 @@ function codexDesktopRuntimeType(state: unknown): string | undefined {
 
 function codexDesktopLiveTurnEntries(
   state: unknown,
+  preferredTurnId?: string,
 ): Array<[string, Record<string, unknown>]> {
   const entries = codexDesktopTurnEntries(state);
+  const normalizedPreferredTurnId = preferredTurnId?.trim();
+  if (normalizedPreferredTurnId) {
+    return entries.filter(([, entity]) =>
+      entity.turnId === normalizedPreferredTurnId
+    );
+  }
   const tailEntries = entries.filter(([key]) => key.startsWith("tail:"));
   if (tailEntries.length > 0) {
-    return tailEntries;
+    const runtimeType = codexDesktopRuntimeType(state);
+    const preferredTail = runtimeType === "active"
+      ? [...tailEntries].reverse().find(([, entity]) =>
+        isCodexDesktopTurnActiveStatus(entity.status)
+      )
+      : [...tailEntries].reverse().find(([, entity]) => Array.isArray(entity.items));
+    if (!preferredTail) {
+      return [];
+    }
+    const preferredTailTurnId = typeof preferredTail[1].turnId === "string"
+      ? preferredTail[1].turnId
+      : undefined;
+    return preferredTailTurnId
+      ? tailEntries.filter(([, entity]) => entity.turnId === preferredTailTurnId)
+      : [preferredTail];
   }
   if (codexDesktopRuntimeType(state) === "idle") {
     return [];
@@ -1140,9 +1165,10 @@ export function extractCodexDesktopThreadRunSummary(
 
 export function extractCodexDesktopThreadMessages(
   state: unknown,
+  preferredTurnId?: string,
 ): BridgeSessionMessage[] {
   const messages: BridgeSessionMessage[] = [];
-  for (const [, entity] of codexDesktopLiveTurnEntries(state)) {
+  for (const [, entity] of codexDesktopLiveTurnEntries(state, preferredTurnId)) {
     if (!Array.isArray(entity.items)) {
       continue;
     }
@@ -1620,6 +1646,7 @@ function rolloutToolProgress(
 type CodexRolloutProgressRecord = {
   payload: Record<string, unknown>;
   turnId?: string;
+  createdAtMs?: number;
 };
 
 function parseCodexRolloutProgressRecord(line: string): CodexRolloutProgressRecord | null {
@@ -1649,7 +1676,14 @@ function parseCodexRolloutProgressRecord(line: string): CodexRolloutProgressReco
       return null;
     }
     const turnId = extractCodexRolloutTurnId(parsed.payload);
-    return { payload: parsed.payload, ...(turnId ? { turnId } : {}) };
+    const createdAtMs = typeof parsed.timestamp === "string"
+      ? Date.parse(parsed.timestamp)
+      : Number.NaN;
+    return {
+      payload: parsed.payload,
+      ...(turnId ? { turnId } : {}),
+      ...(Number.isFinite(createdAtMs) ? { createdAtMs } : {}),
+    };
   } catch {
     return null;
   }
@@ -1674,10 +1708,14 @@ function codexRolloutProgressFromRecords(
   for (let index = 0; index < records.length; index += 1) {
     const record = records[index]!;
     const payload = record.payload;
+    const withTimestamp = <T extends BridgeSessionProgressItem>(item: T): T =>
+      record.createdAtMs !== undefined
+        ? { ...item, createdAtMs: record.createdAtMs }
+        : item;
     if (payload.type === "reasoning") {
       const text = extractCodexRolloutReasoningText(payload);
       if (text) {
-        activity.push({
+        activity.push(withTimestamp({
           id: typeof payload.id === "string" && payload.id.trim()
             ? payload.id.trim()
             : `${record.turnId ?? "turn"}:rollout-reasoning:${index}`,
@@ -1685,7 +1723,7 @@ function codexRolloutProgressFromRecords(
           kind: "reasoning",
           status: "completed",
           text,
-        });
+        }));
       }
       continue;
     }
@@ -1699,11 +1737,12 @@ function codexRolloutProgressFromRecords(
     if (name.endsWith("update_plan") || name.endsWith("updateplan")) {
       const args = parseCodexRolloutFunctionArguments(payload.arguments);
       if (args && Array.isArray(args.plan)) {
-        latestPlan = summarizeCodexPlanProgress({
+        const plan = summarizeCodexPlanProgress({
           type: "todo-list",
           id: typeof payload.id === "string" ? payload.id : callId,
           plan: args.plan,
-        }, record.turnId, index) ?? latestPlan;
+        }, record.turnId, index);
+        latestPlan = plan ? withTimestamp(plan) : latestPlan;
       }
       continue;
     }
@@ -1713,13 +1752,49 @@ function codexRolloutProgressFromRecords(
       callId && completedCallIds.has(callId) ? "completed" : "running",
     );
     if (progress) {
-      activity.push(progress);
+      activity.push(withTimestamp(progress));
     }
   }
   return [
     ...(latestPlan ? [latestPlan] : []),
     ...activity.slice(-CODEX_SESSION_PROGRESS_ACTIVITY_LIMIT),
   ];
+}
+
+function mergeCodexSessionProgress(
+  rollout: BridgeSessionProgressItem[],
+  live: BridgeSessionProgressItem[],
+): BridgeSessionProgressItem[] {
+  const merged = rollout.map((item) => ({ ...item }));
+  const indexById = new Map(
+    merged.map((item, index) => [item.id, index] as const),
+  );
+  for (const item of live) {
+    const existingIndex = indexById.get(item.id);
+    if (existingIndex === undefined) {
+      indexById.set(item.id, merged.length);
+      merged.push({ ...item });
+      continue;
+    }
+    const existing = merged[existingIndex]!;
+    merged[existingIndex] = {
+      ...existing,
+      ...item,
+      ...(existing.createdAtMs !== undefined
+        ? { createdAtMs: existing.createdAtMs }
+        : {}),
+    };
+  }
+  return merged.sort((left, right) => {
+    const leftTime = left.createdAtMs;
+    const rightTime = right.createdAtMs;
+    if (leftTime !== undefined && rightTime !== undefined && leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+    if (leftTime !== undefined) return -1;
+    if (rightTime !== undefined) return 1;
+    return (indexById.get(left.id) ?? 0) - (indexById.get(right.id) ?? 0);
+  });
 }
 
 export function readCodexSessionProgressFromRolloutTail(
@@ -3505,6 +3580,10 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     options: BridgeSessionMessagePageOptions = {},
   ): Promise<BridgeSessionMessagePage> {
     const normalizedThreadId = threadId.trim();
+    const trackedTurn = this.activeTurn?.threadId === normalizedThreadId
+      ? this.activeTurn
+      : this.getBackgroundTurnForThread(normalizedThreadId);
+    const preferredTurnId = trackedTurn?.turnId;
     const usesIndexCursor = typeof options.before === "string" &&
       options.before.startsWith("index:");
     if (!usesIndexCursor) {
@@ -3537,7 +3616,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
                 ...persistedPage,
                 messages: mergeCodexSessionMessages(
                   persistedPage.messages,
-                  extractCodexDesktopThreadMessages(liveState),
+                  extractCodexDesktopThreadMessages(liveState, preferredTurnId),
                 ),
               }
             : persistedPage;
@@ -3552,7 +3631,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       const liveState = this.getDesktopThreadStateView(normalizedThreadId);
       return liveState
         ? paginateCodexSessionMessages(
-            extractCodexDesktopThreadMessages(liveState),
+            extractCodexDesktopThreadMessages(liveState, preferredTurnId),
             options,
           )
         : { messages: [], hasMore: false, nextBefore: null };
@@ -3567,6 +3646,10 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     options: BridgeSessionReadOptions = {},
   ): Promise<BridgeSessionProgressItem[]> {
     const normalizedThreadId = threadId.trim();
+    const rolloutFilePath = this.resolveDesktopSessionFilePath(normalizedThreadId);
+    const rolloutProgress = rolloutFilePath
+      ? readCodexSessionProgressFromRolloutTail(rolloutFilePath)
+      : [];
     const client = this.desktopIpcClient;
     if (client) {
       const liveState = options.lightweight
@@ -3575,16 +3658,12 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       if (liveState) {
         const liveProgress = extractCodexDesktopThreadProgress(liveState);
         if (liveProgress.length > 0) {
-          return liveProgress;
+          return mergeCodexSessionProgress(rolloutProgress, liveProgress);
         }
       }
     }
-    const rolloutFilePath = this.resolveDesktopSessionFilePath(normalizedThreadId);
-    if (rolloutFilePath) {
-      const rolloutProgress = readCodexSessionProgressFromRolloutTail(rolloutFilePath);
-      if (rolloutProgress.length > 0 || options.lightweight) {
-        return rolloutProgress;
-      }
+    if (rolloutFilePath && (rolloutProgress.length > 0 || options.lightweight)) {
+      return rolloutProgress;
     }
     if (options.lightweight) {
       return [];
@@ -3609,10 +3688,13 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     }
 
     const liveState = this.getDesktopThreadStateView(normalizedThreadId);
+    const trackedTurn = this.activeTurn?.threadId === normalizedThreadId
+      ? this.activeTurn
+      : this.getBackgroundTurnForThread(normalizedThreadId);
     return liveState
       ? mergeCodexSessionMessages(
           persisted,
-          extractCodexDesktopThreadMessages(liveState),
+          extractCodexDesktopThreadMessages(liveState, trackedTurn?.turnId),
         )
       : persisted;
   }
@@ -3723,6 +3805,27 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       threadId === this.sharedThreadId ? "Codex approval resolved." : undefined,
     );
     return requests.length;
+  }
+
+  async resolveApprovalRequest(
+    requestId: string,
+    action: CodexApprovalResolutionAction,
+  ): Promise<boolean> {
+    const request = this.pendingApprovalRequests.find(
+      (candidate) => String(candidate.requestId) === requestId,
+    );
+    if (!request) {
+      return false;
+    }
+
+    await this.respondToApprovalRequest(request, action);
+    this.pendingApprovalRequests = this.pendingApprovalRequests.filter(
+      (candidate) => candidate !== request,
+    );
+    this.syncSelectedThreadState(
+      request.threadId === this.sharedThreadId ? "Codex approval resolved." : undefined,
+    );
+    return true;
   }
 
   getPendingTaskApprovals(threadId: string): ApprovalRequest[] {
@@ -4378,9 +4481,11 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     if (!request) {
       return;
     }
+    const timestamp = nowIso();
     const contextualRequest = {
       ...request,
       requestId: String(requestId),
+      createdAt: timestamp,
       threadId,
       turnId,
       origin,
@@ -4393,7 +4498,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     this.emit({
       type: "approval_required",
       request: contextualRequest,
-      timestamp: nowIso(),
+      timestamp,
       threadId,
       turnId,
       origin,
@@ -7129,9 +7234,11 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       return;
     }
 
+    const timestamp = nowIso();
     const contextualRequest = {
       ...request,
       requestId: String(requestId),
+      createdAt: timestamp,
       threadId: trackedTurn.threadId,
       turnId: trackedTurn.turnId,
       origin: trackedTurn.origin,
@@ -7154,7 +7261,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     this.emit({
       type: "approval_required",
       request: contextualRequest,
-      timestamp: nowIso(),
+      timestamp,
       threadId: trackedTurn.threadId,
       turnId: trackedTurn.turnId,
       origin: trackedTurn.origin,

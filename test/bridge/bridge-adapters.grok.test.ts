@@ -9,7 +9,10 @@ import {
   parseGrokChatHistory,
   buildGrokAcpArgs,
   buildGrokNativeArgs,
+  isGrokLeaderCommandLine,
+  parseGrokLeaderSocketOwnerPids,
   resolveGrokLeaderSocket,
+  selectGrokLeaderSocketOwnerPids,
 } from "../../src/bridge/bridge-adapters.grok.ts";
 import { LocalCompanionProxyAdapter } from "../../src/bridge/bridge-adapters.core.ts";
 
@@ -75,7 +78,60 @@ describe("Grok shared owner adapter", () => {
     expect(first).toStartWith("/tmp/deskrelay-grok-501-");
     expect(first.length).toBeLessThan(100);
   });
-  test("does not unlink a leader socket owned by another visible Grok client", () => {
+
+  test("finds only processes that hold the exact Grok leader socket", () => {
+    const target = "/tmp/deskrelay-grok-501-target.sock";
+    const lsofOutput = [
+      "p101",
+      "fcwd",
+      "n/Users/example/project",
+      "f22",
+      `n${target}`,
+      "p202",
+      "f19",
+      "n/tmp/deskrelay-grok-501-other.sock",
+      "p303",
+      "f7",
+      `n${target}.backup`,
+    ].join("\n");
+
+    expect(parseGrokLeaderSocketOwnerPids(lsofOutput, target)).toEqual([101]);
+  });
+
+  test("recognizes Grok leader commands without confusing visible Grok clients", () => {
+    expect(isGrokLeaderCommandLine(
+      "/Users/example/.grok/bin/grok agent leader --no-exit-on-disconnect",
+    )).toBe(true);
+    expect(isGrokLeaderCommandLine("grok --leader-socket /tmp/example.sock")).toBe(false);
+    expect(isGrokLeaderCommandLine(
+      "/bin/zsh -lc 'echo grok agent leader --leader-socket /tmp/example.sock'",
+    )).toBe(false);
+  });
+
+  test("recovers only exact socket owners whose process is a Grok leader", () => {
+    const target = "/tmp/deskrelay-grok-501-target.sock";
+    const lsofOutput = [
+      "p101",
+      "f22",
+      `n${target}`,
+      "p202",
+      "f23",
+      `n${target}`,
+      "p303",
+      "f24",
+      "n/tmp/deskrelay-grok-501-other.sock",
+    ].join("\n");
+    const commandLines = new Map([
+      [101, "/Users/example/.grok/bin/grok agent leader --no-exit-on-disconnect"],
+      [202, "/Users/example/.grok/bin/grok --leader-socket /tmp/example.sock"],
+      [303, "/Users/example/.grok/bin/grok agent leader --no-exit-on-disconnect"],
+    ]);
+
+    expect(selectGrokLeaderSocketOwnerPids(target, lsofOutput, commandLines))
+      .toEqual([101]);
+  });
+
+  test("does not unlink a leader socket owned by another visible Grok client", async () => {
     if (process.platform === "win32") return;
     const tempCwd = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-grok-owner-"));
     const socketPath = resolveGrokLeaderSocket(tempCwd);
@@ -86,9 +142,9 @@ describe("Grok shared owner adapter", () => {
       cwd: tempCwd,
       renderMode: "companion",
     });
-    const internal = adapter as unknown as { stopOwnedLeader(): void };
+    const internal = adapter as unknown as { stopOwnedLeader(): Promise<void> };
     try {
-      internal.stopOwnedLeader();
+      await internal.stopOwnedLeader();
       expect(fs.existsSync(socketPath)).toBe(true);
     } finally {
       fs.rmSync(socketPath, { force: true });

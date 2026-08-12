@@ -507,7 +507,9 @@ export function resolveBareCodexTaskSelection(params: {
   hasPendingUserInput: boolean;
 }): string | null {
   if (
-    !params.awaitingSelection
+    !params.awaitingSelection ||
+    params.hasPendingConfirmation ||
+    params.hasPendingUserInput
   ) {
     return null;
   }
@@ -530,6 +532,9 @@ export function parseWechatControlCommand(
     canAutoApproveTask?: boolean;
   },
 ): SystemCommand | null {
+  if (shouldForwardNativeSlashCommand(text, options.adapter)) {
+    return null;
+  }
   const systemCommand = parseSystemCommand(text);
   if (systemCommand) {
     return systemCommand;
@@ -618,6 +623,23 @@ export function parseWechatControlCommand(
     default:
       return null;
   }
+}
+
+const DESKRELAY_RESERVED_SLASH_COMMAND_RE = /^(?:\/(?:tasks|threads|task|thread|resume|next|prev|new|new-session|stop|full|brief|preview|全文|预览|confirm|yes|deny|no|answer)|\/t[1-9]\d*)$/i;
+
+export function shouldForwardNativeSlashCommand(
+  text: string,
+  adapter: BridgeAdapterKind,
+): boolean {
+  if (!getBridgeProvider(adapter).capabilities.nativeCommands) {
+    return false;
+  }
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("/")) {
+    return false;
+  }
+  const command = trimmed.split(/\s+/, 1)[0]?.toLowerCase() ?? "";
+  return Boolean(command) && !DESKRELAY_RESERVED_SLASH_COMMAND_RE.test(command);
 }
 
 export function shouldInjectWechatAttachmentPrompt(text: string): boolean {
@@ -1503,7 +1525,7 @@ function formatResumeSessionRuntimeMarkers(
 
   const currentWorkerMarker = isCurrent
     ? currentWorkerStatus === "busy"
-      ? "运行中"
+      ? "🟢"
       : currentWorkerStatus === "awaiting_approval"
         ? "待审批"
         : currentWorkerStatus === "awaiting_input"
@@ -1528,7 +1550,7 @@ function formatResumeSessionRuntimeMarkers(
     } else if (status.activeFlags.includes("waitingOnUserInput")) {
       markers.push("待输入");
     } else {
-      markers.push("运行中");
+      markers.push("🟢");
     }
   } else if (status?.type === "systemError") {
     markers.push("异常");

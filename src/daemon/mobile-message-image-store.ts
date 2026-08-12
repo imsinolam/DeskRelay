@@ -1,9 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import {
-  mergeBridgeMessageImages,
-} from "../bridge/bridge-message-images.ts";
 import type {
   BridgeMessageImage,
   BridgeSessionMessage,
@@ -202,8 +199,7 @@ export class MobileMessageImageStore {
       const images = localImages(scoped[recordIndex]!);
       if (images.length === 0) continue;
       used.add(recordIndex);
-      const mergedImages = mergeBridgeMessageImages(message.images, images);
-      enriched[messageIndex] = { ...message, images: mergedImages };
+      enriched[messageIndex] = { ...message, images };
     }
     return enriched;
   }

@@ -14,6 +14,7 @@ import {
   buildWindowsVisibleClientLaunchCommand,
   cleanupDaemonBeforeStart,
   cleanupSingleBridgeBeforeDaemon,
+  compareDaemonApprovalQueueOrder,
   computeCodexDeferredDrainRetryDelayMs,
   buildDaemonRuntimeOptions,
   defaultDaemonSessionStartMode,
@@ -27,22 +28,26 @@ import {
   formatDaemonStatus,
   formatMobileTaskListUnavailableMessage,
   isCodexTaskCandidateCacheFresh,
+  isMobileTaskAvailableForDirectAction,
   isExplicitGlobalTaskListRequest,
   detectOpenMobileAdaptersFromProcessList,
   filterCodexMobileProgressForCurrentTurn,
   mapCodexMobileTaskStatus,
   observeCodexTask,
+  parseDaemonApprovalShortcutSequence,
   parseDaemonCliArgs,
   parseDaemonSwitchCommand,
   prefixDaemonAdapterMessage,
   prefixDaemonTaskMessage,
   resolveDaemonSessionStartMode,
+  resolveDaemonApprovalShortcut,
   resolveDaemonTaskListScope,
   resolveDaemonWechatCommand,
   resolveMobileAdapterDisplayStatus,
   resolveCodexMobileTaskStatusFromSignals,
   resolveDaemonTaskListSnapshot,
   resolveDaemonTaskTargetedMessage,
+  resolveCreatedMobileTask,
   resolveCodexWechatReplyThreadId,
   resolveCodexMobilePendingApprovalFromSignals,
   resolveCodexTaskCompletionDurationMs,
@@ -59,6 +64,7 @@ import {
   shouldSendCodexMobileTaskLink,
   shouldSendCodexCompletionNotification,
   shouldSendDaemonRestartNotice,
+  retrySwitchedAdapterTaskList,
   waitForVisibleClientConnection,
 } from "../../src/daemon/deskrelay-daemon.ts";
 import type { BridgeLockPayload } from "../../src/bridge/bridge-state.ts";
@@ -105,6 +111,198 @@ describe("mobile image persistence", () => {
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     expect(source.slice(start, end)).not.toContain("fs.rmSync(imagePath");
+  });
+});
+
+describe("mobile task creation", () => {
+  test("returns the authoritative new thread before the desktop task index catches up", () => {
+    expect(resolveCreatedMobileTask({
+      adapterLabel: "Codex",
+      threadId: "new-thread",
+      previousThreadId: "old-thread",
+      listedTasks: [],
+      status: "idle",
+      canRename: true,
+      canCreateInProject: false,
+      nowIso: "2026-08-10T08:00:00.000Z",
+    })).toEqual({
+      threadId: "new-thread",
+      title: "新 Codex 任务",
+      lastUpdatedAt: "2026-08-10T08:00:00.000Z",
+      status: "idle",
+      selected: true,
+      canRename: true,
+      canCreateInProject: false,
+    });
+  });
+
+  test("prefers indexed metadata and preserves the source project while indexing is delayed", () => {
+    const listedTask = {
+      threadId: "new-thread",
+      title: "真实标题",
+      projectId: "project-1",
+      projectName: "真实项目",
+      lastUpdatedAt: "2026-08-10T08:01:00.000Z",
+      status: "idle" as const,
+      selected: false,
+      canRename: true,
+      canCreateInProject: true,
+    };
+    expect(resolveCreatedMobileTask({
+      adapterLabel: "Codex",
+      threadId: "new-thread",
+      previousThreadId: "old-thread",
+      listedTasks: [listedTask],
+      status: "idle",
+      canRename: true,
+      canCreateInProject: true,
+      sourceTask: {
+        threadId: "source-thread",
+        title: "来源任务",
+        projectId: "project-source",
+        projectName: "来源项目",
+        status: "idle",
+      },
+      nowIso: "2026-08-10T08:00:00.000Z",
+    })).toEqual({
+      ...listedTask,
+      selected: true,
+    });
+
+    expect(resolveCreatedMobileTask({
+      adapterLabel: "Codex",
+      threadId: "new-thread",
+      previousThreadId: "old-thread",
+      listedTasks: [],
+      status: "idle",
+      canRename: true,
+      canCreateInProject: true,
+      sourceTask: {
+        threadId: "source-thread",
+        title: "来源任务",
+        projectId: "project-source",
+        projectName: "来源项目",
+        status: "idle",
+      },
+      nowIso: "2026-08-10T08:00:00.000Z",
+    })).toMatchObject({
+      threadId: "new-thread",
+      title: "新 Codex 任务",
+      projectId: "project-source",
+      projectName: "来源项目",
+      selected: true,
+      canCreateInProject: true,
+    });
+  });
+
+  test("does not mistake an unchanged or missing thread id for a created task", () => {
+    const base = {
+      adapterLabel: "Codex",
+      previousThreadId: "old-thread",
+      listedTasks: [],
+      status: "idle" as const,
+      canRename: true,
+      canCreateInProject: false,
+      nowIso: "2026-08-10T08:00:00.000Z",
+    };
+    expect(resolveCreatedMobileTask({ ...base, threadId: undefined })).toBeNull();
+    expect(resolveCreatedMobileTask({ ...base, threadId: "old-thread" })).toBeNull();
+  });
+
+  test("allows the first message to use the authoritative current or freshly created task id", () => {
+    expect(isMobileTaskAvailableForDirectAction({
+      threadId: "new-thread",
+      currentThreadId: "new-thread",
+      recentlyCreated: false,
+      listed: false,
+    })).toBe(true);
+    expect(isMobileTaskAvailableForDirectAction({
+      threadId: "new-thread",
+      currentThreadId: "other-thread",
+      recentlyCreated: true,
+      listed: false,
+    })).toBe(true);
+    expect(isMobileTaskAvailableForDirectAction({
+      threadId: "indexed-thread",
+      currentThreadId: "other-thread",
+      recentlyCreated: false,
+      listed: true,
+    })).toBe(true);
+    expect(isMobileTaskAvailableForDirectAction({
+      threadId: "unknown-thread",
+      currentThreadId: "other-thread",
+      recentlyCreated: false,
+      listed: false,
+    })).toBe(false);
+  });
+});
+
+describe("daemon sequential approvals", () => {
+  test("parses two or more approval shortcuts separated by whitespace or punctuation", () => {
+    for (const text of ["1 2", "1,2", "1，2", "1/2", "1、2", "1。2", "1:2", "1：2", "1\n2", "1 👉 2"]) {
+      expect(parseDaemonApprovalShortcutSequence(text)).toEqual([1, 2]);
+    }
+    expect(parseDaemonApprovalShortcutSequence("1,2;4")).toEqual([1, 2, 4]);
+  });
+
+  test("does not reinterpret ordinary text, invalid choices, contiguous digits, or one shortcut", () => {
+    for (const text of ["1", "12", "审批 1,2", "1,a,2", "1,5", "版本 1.2"]) {
+      expect(parseDaemonApprovalShortcutSequence(text)).toBeNull();
+    }
+  });
+
+  test("maps each number against the options shown on that specific approval", () => {
+    const shortApproval = { allowForSession: false };
+    const sessionApproval = { allowForSession: true };
+
+    expect(resolveDaemonApprovalShortcut(shortApproval, 1)).toEqual({
+      action: "confirm",
+      label: "允许本次",
+    });
+    expect(resolveDaemonApprovalShortcut(shortApproval, 2)).toEqual({
+      action: "deny",
+      label: "拒绝",
+    });
+    expect(resolveDaemonApprovalShortcut(shortApproval, 3)).toEqual({
+      action: "confirm_task",
+      label: "今日内本任务免审",
+    });
+    expect(resolveDaemonApprovalShortcut(shortApproval, 4)).toBeNull();
+    expect(resolveDaemonApprovalShortcut(sessionApproval, 3)).toEqual({
+      action: "confirm_session",
+      label: "本任务始终允许",
+    });
+    expect(resolveDaemonApprovalShortcut(sessionApproval, 4)).toEqual({
+      action: "confirm_task",
+      label: "今日内本任务免审",
+    });
+  });
+
+  test("keeps cross-task approvals in the order their prompts were emitted", () => {
+    const approvals = [
+      { id: "second", createdAt: "2026-08-09T01:00:00.000Z", notificationOrder: 2, insertionOrder: 0 },
+      { id: "first", createdAt: "2026-08-09T01:00:00.000Z", notificationOrder: 1, insertionOrder: 1 },
+      { id: "third", createdAt: "2026-08-09T00:59:00.000Z", notificationOrder: 3, insertionOrder: 2 },
+    ];
+    expect(approvals.sort(compareDaemonApprovalQueueOrder).map((item) => item.id)).toEqual([
+      "first",
+      "second",
+      "third",
+    ]);
+  });
+
+  test("uses the sequential handler before ordinary single-command dispatch", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const inboundStart = source.indexOf("  private async handleInboundMessage(");
+    const commandIndex = source.indexOf("    let command = resolveDaemonWechatCommand", inboundStart);
+    const sequenceIndex = source.indexOf("parseDaemonApprovalShortcutSequence", inboundStart);
+    const targetedIndex = source.indexOf("resolveGlobalTaskTargetedMessage", inboundStart);
+    expect(sequenceIndex).toBeGreaterThan(inboundStart);
+    expect(sequenceIndex).toBeLessThan(targetedIndex);
+    expect(sequenceIndex).toBeLessThan(commandIndex);
+    expect(source).toContain("handlePendingApprovalSequence");
+    expect(source).toContain("resolvePendingApprovalTarget");
+    expect(source).toContain("resolveApprovalRequest");
   });
 });
 
@@ -319,7 +517,7 @@ describe("deskrelay-daemon helpers", () => {
     }));
   });
 
-  test("keeps automatic approval scoped to one task and clears it on completion", () => {
+  test("keeps automatic approval scoped to one task across turns", () => {
     const autoApprover = new DaemonTaskApprovalAutoApprover();
 
     expect(autoApprover.enable({
@@ -330,34 +528,24 @@ describe("deskrelay-daemon helpers", () => {
       threadId: "thread-a",
       turnId: "turn-1",
     })).toBe(true);
-    expect(autoApprover.shouldAutoApprove({
+    expect(autoApprover.snapshot()).toEqual([{
       threadId: "thread-a",
-    })).toBe(true);
+    }]);
     expect(autoApprover.shouldAutoApprove({
       threadId: "thread-a",
       turnId: "turn-2",
-    })).toBe(false);
+    })).toBe(true);
     expect(autoApprover.shouldAutoApprove({
       threadId: "thread-b",
       turnId: "turn-1",
     })).toBe(false);
 
-    expect(autoApprover.finish({
-      threadId: "thread-a",
-      turnId: "turn-old",
-    })).toBe(false);
+    autoApprover.clear();
     expect(autoApprover.shouldAutoApprove({
       threadId: "thread-a",
-      turnId: "turn-1",
-    })).toBe(true);
-    expect(autoApprover.finish({
-      threadId: "thread-a",
-      turnId: "turn-1",
-    })).toBe(true);
-    expect(autoApprover.shouldAutoApprove({
-      threadId: "thread-a",
-      turnId: "turn-1",
+      turnId: "turn-2",
     })).toBe(false);
+    expect(autoApprover.snapshot()).toEqual([]);
   });
 
   test("wires task-scoped automatic approval into approval and completion events", () => {
@@ -379,8 +567,28 @@ describe("deskrelay-daemon helpers", () => {
     );
     expect(completionStart).toBeGreaterThan(-1);
     expect(completionEnd).toBeGreaterThan(completionStart);
-    expect(source.slice(completionStart, completionEnd)).toContain(
-      "taskApprovalAutoApprover.finish",
+    expect(source.slice(completionStart, completionEnd)).not.toContain(
+      "finishTaskApprovalAutoApprove",
+    );
+    const failureStart = source.indexOf('      case "task_failed":');
+    const failureEnd = source.indexOf('      case "fatal_error":', failureStart);
+    expect(failureStart).toBeGreaterThan(-1);
+    expect(failureEnd).toBeGreaterThan(failureStart);
+    expect(source.slice(failureStart, failureEnd)).not.toContain(
+      "finishTaskApprovalAutoApprove",
+    );
+    const createSlotStart = source.indexOf("  private async createSlot(");
+    const createSlotEnd = source.indexOf("  private async startFreshSlotSession(", createSlotStart);
+    expect(source.slice(createSlotStart, createSlotEnd)).toContain(
+      "getTaskApprovalAutoApproveIdentities",
+    );
+    const fatalStart = source.indexOf('      case "fatal_error":');
+    const fatalEnd = source.indexOf('      case "shutdown_requested":', fatalStart);
+    expect(source.slice(fatalStart, fatalEnd)).not.toContain(
+      "clearTaskApprovalAutoApprovals",
+    );
+    expect(source.slice(fatalStart, fatalEnd)).not.toContain(
+      "taskApprovalAutoApprover.clear",
     );
     expect(confirmStart).toBeGreaterThan(-1);
     expect(confirmEnd).toBeGreaterThan(confirmStart);
@@ -395,10 +603,8 @@ describe("deskrelay-daemon helpers", () => {
     const readEnd = source.indexOf("  private async readHistoricalLatestMessage(", readStart);
     const webStart = source.indexOf("  private async resolveMobileApproval(");
     const webEnd = source.indexOf("  private async updateMobileQueuedMessage(", webStart);
-    const confirmStart = source.indexOf("  private async confirmPendingApproval(");
-    const confirmEnd = source.indexOf("  private async denyPendingApproval(", confirmStart);
-    const denyStart = confirmEnd;
-    const denyEnd = source.indexOf("  private async answerPendingUserInput(", denyStart);
+    const targetStart = source.indexOf("  private async resolvePendingApprovalTarget(");
+    const targetEnd = source.indexOf("  private async handlePendingApprovalSequence(", targetStart);
 
     expect(source.slice(readStart, readEnd)).toContain(
       "getMobileApprovalResults(slot.adapter, threadId)",
@@ -406,11 +612,8 @@ describe("deskrelay-daemon helpers", () => {
     expect(source.slice(webStart, webEnd)).toContain(
       "recordMobileApprovalResult(slot, pending, action",
     );
-    expect(source.slice(confirmStart, confirmEnd)).toContain(
-      "recordMobileApprovalResult(slot, pending, action",
-    );
-    expect(source.slice(denyStart, denyEnd)).toContain(
-      'recordMobileApprovalResult(slot, pending, "deny"',
+    expect(source.slice(targetStart, targetEnd)).toContain(
+      "recordMobileApprovalResult(slot, pending, resolution.action",
     );
   });
 
@@ -540,6 +743,25 @@ describe("deskrelay-daemon helpers", () => {
       status: "running",
       text: "当前轮进展",
     }]);
+  });
+
+  test("does not fall back to old progress when the new active turn is authoritative", () => {
+    expect(filterCodexMobileProgressForCurrentTurn({
+      progressItems: [{
+        id: "old-progress",
+        turnId: "turn-old",
+        kind: "reasoning",
+        status: "completed",
+        text: "上一轮进展",
+      }],
+      hasActiveTask: true,
+      activeTurnId: "turn-new",
+      activeTurnAuthoritative: true,
+      runSummary: {
+        turnId: "turn-old",
+        status: "running",
+      },
+    })).toEqual([]);
   });
 
   test("prefers the live desktop turn when a stale bridge turn has no progress", () => {
@@ -706,6 +928,9 @@ describe("deskrelay-daemon helpers", () => {
         source: "cli",
         summary: "Codex 请求运行命令。",
         commandPreview: "npm run quality",
+        requestId: "approval-runtime",
+        turnId: "turn-runtime",
+        createdAt: "2026-08-12T04:00:00.000Z",
         allowForSession: true,
       }],
       runtimePendingApproval: {
@@ -719,6 +944,9 @@ describe("deskrelay-daemon helpers", () => {
     expect(pending).toEqual({
       summary: "Codex 请求运行命令。",
       commandPreview: "npm run quality",
+      requestId: "approval-runtime",
+      turnId: "turn-runtime",
+      createdAtMs: Date.parse("2026-08-12T04:00:00.000Z"),
       allowForSession: true,
     });
     expect(
@@ -775,7 +1003,7 @@ describe("deskrelay-daemon helpers", () => {
     })).toBe("global");
   });
 
-  test("lets a task-list number switch tasks before interpreting approval shortcuts", () => {
+  test("lets the latest approval prompt own bare numbers while explicit task commands still switch tasks", () => {
     expect(resolveDaemonWechatCommand({
       adapter: "codex",
       text: "2",
@@ -783,7 +1011,7 @@ describe("deskrelay-daemon helpers", () => {
       hasPendingConfirmation: true,
       hasPendingUserInput: false,
       canConfirmForSession: true,
-    })).toEqual({ type: "resume", target: "2" });
+    })).toEqual({ type: "deny" });
     expect(resolveDaemonWechatCommand({
       adapter: "claude",
       text: "2",
@@ -1048,7 +1276,7 @@ describe("deskrelay-daemon helpers", () => {
       2,
       "session_a",
       "修复 hooks",
-    )).toBe("[Claude · 修复 hooks]\n任务已继续");
+    )).toBe("[Claude Code · 修复 hooks]\n任务已继续");
     expect(prefixDaemonTaskMessage(
       "codex",
       "需要审批",
@@ -1413,7 +1641,7 @@ describe("deskrelay-daemon helpers", () => {
     expect(source.slice(switchStart, switchEnd)).not.toContain("slot.wechatReplyThreadId = event.threadId");
   });
 
-  test("shows the selected adapter task list immediately after a successful switch", () => {
+  test("shows the selected adapter task list after a successful switch", () => {
     const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
     const switchStart = source.indexOf("    const switchAdapter = parseDaemonSwitchCommand(message.text);");
     const switchEnd = source.indexOf("\n    if (message.text.trim().toLowerCase() === \"/daemon-stop\")", switchStart);
@@ -1422,8 +1650,27 @@ describe("deskrelay-daemon helpers", () => {
     expect(switchStart).toBeGreaterThan(-1);
     expect(switchEnd).toBeGreaterThan(switchStart);
     expect(switchBlock).toContain("if (result.activated)");
-    expect(switchBlock).toContain("await this.handleSystemCommand(message, switchedSlot, {");
+    expect(switchBlock).toContain("await retrySwitchedAdapterTaskList(");
+    expect(switchBlock).toContain("() => this.handleSystemCommand(message, switchedSlot, {");
     expect(switchBlock).toContain('type: "resume"');
+  });
+
+  test("retries exact global task restore while the companion is still starting", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const activationStart = source.indexOf("  private async activateExactGlobalTask(");
+    const activationEnd = source.indexOf(
+      "\n  private async handleGlobalTaskTargetedMessage(",
+      activationStart,
+    );
+    const activationBlock = source.slice(activationStart, activationEnd);
+
+    expect(activationStart).toBeGreaterThan(-1);
+    expect(activationEnd).toBeGreaterThan(activationStart);
+    expect(activationBlock).toContain("await retrySwitchedAdapterTaskList(");
+    expect(activationBlock).toContain(
+      "() => connected.runtime.resumeSession(sessionId)",
+    );
+    expect(activationBlock).toContain("global_task_resume_retry:");
   });
 
   test("routes global task commands and number-colon messages through adapter plus session identity", () => {
@@ -1463,7 +1710,7 @@ describe("deskrelay-daemon helpers", () => {
   test("does not restrict stable number-colon routing to Codex", () => {
     const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
     const routeStart = source.indexOf("    const targetedTaskMessage =");
-    const routeEnd = source.indexOf("\n    const pendingApprovalSlot", routeStart);
+    const routeEnd = source.indexOf("\n    const taskListScope = resolveDaemonTaskListScope", routeStart);
     const routeBlock = source.slice(routeStart, routeEnd);
 
     expect(routeStart).toBeGreaterThan(-1);
@@ -1735,7 +1982,7 @@ describe("deskrelay-daemon helpers", () => {
     });
 
     expect(output).toBe(
-      "当前：Codex\nCodex：空闲\nClaude：待审批\nTClaude：未启动\nGrok CLI：未启动\nCodeBuddy：未启动\nreasonix：未启动\nWorkBuddy：未启动\nOpenCode：未启动",
+      "当前：Codex\nCodex：空闲\nClaude Code：待审批\nTClaude：未启动\nGrok CLI：未启动\nCodeBuddy：未启动\nreasonix：未启动\nWorkBuddy：未启动\nOpenCode：未启动",
     );
     expect(output).not.toMatch(/cwd|started_at|pid|D:\/work/);
   });
@@ -1765,7 +2012,7 @@ describe("deskrelay-daemon helpers", () => {
         activated: false,
         previousActiveAdapter: "claude",
       }),
-    ).toBe("桌面端尚未连接，仍使用 Claude。");
+    ).toBe("桌面端尚未连接，仍使用 Claude Code。");
   });
 
   test("waitForVisibleClientConnection resolves when the visible companion appears", async () => {
@@ -1816,6 +2063,101 @@ describe("deskrelay-daemon helpers", () => {
 
     expect(connected).toBe(false);
     expect(now).toBe(500);
+  });
+
+  test("retries switched adapter task lists while the companion is still starting", async () => {
+    let now = 0;
+    let attempts = 0;
+    const delays: number[] = [];
+
+    await retrySwitchedAdapterTaskList(
+      async () => {
+        attempts += 1;
+        if (attempts < 3) {
+          throw new Error(
+            "grok companion is connected but not ready yet. Wait for it to finish starting.",
+          );
+        }
+      },
+      {
+        timeoutMs: 1_000,
+        pollMs: 250,
+        sleep: async (ms) => {
+          delays.push(ms);
+          now += ms;
+        },
+        now: () => now,
+      },
+    );
+
+    expect(attempts).toBe(3);
+    expect(delays).toEqual([250, 250]);
+    expect(now).toBe(500);
+  });
+
+  test("does not retry switched adapter task lists for non-transient errors", async () => {
+    let attempts = 0;
+
+    await expect(
+      retrySwitchedAdapterTaskList(
+        async () => {
+          attempts += 1;
+          throw new Error("unexpected decoder failure");
+        },
+        {
+          timeoutMs: 1_000,
+          pollMs: 250,
+          sleep: async () => {
+            throw new Error("must not sleep");
+          },
+          now: () => 0,
+        },
+      ),
+    ).rejects.toThrow("unexpected decoder failure");
+    expect(attempts).toBe(1);
+  });
+
+  test("stops retrying switched adapter task lists after the ready timeout", async () => {
+    let now = 0;
+    let attempts = 0;
+
+    await expect(
+      retrySwitchedAdapterTaskList(
+        async () => {
+          attempts += 1;
+          throw new Error(
+            "grok companion is connected but not ready yet. Wait for it to finish starting.",
+          );
+        },
+        {
+          timeoutMs: 500,
+          pollMs: 250,
+          sleep: async (ms) => {
+            now += ms;
+          },
+          now: () => now,
+        },
+      ),
+    ).rejects.toThrow("grok companion is connected but not ready yet");
+    expect(attempts).toBe(3);
+    expect(now).toBe(500);
+  });
+
+  test("reads switched adapter task lists immediately when the companion is ready", async () => {
+    let attempts = 0;
+
+    await retrySwitchedAdapterTaskList(
+      async () => {
+        attempts += 1;
+      },
+      {
+        sleep: async () => {
+          throw new Error("must not sleep");
+        },
+      },
+    );
+
+    expect(attempts).toBe(1);
   });
 
   test("cleanupDaemonBeforeStart returns none when no daemon endpoint exists", async () => {

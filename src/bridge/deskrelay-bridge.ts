@@ -113,6 +113,7 @@ type WechatSendContext =
   | "message"
   | "notice"
   | "approval_required"
+  | "approval_resolved"
   | "user_input_required"
   | "mirrored_user_input"
   | "session_switched"

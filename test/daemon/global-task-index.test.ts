@@ -39,9 +39,28 @@ describe("global task index", () => {
     const output = formatGlobalTaskList({ snapshot, startIndex: 0, pageSize: 10 });
     expect(output).toContain("1. [Codex] Codex 最新任务");
     expect(output).toContain("2. [WorkBuddy] WorkBuddy 中间任务");
-    expect(output).toContain("3. [Claude] Claude 较旧任务");
+    expect(output).toContain("3. [Claude Code] Claude 较旧任务");
   });
 
+
+  test("uses an emoji for a running task marker", () => {
+    const running = candidate(
+      "codex",
+      "running-1",
+      "正在执行的任务",
+      "2026-08-08T10:00:00.000Z",
+    );
+    running.runtimeStatus = { type: "active", activeFlags: [] };
+
+    const output = formatGlobalTaskList({
+      snapshot: buildGlobalTaskSnapshot([running]),
+      startIndex: 0,
+      pageSize: 10,
+    });
+
+    expect(output).toContain("1. 正在执行的任务　🟢");
+    expect(output).not.toContain("正在执行的任务　运行中");
+  });
 
   test("hides terminal labels on a single-adapter page", () => {
     const snapshot = buildGlobalTaskSnapshot([
@@ -67,7 +86,7 @@ describe("global task index", () => {
     expect(shouldShowGlobalTaskAdapterLabels(page.candidates)).toBe(true);
     const output = formatGlobalTaskList({ snapshot, startIndex: 0, pageSize: 10 });
     expect(output).toContain("1. [Codex] Codex 任务");
-    expect(output).toContain("2. [Claude] Claude 任务");
+    expect(output).toContain("2. [Claude Code] Claude 任务");
   });
 
   test("recomputes terminal-label visibility after crossing a page boundary", () => {

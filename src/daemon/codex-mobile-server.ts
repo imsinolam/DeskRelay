@@ -141,6 +141,7 @@ export type CodexMobileApprovalResult = {
   commandPreview: string;
   resolvedAt: string;
   turnId?: string;
+  requestedAt?: string;
   detailLabel?: string;
   detailPreview?: string;
 };
@@ -153,6 +154,9 @@ export type CodexMobileApprovalResolution = {
 export type CodexMobilePendingApproval = {
   summary: string;
   commandPreview: string;
+  requestId?: string;
+  turnId?: string;
+  createdAtMs?: number;
   allowForSession?: boolean;
   toolName?: string;
   detailLabel?: string;
@@ -1325,8 +1329,12 @@ function createRequestHandler(
           return;
         }
         if (method === "POST") {
-          const tasks = await options.listTasks(requestedAdapter);
-          const task = resolveTaskBySelector(tasks, requestedThreadId);
+          const threadId = /^[0-9a-f]{8}$/i.test(requestedThreadId)
+            ? resolveTaskBySelector(
+                await options.listTasks(requestedAdapter),
+                requestedThreadId,
+              ).threadId
+            : requestedThreadId;
           const body = await readJsonBody(request, MOBILE_MESSAGE_BODY_BYTES_LIMIT);
           const text = typeof body.text === "string" ? body.text : "";
           const images = parseCodexMobileImages(body.images);
@@ -1339,7 +1347,7 @@ function createRequestHandler(
           let result: CodexMobileSendResult;
           try {
             result = await options.sendMessage(
-              task.threadId,
+              threadId,
               { text, images },
               requestedAdapter,
             );

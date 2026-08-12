@@ -234,4 +234,30 @@ describe("WorkBuddy desktop RPC client", () => {
       await fs.promises.rm(dir, { recursive: true, force: true });
     }
   });
+
+  test("bounds a stuck WorkBuddy restart by the overall connection timeout", async () => {
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "deskrelay-workbuddy-timeout-"));
+    const socketPath = path.join(dir, "bridge.sock");
+    try {
+      const client = new WorkBuddyDesktopRpcClient({
+        socketPath,
+        callbacks: { onEvent: () => undefined },
+        connectTimeoutMs: 50,
+        connectPollIntervalMs: 5,
+        existingProcessGraceMs: 0,
+        lifecycle: {
+          isRunning: async () => true,
+          launch: async () => undefined,
+          restart: async () => await new Promise<void>(() => undefined),
+        },
+      });
+
+      const startedAt = Date.now();
+      await expect(client.connect()).rejects.toThrow("WorkBuddy 自动重启超时");
+      expect(Date.now() - startedAt).toBeLessThan(500);
+      await client.close();
+    } finally {
+      await fs.promises.rm(dir, { recursive: true, force: true });
+    }
+  });
 });

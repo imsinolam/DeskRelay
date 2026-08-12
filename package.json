@@ -124,7 +124,8 @@
     "codebuddy:companion": "node --no-warnings --experimental-strip-types src/companion/local-companion.ts --adapter codebuddy",
     "codebuddy:start": "node --no-warnings --experimental-strip-types src/companion/local-companion-start.ts --adapter codebuddy",
     "reasonix:companion": "node --no-warnings --experimental-strip-types src/companion/local-companion.ts --adapter reasonix",
-    "reasonix:start": "node --no-warnings --experimental-strip-types src/companion/local-companion-start.ts --adapter reasonix"
+    "reasonix:start": "node --no-warnings --experimental-strip-types src/companion/local-companion-start.ts --adapter reasonix",
+    "github:publish:server": "node scripts/publish-github-via-server.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

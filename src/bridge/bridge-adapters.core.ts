@@ -815,7 +815,9 @@ export abstract class AbstractPtyAdapter implements BridgeAdapter {
         });
       }
 
-      this.setStatus("idle", `${this.options.kind} adapter is ready.`);
+      if (this.shouldMarkReadyAfterStart()) {
+        this.setStatus("idle", `${this.options.kind} adapter is ready.`);
+      }
     } catch (err) {
       this.state.status = "error";
       this.emit({
@@ -931,6 +933,10 @@ export abstract class AbstractPtyAdapter implements BridgeAdapter {
 
   protected afterStart(): void {
     // Optional hook.
+  }
+
+  protected shouldMarkReadyAfterStart(): boolean {
+    return true;
   }
 
   protected prepareInput(text: string): string {

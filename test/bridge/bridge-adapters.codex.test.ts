@@ -516,6 +516,84 @@ describe("Codex desktop live conversation messages", () => {
     }]);
   });
 
+  test("keeps the preferred live turn when the desktop tail cache retains older turns", () => {
+    expect(
+      extractCodexDesktopThreadMessages({
+        threadRuntimeStatus: { type: "active", activeFlags: [] },
+        turnHistory: {
+          history: {
+            entitiesByKey: {
+              "tail:0:local:current": {
+                turnId: "turn_current",
+                status: "inProgress",
+                items: [{
+                  type: "userMessage",
+                  id: "user_current",
+                  content: [{ type: "text", text: "刚刚发出的消息" }],
+                }],
+              },
+              "tail:0:local:stale-hotel-route": {
+                turnId: "turn_stale_route",
+                status: "inProgress",
+                items: [{
+                  type: "userMessage",
+                  id: "user_stale_route",
+                  content: [{ type: "text", text: "看看根据新酒店的位置调整行程" }],
+                }],
+              },
+              "tail:0:local:stale-hotel-email": {
+                turnId: "turn_stale_email",
+                status: "inProgress",
+                items: [{
+                  type: "userMessage",
+                  id: "user_stale_email",
+                  content: [{ type: "text", text: "起草凌晨入住邮件" }],
+                }],
+              },
+              "tail:0:local:stale-mail-cli": {
+                turnId: "turn_stale_cli",
+                status: "inProgress",
+                items: [{
+                  type: "userMessage",
+                  id: "user_stale_cli",
+                  content: [{ type: "text", text: "安装邮箱 CLI" }],
+                }],
+              },
+            },
+          },
+        },
+      }, "turn_current"),
+    ).toEqual([{
+      role: "user",
+      text: "刚刚发出的消息",
+      id: "user_current",
+      turnId: "turn_current",
+    }]);
+  });
+
+  test("does not fall back to stale tail turns while the preferred turn is still arriving", () => {
+    expect(
+      extractCodexDesktopThreadMessages({
+        threadRuntimeStatus: { type: "active", activeFlags: [] },
+        turnHistory: {
+          history: {
+            entitiesByKey: {
+              "tail:0:local:stale": {
+                turnId: "turn_stale",
+                status: "inProgress",
+                items: [{
+                  type: "userMessage",
+                  id: "user_stale",
+                  content: [{ type: "text", text: "不应插到新消息后面" }],
+                }],
+              },
+            },
+          },
+        },
+      }, "turn_current"),
+    ).toEqual([]);
+  });
+
   test("deduplicates persisted and live messages that use different ids", () => {
     const persisted = [
       {
@@ -699,6 +777,11 @@ describe("Codex desktop live conversation messages", () => {
       ].join("\n") + "\n", "utf8");
 
       const latest = readCodexSessionMessagePageFromRollout(filePath, { limit: 3 });
+      expect(latest?.messages.map((message) => message.createdAtMs)).toEqual([
+        Date.parse("2026-08-04T00:00:04.000Z"),
+        Date.parse("2026-08-04T00:00:05.000Z"),
+        Date.parse("2026-08-04T00:00:06.000Z"),
+      ]);
       expect(latest).toMatchObject({
         messages: [
           {
@@ -744,16 +827,29 @@ describe("Codex desktop live conversation messages", () => {
       });
       expect(older).toEqual({
         messages: [
-          { role: "user", text: "消息 1", id: "message-1", turnId: "turn-1" },
+          {
+            role: "user",
+            text: "消息 1",
+            id: "message-1",
+            turnId: "turn-1",
+            createdAtMs: Date.parse("2026-08-04T00:00:01.000Z"),
+          },
           {
             role: "assistant",
             text: "回答 1",
             id: "message-2",
             turnId: "turn-2",
             phase: "final_answer",
+            createdAtMs: Date.parse("2026-08-04T00:00:02.000Z"),
             model: "gpt-5.4",
           },
-          { role: "user", text: "消息 2", id: "message-3", turnId: "turn-3" },
+          {
+            role: "user",
+            text: "消息 2",
+            id: "message-3",
+            turnId: "turn-3",
+            createdAtMs: Date.parse("2026-08-04T00:00:03.000Z"),
+          },
         ],
         hasMore: false,
         nextBefore: null,
@@ -1177,6 +1273,7 @@ describe("Codex desktop live conversation messages", () => {
         text: "检查性能",
         id: "user-lightweight",
         turnId: "turn-lightweight",
+        createdAtMs: Date.parse("2026-08-05T09:00:01.000Z"),
       }]);
       expect(summary).toMatchObject({
         turnId: "turn-lightweight",
@@ -1189,6 +1286,7 @@ describe("Codex desktop live conversation messages", () => {
           kind: "reasoning",
           status: "completed",
           text: "检查移动端读取链路",
+          createdAtMs: Date.parse("2026-08-05T09:00:02.000Z"),
         },
         {
           id: "call-lightweight",
@@ -1196,6 +1294,7 @@ describe("Codex desktop live conversation messages", () => {
           kind: "command",
           status: "running",
           text: "正在运行命令",
+          createdAtMs: Date.parse("2026-08-05T09:00:03.000Z"),
         },
       ]);
       expect(rpcReads).toBe(0);
@@ -3115,6 +3214,61 @@ describe("Codex desktop IPC transport", () => {
     ]);
   });
 
+  test("resolves one desktop approval request without consuming the next queued approval", async () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    const decisions: unknown[] = [];
+    adapter.desktopIpcClient = {
+      replyToCommandApproval: async (
+        threadId: string,
+        requestId: number,
+        decision: unknown,
+      ) => decisions.push({ threadId, requestId, decision }),
+    };
+    adapter.sharedThreadId = "thread_1";
+    adapter.state.sharedSessionId = "thread_1";
+    adapter.state.sharedThreadId = "thread_1";
+    adapter.state.status = "busy";
+    adapter.activeTurn = {
+      threadId: "thread_1",
+      turnId: "turn_1",
+      origin: "wechat",
+    };
+    adapter.bridgeOwnedTurnIds.add("turn_1");
+
+    for (const requestId of [7, 8]) {
+      await adapter.handleDesktopRequest(
+        "thread_1",
+        requestId,
+        "item/commandExecution/requestApproval",
+        {
+          threadId: "thread_1",
+          turnId: "turn_1",
+          reason: `审批 ${requestId}`,
+          command: `/bin/zsh -lc 'rm -rf /tmp/approval-${requestId}'`,
+          cwd: process.cwd(),
+          availableDecisions: ["accept", "cancel"],
+        },
+      );
+    }
+
+    expect(adapter.getPendingTaskApprovals("thread_1")).toHaveLength(2);
+    expect(await adapter.resolveApprovalRequest("7", "deny")).toBe(true);
+    expect(adapter.getPendingTaskApprovals("thread_1")).toMatchObject([{
+      requestId: "8",
+    }]);
+    expect(decisions).toEqual([{
+      threadId: "thread_1",
+      requestId: 7,
+      decision: "cancel",
+    }]);
+  });
+
   test("reconstructs actionable desktop approvals from a followed thread snapshot", async () => {
     const adapter = new CodexPtyAdapter({
       kind: "codex",
@@ -3292,6 +3446,7 @@ describe("Codex desktop IPC transport", () => {
       threadId: "thread_1",
       turnId: "turn_1",
       origin: "local",
+      createdAt: expect.any(String),
     }]);
 
     expect(await adapter.resolveTaskApprovals("thread_1", "confirm_session")).toBe(1);

@@ -295,6 +295,26 @@ async function waitForProcessIdsToExit(processIds: number[], timeoutMs: number):
   return processIds.every((pid) => !isProcessRunning(pid));
 }
 
+async function waitForPromiseWithinDeadline<T>(
+  promise: Promise<T>,
+  deadline: number,
+  timeoutMessage: string,
+): Promise<T> {
+  const timeoutMs = deadline - Date.now();
+  if (timeoutMs <= 0) throw new Error(timeoutMessage);
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function cleanupOrphanedWorkBuddyDesktopDaemons(): Promise<void> {
   const processIds = (await listWorkBuddyProcesses())
     .filter((record) =>
@@ -372,16 +392,20 @@ export async function restartWorkBuddyWithDesktopRelay(options: {
   if (process.platform !== "darwin") {
     throw new Error("WorkBuddy 桌面同步目前仅支持 macOS。");
   }
+  const quitTimeoutMs = options.quitTimeoutMs ?? DEFAULT_QUIT_TIMEOUT_MS;
   if (await isWorkBuddyMainProcessRunning()) {
     try {
       await execFileAsync("/usr/bin/osascript", [
         "-e",
         `tell application id "${WORKBUDDY_BUNDLE_ID}" to quit`,
-      ]);
+      ], {
+        timeout: quitTimeoutMs,
+        killSignal: "SIGKILL",
+      });
     } catch {
       throw new Error("WorkBuddy 无法自动重启，请先处理电脑端尚未关闭的窗口后重试。");
     }
-    if (!await waitForWorkBuddyToExit(options.quitTimeoutMs ?? DEFAULT_QUIT_TIMEOUT_MS)) {
+    if (!await waitForWorkBuddyToExit(quitTimeoutMs)) {
       throw new Error("WorkBuddy 正在阻止自动重启，请先处理电脑端尚未保存的内容后重试。");
     }
   }
@@ -454,9 +478,17 @@ export class WorkBuddyDesktopRpcClient implements WorkBuddyDesktopRpcClientLike 
       hookPath: this.hookPath,
     };
     if (wasRunning) {
-      await this.lifecycle.restart(launchOptions);
+      await waitForPromiseWithinDeadline(
+        this.lifecycle.restart(launchOptions),
+        deadline,
+        "WorkBuddy 自动重启超时，请处理电脑端未关闭的窗口后重试。",
+      );
     } else {
-      await this.lifecycle.launch(launchOptions);
+      await waitForPromiseWithinDeadline(
+        this.lifecycle.launch(launchOptions),
+        deadline,
+        "WorkBuddy 自动启动超时，请确认应用可以正常打开后重试。",
+      );
     }
     if (await this.waitForConnection(deadline)) {
       await this.lifecycle.cleanup?.();
