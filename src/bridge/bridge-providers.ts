@@ -60,6 +60,7 @@ export type BridgeProviderCapabilities = {
   queue: boolean;
   approvals: boolean;
   stop: boolean;
+  nativeCommands: boolean;
 };
 
 export type BridgeProviderDefinition = {
@@ -79,6 +80,7 @@ const BASE_CLI_CAPABILITIES: BridgeProviderCapabilities = {
   queue: false,
   approvals: true,
   stop: true,
+  nativeCommands: true,
 };
 
 export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition> = {
@@ -95,6 +97,7 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       queue: true,
       approvals: true,
       stop: true,
+      nativeCommands: false,
     },
     sessionIntegration: {
       owner: "desktop_owner",
@@ -104,7 +107,7 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
   },
   claude: {
     id: "claude",
-    label: "Claude",
+    label: "Claude Code",
     command: "claude",
     transport: "claude_cli",
     daemon: true,
@@ -180,6 +183,7 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       queue: false,
       approvals: true,
       stop: true,
+      nativeCommands: false,
     },
     sessionIntegration: {
       owner: "desktop_owner",
@@ -213,6 +217,7 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       queue: false,
       approvals: true,
       stop: true,
+      nativeCommands: false,
     },
     sessionIntegration: {
       owner: "none",

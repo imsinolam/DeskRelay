@@ -13,7 +13,7 @@ export const CODEX_MOBILE_HTML = `<!doctype html>
   <section class="boot-screen" id="boot-screen" aria-label="正在打开 DeskRelay">
     <div class="boot-content">
       <div class="boot-wordmark">DeskRelay</div>
-      <div class="boot-status" id="boot-status">正在连接电脑…</div>
+      <div class="boot-status" id="boot-status">正在检查电脑连接状态…</div>
     </div>
   </section>
 
@@ -727,6 +727,7 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.75; stro
 .task-board-column-count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .task-board-card-list { display: grid; gap: 10px; }
 .task-board-card {
+  position: relative;
   width: 100%;
   min-height: 112px;
   display: flex;
@@ -739,7 +740,9 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.75; stro
   color: var(--text);
   font: inherit;
   text-align: left;
+  text-decoration: none;
   cursor: pointer;
+  touch-action: manipulation;
   transition: border-color .16s cubic-bezier(.2,.8,.2,1), transform .16s cubic-bezier(.2,.8,.2,1), box-shadow .16s cubic-bezier(.2,.8,.2,1);
 }
 .task-board-card:hover { border-color: var(--border-strong); transform: translateY(-1px); box-shadow: 0 8px 22px rgba(0,0,0,.06); }
@@ -747,18 +750,17 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.75; stro
 .task-board-card:focus-visible { outline: 2px solid rgba(16,163,127,.42); outline-offset: 2px; }
 .task-board-card.is-opening { opacity: .58; cursor: wait; }
 .task-board-card-title { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; color: var(--text); font-size: 14px; font-weight: 560; line-height: 1.48; overflow-wrap: anywhere; }
-.task-board-card-meta { margin-top: auto; display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--muted); font-size: 11px; }
-.task-board-card-status { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.task-board-card-meta { margin-top: auto; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 5px 12px; min-width: 0; color: var(--muted); font-size: 11px; }
+.task-board-card-status { display: inline-flex; align-items: center; gap: 5px; min-width: 0; white-space: nowrap; }
 .task-board-card-status-dot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: currentColor; }
 .task-board-card[data-lane="running"] .task-board-card-status { color: var(--green); }
 .task-board-card[data-lane="waiting"] .task-board-card-status { color: var(--orange); }
 .task-board-card[data-lane="error"] .task-board-card-status { color: var(--red); }
-.task-board-card-adapter { flex: 0 0 auto; color: var(--muted-strong); font-weight: 560; }
-.task-board-card-project { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-board-card-time { margin-left: auto; flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.task-board-card-context { grid-column: 1 / -1; min-width: 0; overflow: hidden; color: var(--muted-strong); font-weight: 520; text-overflow: ellipsis; white-space: nowrap; }
+.task-board-card-time { grid-column: 2; grid-row: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .task-board-column-empty { min-height: 104px; display: grid; place-items: center; padding: 18px; border: 1px dashed var(--border-strong); border-radius: 14px; color: var(--muted); font-size: 12px; text-align: center; }
 .task-board-completed { width: min(920px, 100%); margin: 0 auto; display: grid; gap: 0; border-top: 1px solid var(--border); }
-.task-board-completed-item { width: 100%; min-height: 72px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 15px 4px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.task-board-completed-item { width: 100%; min-height: 72px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 15px 4px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); font: inherit; text-align: left; text-decoration: none; cursor: pointer; touch-action: manipulation; }
 .task-board-completed-item:hover .task-board-completed-title { text-decoration: underline; text-underline-offset: 3px; }
 .task-board-completed-item.is-opening { opacity: .58; cursor: wait; }
 .task-board-completed-item:focus-visible { outline: 2px solid rgba(16,163,127,.42); outline-offset: 2px; border-radius: 8px; }
@@ -1085,14 +1087,20 @@ body.task-rename-open { overflow: hidden; }
   .task-board-toolbar { align-items: stretch; flex-direction: column; gap: 10px; margin-top: 15px; }
   .task-board-view-switch { width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .task-board-search { width: 100%; }
-  .task-board-body { padding: 16px 16px max(24px, env(safe-area-inset-bottom)); scroll-snap-type: x proximity; }
-  .task-board-columns { min-width: 0; display: flex; gap: 12px; }
-  .task-board-column { width: min(84vw, 320px); flex: 0 0 min(84vw, 320px); scroll-snap-align: start; }
-  .task-board-card { min-height: 108px; }
+  .task-board-body { overflow-x: hidden; padding: 18px 16px max(28px, env(safe-area-inset-bottom)); scroll-snap-type: none; }
+  .task-board-columns { width: 100%; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; }
+  .task-board-column { width: auto; min-width: 0; }
+  .task-board-column.is-empty { display: none; }
+  .task-board-column-head { min-height: 30px; padding: 0 2px 7px; }
+  .task-board-column-title { font-size: 14px; }
+  .task-board-card-list { gap: 9px; }
+  .task-board-card { min-height: 0; gap: 12px; padding: 14px 15px; }
+  .task-board-card-title { -webkit-line-clamp: 2; font-size: 15px; line-height: 1.46; }
+  .task-board-card-meta { gap: 4px 12px; font-size: 12px; }
   .task-board-completed-item { min-height: 78px; padding-left: 2px; padding-right: 2px; }
   .task-board-completed-title { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-  .task-board-skeleton { min-width: 0; display: flex; gap: 12px; }
-  .task-board-skeleton-column { width: min(84vw, 320px); flex: 0 0 min(84vw, 320px); }
+  .task-board-skeleton { width: 100%; min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .task-board-skeleton-column:nth-child(n + 3) { display: none; }
   .topbar-title { max-width: 46vw; font-size: 11px; }
   .status-label { width: 28px; padding: 0; justify-content: center; font-size: 0; }
   .topbar-actions { gap: 1px; }
@@ -1260,6 +1268,7 @@ export const CODEX_MOBILE_JS = String.raw`
     loadingOlderMessages: false,
     historyRequestId: 0,
     progressItems: [],
+    optimisticProgressTurnId: null,
     pendingMessages: [],
     transcriptSignature: "",
     queueSignature: "",
@@ -1281,6 +1290,7 @@ export const CODEX_MOBILE_JS = String.raw`
     sending: false,
     creatingTask: false,
     pendingImages: [],
+    messageNodes: Object.create(null),
     taskNodes: Object.create(null),
     taskGroupNodes: Object.create(null),
     taskEmptyNode: null,
@@ -1293,7 +1303,12 @@ export const CODEX_MOBILE_JS = String.raw`
     liveRefreshTimer: null,
     runClockTimer: null,
     appUpdateChecking: false,
-    lastAppVersionCheckAtMs: 0
+    lastAppVersionCheckAtMs: 0,
+    connectionMode: "unknown",
+    conversationSnapshots: Object.create(null),
+    conversationSnapshotOrder: [],
+    composerDrafts: Object.create(null),
+    composerDraftOrder: []
   };
 
   var APP_VERSION = "__DESK_RELAY_ASSET_VERSION__";
@@ -1308,6 +1323,9 @@ export const CODEX_MOBILE_JS = String.raw`
   var LAN_REDIRECT_ATTEMPT_KEY = "deskrelayLanRedirectAttemptedAt";
   var LAN_REDIRECT_COOLDOWN_MS = 10 * 60 * 1000;
   var LAN_REDIRECT_FALLBACK_MS = 3500;
+  var DEVICE_CONNECTION_RETRY_MS = 1500;
+  var MAX_CONVERSATION_SNAPSHOTS = 12;
+  var MAX_COMPOSER_DRAFTS = 40;
 
   function taskRecencyMs(task) {
     var parsed = Date.parse(task && task.lastUpdatedAt || "");
@@ -1331,6 +1349,12 @@ export const CODEX_MOBILE_JS = String.raw`
     return "queued";
   }
 
+  function isTaskBoardInProgress(task) {
+    return Boolean(task && (
+      task.status === "running" || task.status === "approval" || task.status === "input"
+    ));
+  }
+
   function taskBoardMatchesQuery(task, query) {
     var normalized = String(query || "").trim().toLowerCase();
     if (!normalized) return true;
@@ -1347,6 +1371,15 @@ export const CODEX_MOBILE_JS = String.raw`
       return String(task && task.adapter || "").trim();
     }).filter(Boolean));
     return adapters.size > 1;
+  }
+
+  function taskBoardTaskHref(task) {
+    var url = new URL(window.location.href);
+    url.searchParams.set("adapter", task.adapter);
+    url.searchParams.set("task", task.threadId);
+    url.searchParams.delete("view");
+    url.searchParams.delete("board");
+    return url.pathname + url.search + url.hash;
   }
 
   function formatTaskBoardTime(value, nowMs) {
@@ -1400,6 +1433,165 @@ export const CODEX_MOBILE_JS = String.raw`
     return supported.find(function (task) {
       return task.threadId === currentThreadId;
     }) || supported[0] || null;
+  }
+
+  function conversationStateKey(adapterId, threadId) {
+    return String(adapterId || "") + "\u0000" + String(threadId || "");
+  }
+
+  function touchConversationValue(order, key) {
+    var existingIndex = order.indexOf(key);
+    if (existingIndex >= 0) order.splice(existingIndex, 1);
+    order.push(key);
+  }
+
+  function setBoundedConversationValue(values, order, key, value, limit) {
+    if (!key) return order;
+    values[key] = value;
+    touchConversationValue(order, key);
+    var boundedLimit = Math.max(1, Math.floor(Number(limit) || 1));
+    while (order.length > boundedLimit) {
+      var evictedKey = order.shift();
+      if (evictedKey !== undefined) delete values[evictedKey];
+    }
+    return order;
+  }
+
+  function getBoundedConversationValue(values, order, key) {
+    if (!key || !Object.prototype.hasOwnProperty.call(values, key)) return null;
+    touchConversationValue(order, key);
+    return values[key];
+  }
+
+  function deleteConversationValue(values, order, key) {
+    if (!key) return;
+    delete values[key];
+    var existingIndex = order.indexOf(key);
+    if (existingIndex >= 0) order.splice(existingIndex, 1);
+  }
+
+  function saveComposerDraft(adapterId, threadId) {
+    if (!threadId || state.editingQueuedMessageId) return;
+    var key = conversationStateKey(adapterId, threadId);
+    var text = String(composerInput.value || "");
+    if (!text) {
+      deleteConversationValue(state.composerDrafts, state.composerDraftOrder, key);
+      return;
+    }
+    setBoundedConversationValue(
+      state.composerDrafts,
+      state.composerDraftOrder,
+      key,
+      { text: text },
+      MAX_COMPOSER_DRAFTS
+    );
+  }
+
+  function restoreComposerDraft(adapterId, threadId) {
+    var draft = getBoundedConversationValue(
+      state.composerDrafts,
+      state.composerDraftOrder,
+      conversationStateKey(adapterId, threadId)
+    );
+    composerInput.value = draft && draft.text ? draft.text : "";
+  }
+
+  function clearComposerDraft(adapterId, threadId) {
+    deleteConversationValue(
+      state.composerDrafts,
+      state.composerDraftOrder,
+      conversationStateKey(adapterId, threadId)
+    );
+  }
+
+  function saveCurrentConversationSnapshot() {
+    if (!state.currentThreadId) return;
+    saveComposerDraft(state.currentAdapter, state.currentThreadId);
+    var key = conversationStateKey(state.currentAdapter, state.currentThreadId);
+    setBoundedConversationValue(
+      state.conversationSnapshots,
+      state.conversationSnapshotOrder,
+      key,
+      {
+        serverMessages: state.serverMessages.slice(),
+        historyMessages: state.historyMessages.slice(),
+        latestMessages: state.latestMessages.slice(),
+        oldestMessageCursor: state.oldestMessageCursor,
+        hasOlderMessages: state.hasOlderMessages,
+        historySource: state.historySource,
+        historyCaughtUp: state.historyCaughtUp,
+        progressItems: state.progressItems.slice(),
+        optimisticProgressTurnId: state.optimisticProgressTurnId,
+        pendingMessages: state.pendingMessages.slice(),
+        transcriptSignature: state.transcriptSignature,
+        queueSignature: state.queueSignature,
+        queuedMessages: state.queuedMessages.slice(),
+        editingQueuedMessageId: state.editingQueuedMessageId,
+        editingQueuedImageCount: state.editingQueuedImageCount,
+        editingQueuedText: state.editingQueuedMessageId ? composerInput.value : "",
+        pendingImages: state.pendingImages.slice(),
+        runSummary: state.runSummary,
+        localRunSummary: state.localRunSummary,
+        pendingApproval: state.pendingApproval,
+        approvalResults: state.approvalResults.slice(),
+        stopRequestedThreadId: state.stopRequestedThreadId,
+        scrollTop: messagesEl.scrollTop,
+        nearBottom: isNearBottom()
+      },
+      MAX_CONVERSATION_SNAPSHOTS
+    );
+  }
+
+  function restoreConversationSnapshot(adapterId, threadId) {
+    var snapshot = getBoundedConversationValue(
+      state.conversationSnapshots,
+      state.conversationSnapshotOrder,
+      conversationStateKey(adapterId, threadId)
+    );
+    if (!snapshot) return false;
+    state.serverMessages = snapshot.serverMessages.slice();
+    state.historyMessages = snapshot.historyMessages.slice();
+    state.latestMessages = snapshot.latestMessages.slice();
+    state.oldestMessageCursor = snapshot.oldestMessageCursor;
+    state.hasOlderMessages = snapshot.hasOlderMessages;
+    state.historySource = snapshot.historySource || "";
+    state.historyCaughtUp = snapshot.historyCaughtUp !== false;
+    state.progressItems = snapshot.progressItems.slice();
+    state.optimisticProgressTurnId = snapshot.optimisticProgressTurnId || null;
+    state.pendingMessages = snapshot.pendingMessages.slice();
+    state.transcriptSignature = snapshot.transcriptSignature || "";
+    state.queueSignature = snapshot.queueSignature || "";
+    state.queuedMessages = snapshot.queuedMessages.slice();
+    state.editingQueuedMessageId = snapshot.editingQueuedMessageId || "";
+    state.editingQueuedImageCount = Math.max(0, Number(snapshot.editingQueuedImageCount) || 0);
+    state.runSummary = snapshot.runSummary || null;
+    state.localRunSummary = snapshot.localRunSummary || null;
+    state.pendingApproval = snapshot.pendingApproval || null;
+    state.approvalResults = snapshot.approvalResults.slice();
+    state.stopRequestedThreadId = snapshot.stopRequestedThreadId === threadId ? threadId : "";
+    state.messageNodes = Object.create(null);
+    state.pendingImages = Array.isArray(snapshot.pendingImages)
+      ? snapshot.pendingImages.slice()
+      : [];
+    composerInput.value = state.editingQueuedMessageId
+      ? String(snapshot.editingQueuedText || "")
+      : "";
+    if (!state.editingQueuedMessageId) restoreComposerDraft(adapterId, threadId);
+    composerInput.placeholder = state.editingQueuedMessageId
+      ? "编辑待发送消息"
+      : "有问题，尽管问";
+    composerImageButton.disabled = Boolean(state.editingQueuedMessageId);
+    renderPendingImages();
+    renderQueuedMessages(state.queuedMessages);
+    resizeComposer();
+    renderMessages(false);
+    requestAnimationFrame(function () {
+      if (threadId !== state.currentThreadId) return;
+      if (snapshot.nearBottom) scrollToLatest(false);
+      else messagesEl.scrollTop = Math.max(0, Number(snapshot.scrollTop) || 0);
+      updateUserMessageNavigation();
+    });
+    return true;
   }
 
   function readSetupToken() {
@@ -1528,9 +1720,50 @@ export const CODEX_MOBILE_JS = String.raw`
     }).join("");
   }
 
+  function isMobileFetchNetworkError(error) {
+    if (!error || error.status) return false;
+    var message = String(error.message || error);
+    return error.name === "TypeError" ||
+      /Failed to fetch|Load failed|NetworkError|Internet connection appears to be offline|network request failed/i.test(message);
+  }
+
+  function shouldRetryMobileFetch(error, method, attempt) {
+    return String(method || "GET").toUpperCase() === "GET" &&
+      attempt === 0 &&
+      isMobileFetchNetworkError(error);
+  }
+
+  function normalizeMobileFetchError(error) {
+    if (!isMobileFetchNetworkError(error)) return error;
+    var normalized = new Error("网络连接暂时中断，请稍后重试。");
+    normalized.network = true;
+    return normalized;
+  }
+
+  async function waitForMobileFetchRetry() {
+    await new Promise(function (resolve) {
+      setTimeout(resolve, document.hidden ? 900 : 450);
+    });
+  }
+
   async function fetchJson(path, options) {
     options = options || {};
-    var response = await fetch(path, Object.assign({ credentials: "same-origin" }, options));
+    var requestOptions = Object.assign({ credentials: "same-origin" }, options);
+    var method = String(requestOptions.method || "GET").toUpperCase();
+    delete requestOptions.retryNetwork;
+    var response = null;
+    for (var attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        response = await fetch(path, requestOptions);
+        break;
+      } catch (error) {
+        if (shouldRetryMobileFetch(error, method, attempt)) {
+          await waitForMobileFetchRetry();
+          continue;
+        }
+        throw normalizeMobileFetchError(error);
+      }
+    }
     var payload = null;
     try { payload = await response.json(); } catch (_) { payload = null; }
     if (!response.ok) {
@@ -1602,6 +1835,55 @@ export const CODEX_MOBILE_JS = String.raw`
     } catch (_) {}
   }
 
+  function resolveBootConnectionState(health) {
+    if (health && typeof health.deviceOnline === "boolean") {
+      return health.deviceOnline
+        ? {
+            mode: "relay",
+            ready: true,
+            label: "电脑已连接，正在读取任务…"
+          }
+        : {
+            mode: "relay",
+            ready: false,
+            label: "正在等待你的电脑主动连接服务器…"
+          };
+    }
+    return {
+      mode: "direct",
+      ready: true,
+      label: "正在读取电脑上的任务…"
+    };
+  }
+
+  function bootReadyStatus() {
+    return state.connectionMode === "relay"
+      ? "电脑已连接，正在读取任务…"
+      : "正在读取电脑上的任务…";
+  }
+
+  async function waitForComputerConnection() {
+    app.hidden = true;
+    authScreen.hidden = true;
+    bootScreen.hidden = false;
+    bootStatus.textContent = "正在检查电脑连接状态…";
+    while (true) {
+      try {
+        var health = await fetchJson("/health", { cache: "no-store" });
+        var connection = resolveBootConnectionState(health);
+        state.connectionMode = connection.mode;
+        bootStatus.textContent = connection.label;
+        if (connection.ready) return;
+      } catch (_) {
+        state.connectionMode = "unknown";
+        bootStatus.textContent = "正在连接 DeskRelay 服务器…";
+      }
+      await new Promise(function (resolve) {
+        setTimeout(resolve, document.hidden ? 5000 : DEVICE_CONNECTION_RETRY_MS);
+      });
+    }
+  }
+
   async function attemptLanAcceleration() {
     if (window.location.protocol !== "https:") return false;
     var pageUrl = new URL(window.location.href);
@@ -1637,11 +1919,11 @@ export const CODEX_MOBILE_JS = String.raw`
         body: JSON.stringify({ target: currentLanHandoffTarget() })
       });
     } catch (_) {
-      bootStatus.textContent = "正在连接电脑…";
+      bootStatus.textContent = bootReadyStatus();
       return false;
     }
     if (!handoff || typeof handoff.handoffUrl !== "string" || !handoff.handoffUrl) {
-      bootStatus.textContent = "正在连接电脑…";
+      bootStatus.textContent = bootReadyStatus();
       return false;
     }
 
@@ -1657,7 +1939,7 @@ export const CODEX_MOBILE_JS = String.raw`
       return true;
     } catch (_) {
       clearTimeout(fallbackTimer);
-      bootStatus.textContent = "正在连接电脑…";
+      bootStatus.textContent = bootReadyStatus();
       return false;
     }
   }
@@ -1688,7 +1970,7 @@ export const CODEX_MOBILE_JS = String.raw`
   function fallbackAdapterName(adapterId) {
     var labels = {
       codex: "Codex",
-      claude: "Claude",
+      claude: "Claude Code",
       tclaude: "TClaude",
       grok: "Grok CLI",
       codebuddy: "CodeBuddy",
@@ -1714,7 +1996,10 @@ export const CODEX_MOBILE_JS = String.raw`
   }
 
   function updateDocumentTitle() {
-    document.title = "DeskRelay · " + currentAdapterName();
+    var task = currentTask();
+    document.title = task && task.title
+      ? task.title
+      : "DeskRelay · " + currentAdapterName();
   }
 
   function isAdapterCapabilityError() {
@@ -1784,6 +2069,7 @@ export const CODEX_MOBILE_JS = String.raw`
     state.messageRequestId += 1;
     state.historyRequestId += 1;
     state.composerRevision += 1;
+    state.loadingMessages = false;
     state.tasks = [];
     state.currentThreadId = "";
     state.serverMessages = [];
@@ -1792,7 +2078,9 @@ export const CODEX_MOBILE_JS = String.raw`
     state.oldestMessageCursor = null;
     state.hasOlderMessages = false;
     state.progressItems = [];
+    state.optimisticProgressTurnId = null;
     state.pendingMessages = [];
+    state.messageNodes = Object.create(null);
     state.queuedMessages = [];
     state.editingQueuedMessageId = "";
     state.editingQueuedImageCount = 0;
@@ -1823,6 +2111,7 @@ export const CODEX_MOBILE_JS = String.raw`
       toggleWorkspaceMenu(false);
       return true;
     }
+    saveCurrentConversationSnapshot();
     state.switchingAdapter = true;
     state.switchingAdapterId = adapterId;
     state.switchStartedAtMs = Date.now();
@@ -1923,7 +2212,7 @@ export const CODEX_MOBILE_JS = String.raw`
     if (!state.appStarted) {
       app.hidden = true;
       bootScreen.hidden = false;
-      bootStatus.textContent = "正在连接电脑…";
+      bootStatus.textContent = bootReadyStatus();
       if (await attemptLanAcceleration()) return;
     }
     var needsInitialTask = !state.appStarted || !state.currentThreadId;
@@ -2688,9 +2977,7 @@ export const CODEX_MOBILE_JS = String.raw`
   function updateTaskBoardControls() {
     taskBoardOpen.classList.toggle("is-active", state.boardOpen);
     taskBoardOpen.setAttribute("aria-pressed", state.boardOpen ? "true" : "false");
-    var activeCount = state.boardTasks.filter(function (task) {
-      return taskBoardLane(task) !== "completed";
-    }).length;
+    var activeCount = state.boardTasks.filter(isTaskBoardInProgress).length;
     taskBoardCount.hidden = activeCount === 0;
     taskBoardCount.textContent = activeCount > 99 ? "99+" : String(activeCount);
     taskBoardViewActive.classList.toggle("is-active", state.boardView === "active");
@@ -2742,13 +3029,13 @@ export const CODEX_MOBILE_JS = String.raw`
   }
 
   function renderTaskBoardCard(task, lane, showAdapterLabel) {
-    var card = document.createElement("button");
+    var card = document.createElement("a");
     var key = task.adapter + "\u0000" + task.threadId;
-    card.type = "button";
+    card.href = taskBoardTaskHref(task);
     card.className = "task-board-card" + (state.boardOpeningKey === key ? " is-opening" : "");
     card.dataset.lane = lane;
-    card.disabled = Boolean(state.boardOpeningKey);
     card.setAttribute("aria-label", "打开任务：" + task.title);
+    if (state.boardOpeningKey === key) card.setAttribute("aria-busy", "true");
 
     var title = document.createElement("span");
     title.className = "task-board-card-title";
@@ -2761,26 +3048,32 @@ export const CODEX_MOBILE_JS = String.raw`
     status.innerHTML = '<span class="task-board-card-status-dot"></span><span></span>';
     status.lastChild.textContent = taskBoardStatusLabel(task);
     meta.appendChild(status);
+
+    var contextParts = [];
     if (showAdapterLabel && task.adapterLabel) {
-      var adapter = document.createElement("span");
-      adapter.className = "task-board-card-adapter";
-      adapter.textContent = task.adapterLabel;
-      meta.appendChild(adapter);
+      contextParts.push(task.adapterLabel);
     }
     if (task.projectName) {
-      var project = document.createElement("span");
-      project.className = "task-board-card-project";
-      project.textContent = task.projectName;
-      meta.appendChild(project);
+      contextParts.push(task.projectName);
     }
     var time = document.createElement("span");
     time.className = "task-board-card-time";
     time.textContent = formatTaskBoardTime(task.lastUpdatedAt);
     meta.appendChild(time);
+    if (contextParts.length) {
+      var context = document.createElement("span");
+      context.className = "task-board-card-context";
+      context.textContent = contextParts.join(" · ");
+      context.title = context.textContent;
+      meta.appendChild(context);
+    }
 
     card.appendChild(title);
     card.appendChild(meta);
-    card.addEventListener("click", function () {
+    card.addEventListener("click", function (event) {
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      if (state.boardOpeningKey) return;
       void openTaskFromBoard(task);
     });
     return card;
@@ -2821,6 +3114,7 @@ export const CODEX_MOBILE_JS = String.raw`
       var section = document.createElement("section");
       section.className = "task-board-column";
       section.dataset.lane = definition.id;
+      section.classList.toggle("is-empty", lanes[definition.id].length === 0);
       var heading = document.createElement("div");
       heading.className = "task-board-column-head";
       heading.innerHTML =
@@ -2859,13 +3153,13 @@ export const CODEX_MOBILE_JS = String.raw`
     var list = document.createElement("div");
     list.className = "task-board-completed";
     items.forEach(function (item) {
-      var button = document.createElement("button");
+      var button = document.createElement("a");
       var key = item.adapter + "\u0000" + item.threadId;
-      button.type = "button";
+      button.href = taskBoardTaskHref(item);
       button.className = "task-board-completed-item" +
         (state.boardOpeningKey === key ? " is-opening" : "");
-      button.disabled = Boolean(state.boardOpeningKey);
       button.setAttribute("aria-label", "打开已完成任务：" + item.title);
+      if (state.boardOpeningKey === key) button.setAttribute("aria-busy", "true");
       var copy = document.createElement("span");
       copy.className = "task-board-completed-copy";
       var title = document.createElement("span");
@@ -2883,7 +3177,10 @@ export const CODEX_MOBILE_JS = String.raw`
       time.textContent = formatTaskBoardTime(item.completedAt);
       button.appendChild(copy);
       button.appendChild(time);
-      button.addEventListener("click", function () {
+      button.addEventListener("click", function (event) {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        if (state.boardOpeningKey) return;
         void openTaskFromBoard(item);
       });
       list.appendChild(button);
@@ -2938,6 +3235,7 @@ export const CODEX_MOBILE_JS = String.raw`
       state.boardLastLoadedAtMs = Date.now();
     } catch (error) {
       if (requestId !== state.boardRequestId || error.status === 401) return;
+      if (error.network && state.boardLastLoadedAtMs) return;
       state.boardError = error.message || "任务看板读取失败";
     } finally {
       if (requestId === state.boardRequestId) {
@@ -3079,6 +3377,10 @@ export const CODEX_MOBILE_JS = String.raw`
       state.nextTaskRefreshAtMs = Date.now() + TASK_REFRESH_INTERVAL_MS;
     } catch (error) {
       if (requestId !== state.taskRequestId || error.status === 401) return;
+      if (error.network && !initial && state.tasks.length) {
+        state.nextTaskRefreshAtMs = Date.now() + TASK_REFRESH_INTERVAL_MS;
+        return;
+      }
       var nextError = error.message || "任务列表读取失败";
       var errorChanged = nextError !== state.adapterError;
       state.adapterError = nextError;
@@ -3234,6 +3536,7 @@ export const CODEX_MOBILE_JS = String.raw`
       composerInput.focus();
       return;
     }
+    saveComposerDraft(state.currentAdapter, state.currentThreadId);
     state.editingQueuedMessageId = message.id;
     state.editingQueuedImageCount = Math.max(0, Number(message.imageCount) || 0);
     state.composerRevision += 1;
@@ -3251,7 +3554,7 @@ export const CODEX_MOBILE_JS = String.raw`
     state.editingQueuedMessageId = "";
     state.editingQueuedImageCount = 0;
     state.composerRevision += 1;
-    composerInput.value = "";
+    restoreComposerDraft(state.currentAdapter, state.currentThreadId);
     composerInput.placeholder = "有问题，尽管问";
     composerImageButton.disabled = false;
     resizeComposer();
@@ -3289,7 +3592,7 @@ export const CODEX_MOBILE_JS = String.raw`
       state.editingQueuedMessageId = "";
       state.editingQueuedImageCount = 0;
       state.composerRevision += 1;
-      composerInput.value = "";
+      restoreComposerDraft(state.currentAdapter, state.currentThreadId);
       composerInput.placeholder = "有问题，尽管问";
       composerImageButton.disabled = false;
       resizeComposer();
@@ -3525,6 +3828,15 @@ export const CODEX_MOBILE_JS = String.raw`
     return items;
   }
 
+  function filterProgressItemsForOptimisticTurn(progressItems, optimisticTurnId) {
+    var items = Array.isArray(progressItems) ? progressItems : [];
+    if (optimisticTurnId === null || optimisticTurnId === undefined) return items;
+    if (!optimisticTurnId) return [];
+    return items.filter(function (item) {
+      return item && item.turnId === optimisticTurnId;
+    });
+  }
+
   function resolveVisibleRunSummary(messages, task, summary, nowMs) {
     var latestAssistant = null;
     var latestUser = null;
@@ -3681,15 +3993,125 @@ export const CODEX_MOBILE_JS = String.raw`
     return "已允许本次操作";
   }
 
-  function approvalResultInsertIndex(messages, result) {
-    if (result && result.turnId) {
-      for (var index = messages.length - 1; index >= 0; index -= 1) {
-        if (messages[index] && messages[index].turnId === result.turnId) {
-          return index + 1;
-        }
-      }
+  function timelineOccurredAtMs(value, fallbackField) {
+    var direct = Number(value && value.createdAtMs);
+    if (Number.isFinite(direct)) return direct;
+    var fallback = value && value[fallbackField];
+    if (typeof fallback === "string") {
+      var parsed = Date.parse(fallback);
+      if (Number.isFinite(parsed)) return parsed;
     }
-    return messages.length;
+    return null;
+  }
+
+  function timelineFallbackRank(kind) {
+    if (kind === "message") return 0;
+    if (kind === "progress") return 1;
+    if (kind === "approval-result") return 2;
+    return 3;
+  }
+
+  function buildConversationTimeline(params) {
+    var messages = Array.isArray(params && params.messages) ? params.messages : [];
+    var results = Array.isArray(params && params.approvalResults) ? params.approvalResults : [];
+    var progressItems = Array.isArray(params && params.progressItems) ? params.progressItems : [];
+    var pendingApproval = params && params.pendingApproval || null;
+    var items = [];
+    var sequence = 0;
+
+    var fallbackTurnId = "";
+    messages.forEach(function (message, messageIndex) {
+      var explicitTurnId = message && message.turnId || "";
+      if (message && message.role === "user" && explicitTurnId) fallbackTurnId = explicitTurnId;
+      var effectiveTurnId = explicitTurnId || fallbackTurnId;
+      if (explicitTurnId) fallbackTurnId = explicitTurnId;
+      items.push({
+        kind: "message",
+        message: message,
+        messageIndex: messageIndex,
+        turnId: effectiveTurnId,
+        occurredAtMs: timelineOccurredAtMs(message, "createdAt"),
+        anchorIndex: messageIndex,
+        fallbackOrder: messageIndex * 10,
+        sequence: sequence++
+      });
+    });
+    progressItems.forEach(function (progressItem, progressIndex) {
+      items.push({
+        kind: "progress",
+        progressItem: progressItem,
+        turnId: progressItem && progressItem.turnId || "",
+        occurredAtMs: timelineOccurredAtMs(progressItem, "createdAt"),
+        anchorIndex: messages.length,
+        fallbackOrder: progressIndex * 10 + 1,
+        sequence: sequence++
+      });
+    });
+    results.forEach(function (approvalResult, resultIndex) {
+      var requestedAtMs = timelineOccurredAtMs(approvalResult, "requestedAt");
+      var resolvedAtMs = timelineOccurredAtMs(approvalResult, "resolvedAt");
+      items.push({
+        kind: "approval-result",
+        approvalResult: approvalResult,
+        turnId: approvalResult && approvalResult.turnId || "",
+        occurredAtMs: requestedAtMs !== null ? requestedAtMs : resolvedAtMs,
+        anchorIndex: messages.length,
+        fallbackOrder: resultIndex * 10 + 2,
+        sequence: sequence++
+      });
+    });
+    if (pendingApproval) {
+      items.push({
+        kind: "pending-approval",
+        pendingApproval: pendingApproval,
+        turnId: pendingApproval.turnId || "",
+        occurredAtMs: timelineOccurredAtMs(pendingApproval, "createdAt"),
+        anchorIndex: messages.length,
+        fallbackOrder: Number.MAX_SAFE_INTEGER,
+        sequence: sequence++
+      });
+    }
+
+    function turnBounds(turnId) {
+      var first = -1;
+      var last = -1;
+      items.forEach(function (item) {
+        if (item.kind !== "message" || item.turnId !== turnId) return;
+        if (first < 0) first = item.messageIndex;
+        last = item.messageIndex;
+      });
+      return { first: first, last: last };
+    }
+    items.forEach(function (item) {
+      if (item.kind === "message" || !item.turnId) return;
+      var bounds = turnBounds(item.turnId);
+      if (bounds.first < 0) return;
+      item.anchorIndex = bounds.last;
+      item.fallbackOrder = bounds.last * 10 + timelineFallbackRank(item.kind);
+    });
+
+    return items.sort(function (left, right) {
+      if (
+        left.turnId &&
+        right.turnId &&
+        left.turnId === right.turnId &&
+        left.occurredAtMs !== null &&
+        right.occurredAtMs !== null &&
+        left.occurredAtMs !== right.occurredAtMs
+      ) {
+        return left.occurredAtMs - right.occurredAtMs;
+      }
+      if (left.anchorIndex !== right.anchorIndex) return left.anchorIndex - right.anchorIndex;
+      if (left.occurredAtMs !== null && right.occurredAtMs !== null) {
+        if (left.occurredAtMs !== right.occurredAtMs) return left.occurredAtMs - right.occurredAtMs;
+      } else if (left.occurredAtMs !== null) {
+        return -1;
+      } else if (right.occurredAtMs !== null) {
+        return 1;
+      }
+      if (left.fallbackOrder !== right.fallbackOrder) return left.fallbackOrder - right.fallbackOrder;
+      return left.sequence - right.sequence;
+    });
   }
 
   function renderApprovalResult(result) {
@@ -3737,8 +4159,13 @@ export const CODEX_MOBILE_JS = String.raw`
       renderMessages(false);
       setTimeout(function () { loadMessages(false); }, 180);
     } catch (error) {
-      showToast(error.message || "权限处理失败，请重试");
-      loadMessages(false);
+      if (error.network) {
+        showToast("审批状态暂未确认，正在同步…");
+        setTimeout(function () { loadMessages(false); }, 500);
+      } else {
+        showToast(error.message || "权限处理失败，请重试");
+        loadMessages(false);
+      }
     } finally {
       state.resolvingApproval = false;
       renderMessages(false);
@@ -3821,6 +4248,15 @@ export const CODEX_MOBILE_JS = String.raw`
         return false;
       }
       if (matchIndex < 0) return true;
+      var matchedMessage = users[matchIndex];
+      if (
+        state.optimisticProgressTurnId !== undefined &&
+        state.optimisticProgressTurnId !== null &&
+        matchedMessage &&
+        matchedMessage.turnId
+      ) {
+        state.optimisticProgressTurnId = matchedMessage.turnId;
+      }
       used[matchIndex] = true;
       return false;
     });
@@ -3947,14 +4383,99 @@ export const CODEX_MOBILE_JS = String.raw`
     });
   }
 
-  function renderMessageRow(message, index, nextMessage) {
+  function messageNodeBaseKey(message) {
+    if (message && message.clientId) return "pending:" + message.clientId;
+    if (message && message.id) return "message:" + message.id;
+    var images = Array.isArray(message && message.images)
+      ? message.images.map(function (image) {
+          return [
+            image && image.previewUrl || "",
+            image && image.url || "",
+            image && image.path || "",
+            image && image.alt || "",
+            image && image.fileName || ""
+          ];
+        })
+      : [];
+    return "fallback:" + JSON.stringify([
+      message && message.turnId || "",
+      message && message.role || "",
+      message && message.phase || "",
+      message && message.model || "",
+      message && message.text || "",
+      images
+    ]);
+  }
+
+  function messageNodeKey(message, duplicateIndex) {
+    return messageNodeBaseKey(message) + "#" + String(duplicateIndex || 0);
+  }
+
+  function stableMessageNodeHash(value) {
+    var hash = 2166136261;
+    for (var index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+  }
+
+  function messageContinues(message, nextMessage) {
+    return Boolean(
+      message && message.role === "assistant" &&
+      nextMessage && nextMessage.role === "assistant" &&
+      (!message.turnId || !nextMessage.turnId || message.turnId === nextMessage.turnId)
+    );
+  }
+
+  function messageRowRenderKey(message, nextMessage) {
+    return JSON.stringify([
+      message && message.role || "",
+      message && message.text || "",
+      message && message.id || "",
+      message && message.turnId || "",
+      message && message.phase || "",
+      message && message.model || "",
+      Boolean(message && message.pending),
+      message && message.status || "",
+      message && message.clientId || "",
+      Array.isArray(message && message.images) ? message.images.map(function (image) {
+        return [
+          image && image.previewUrl || "",
+          image && image.url || "",
+          image && image.path || "",
+          image && image.alt || "",
+          image && image.fileName || ""
+        ];
+      }) : [],
+      messageContinues(message, nextMessage),
+      message && message.pending ? currentAdapterName() : ""
+    ]);
+  }
+
+  function getMessageNode(message, index, nextMessage, nodeKey) {
+    var renderKey = messageRowRenderKey(message, nextMessage);
+    var existing = state.messageNodes[nodeKey];
+    if (existing && existing.__deskRelayMessageRenderKey === renderKey) {
+      return existing;
+    }
+    var row = renderMessageRow(message, index, nextMessage, nodeKey);
+    row.__deskRelayMessageRenderKey = renderKey;
+    state.messageNodes[nodeKey] = row;
+    return row;
+  }
+
+  function renderMessageRow(message, index, nextMessage, nodeKey) {
     var row = document.createElement("article");
     var pendingClass = message.pending ? " " + (message.status === "failed" ? "failed" : "pending") : "";
-    var continues = message.role === "assistant" && nextMessage && nextMessage.role === "assistant" &&
-      (!message.turnId || !nextMessage.turnId || message.turnId === nextMessage.turnId);
+    var continues = messageContinues(message, nextMessage);
     var continuesClass = continues ? " continues" : "";
     row.className = "message-row " + message.role + (message.phase === "commentary" ? " commentary" : "") + continuesClass + pendingClass;
-    row.id = message.clientId ? "pending-" + message.clientId : (message.id ? "message-" + message.id : "message-" + index);
+    row.id = message.clientId
+      ? "pending-" + message.clientId
+      : message.id
+        ? "message-" + message.id
+        : "message-auto-" + stableMessageNodeHash(nodeKey || String(index));
     var deliveryHtml = "";
     if (message.pending) {
       var statusText = message.status === "sending"
@@ -4037,6 +4558,7 @@ export const CODEX_MOBILE_JS = String.raw`
     if (state.switchingAdapter) {
       messagesEl.innerHTML = "";
       messagesEl.dataset.threadId = "";
+      state.messageNodes = Object.create(null);
       updateUserMessageNavigation();
       return;
     }
@@ -4053,8 +4575,8 @@ export const CODEX_MOBILE_JS = String.raw`
       Date.now()
     );
     var headerIndex = runHeaderInsertIndex(messages, summary);
-    messagesEl.innerHTML = "";
     if (!messages.length && !summary && !state.pendingApproval && state.approvalResults.length === 0 && state.progressItems.length === 0) {
+      state.messageNodes = Object.create(null);
       if (state.adapterError) {
         var capabilityLimited = isAdapterCapabilityError();
         messagesEl.innerHTML = '<div class="empty-state"><div class="empty-wordmark">' + escapeHtml(currentAdapterName()) + '</div><h1>' +
@@ -4071,54 +4593,63 @@ export const CODEX_MOBILE_JS = String.raw`
       updateUserMessageNavigation();
       return;
     }
-    var approvalRendered = false;
-    var progressRendered = false;
-    var approvalResultsByIndex = Object.create(null);
-    state.approvalResults.forEach(function (result) {
-      var insertIndex = approvalResultInsertIndex(messages, result);
-      if (!approvalResultsByIndex[insertIndex]) approvalResultsByIndex[insertIndex] = [];
-      approvalResultsByIndex[insertIndex].push(result);
+    if (messagesEl.dataset.threadId !== state.currentThreadId) {
+      state.messageNodes = Object.create(null);
+    }
+    var nodes = [];
+    var usedMessageNodeKeys = Object.create(null);
+    var messageKeyCounts = Object.create(null);
+    var runHeaderRendered = false;
+    var timeline = buildConversationTimeline({
+      messages: messages,
+      approvalResults: state.approvalResults,
+      pendingApproval: state.pendingApproval,
+      progressItems: state.progressItems
     });
-    function appendApprovalResultsAt(index) {
-      (approvalResultsByIndex[index] || []).forEach(function (result) {
-        messagesEl.appendChild(renderApprovalResult(result));
-      });
+    function appendRunHeaderIfNeeded(messageIndex) {
+      if (runHeaderRendered || !summary || messageIndex !== headerIndex) return;
+      nodes.push(renderRunHeader(summary));
+      runHeaderRendered = true;
     }
-    function appendRunProgress() {
-      if (progressRendered) return;
-      var progress = renderProgressList(state.progressItems);
-      if (progress) messagesEl.appendChild(progress);
-      progressRendered = true;
-    }
-    messages.forEach(function (message, index) {
-      if (summary && index === headerIndex) {
-        messagesEl.appendChild(renderRunHeader(summary));
-        appendRunProgress();
-        if (state.pendingApproval) {
-          messagesEl.appendChild(renderApprovalCard(state.pendingApproval));
-          approvalRendered = true;
+    timeline.forEach(function (item) {
+      if (item.kind === "message") {
+        var message = item.message;
+        var index = messages.indexOf(message);
+        appendRunHeaderIfNeeded(index);
+        var baseKey = messageNodeBaseKey(message);
+        var duplicateIndex = messageKeyCounts[baseKey] || 0;
+        messageKeyCounts[baseKey] = duplicateIndex + 1;
+        var nodeKey = messageNodeKey(message, duplicateIndex);
+        usedMessageNodeKeys[nodeKey] = true;
+        nodes.push(getMessageNode(message, index, messages[index + 1], nodeKey));
+        return;
+      }
+      if (item.kind === "progress") {
+        var progress = renderProgressList([item.progressItem]);
+        if (progress) {
+          progress.classList.add("timeline-progress");
+          progress.open = true;
+          nodes.push(progress);
         }
+        return;
       }
-      messagesEl.appendChild(renderMessageRow(message, index, messages[index + 1]));
-      appendApprovalResultsAt(index + 1);
+      if (item.kind === "approval-result") {
+        nodes.push(renderApprovalResult(item.approvalResult));
+        return;
+      }
+      if (item.kind === "pending-approval") {
+        nodes.push(renderApprovalCard(item.pendingApproval));
+      }
     });
-    if (messages.length === 0) appendApprovalResultsAt(0);
-    if (summary && headerIndex >= messages.length) {
-      messagesEl.appendChild(renderRunHeader(summary));
-      appendRunProgress();
-      if (state.pendingApproval) {
-        messagesEl.appendChild(renderApprovalCard(state.pendingApproval));
-        approvalRendered = true;
-      }
-    }
-    if (!progressRendered && state.progressItems.length > 0) {
-      appendRunProgress();
-    }
-    if (state.pendingApproval && !approvalRendered) {
-      messagesEl.appendChild(renderApprovalCard(state.pendingApproval));
+    if (!runHeaderRendered && summary && headerIndex >= messages.length) {
+      nodes.push(renderRunHeader(summary));
     }
     var responsePending = renderResponsePendingIndicator(summary);
-    if (responsePending) messagesEl.appendChild(responsePending);
+    if (responsePending) nodes.push(responsePending);
+    syncChildOrder(messagesEl, nodes);
+    Object.keys(state.messageNodes).forEach(function (nodeKey) {
+      if (!usedMessageNodeKeys[nodeKey]) delete state.messageNodes[nodeKey];
+    });
     restoreOpenFoldState(openFoldState);
     requestAnimationFrame(function () {
       if (shouldStick) scrollToLatest(false);
@@ -4185,6 +4716,14 @@ export const CODEX_MOBILE_JS = String.raw`
     state.runSummary = next;
     if (!taskRunning && state.stopRequestedThreadId === state.currentThreadId) {
       state.stopRequestedThreadId = "";
+    }
+    if (
+      state.optimisticProgressTurnId &&
+      next &&
+      next.turnId === state.optimisticProgressTurnId &&
+      next.status !== "running"
+    ) {
+      state.optimisticProgressTurnId = null;
     }
     if (state.localRunSummary) {
       var localTurnConfirmed = Boolean(
@@ -4424,10 +4963,13 @@ export const CODEX_MOBILE_JS = String.raw`
           ? payload.approvalResults
           : [];
         updateRunSummary(payload.runSummary || null, payload.task || null);
-        state.progressItems = filterProgressItemsForCurrentTurn(
-          payload.progressItems || [],
-          payload.task || null,
-          effectiveRunSummary()
+        state.progressItems = filterProgressItemsForOptimisticTurn(
+          filterProgressItemsForCurrentTurn(
+            payload.progressItems || [],
+            payload.task || null,
+            effectiveRunSummary()
+          ),
+          state.optimisticProgressTurnId
         );
       }
       var pendingSignature = state.pendingMessages.map(function (pending) {
@@ -4465,7 +5007,9 @@ export const CODEX_MOBILE_JS = String.raw`
         requestId === state.messageRequestId &&
         requestedThreadId === state.currentThreadId &&
         error.status !== 401
-      ) showToast(error.message || "消息读取失败");
+      ) {
+        if (!error.network) showToast(error.message || "消息读取失败");
+      }
       return null;
     } finally {
       if (requestId === state.messageRequestId) state.loadingMessages = false;
@@ -4508,39 +5052,60 @@ export const CODEX_MOBILE_JS = String.raw`
 
   async function selectTask(threadId, updateUrl) {
     closeTaskContextMenu();
+    if (!threadId) return;
+    if (threadId === state.currentThreadId) {
+      if (updateUrl) {
+        var currentUrl = new URL(window.location.href);
+        currentUrl.searchParams.set("task", threadId);
+        history.replaceState(null, "", currentUrl.pathname + currentUrl.search + currentUrl.hash);
+      }
+      closeSidebar();
+      renderTasks();
+      updateHeader();
+      void loadMessages(false, false, false);
+      return;
+    }
+    saveCurrentConversationSnapshot();
     state.messageRequestId += 1;
+    state.loadingMessages = false;
     state.composerRevision += 1;
     state.currentThreadId = threadId;
-    state.serverMessages = [];
-    state.historyMessages = [];
-    state.latestMessages = [];
-    state.oldestMessageCursor = null;
-    state.hasOlderMessages = false;
-    state.historySource = "";
-    state.historyCaughtUp = true;
     state.loadingOlderMessages = false;
     state.historyRequestId += 1;
-    state.progressItems = [];
-    state.pendingMessages = [];
-    state.editingQueuedMessageId = "";
-    state.editingQueuedImageCount = 0;
-    composerInput.value = "";
-    composerInput.placeholder = "有问题，尽管问";
-    composerImageButton.disabled = false;
-    state.pendingImages = [];
-    renderPendingImages();
-    resizeComposer();
-    state.runSummary = null;
-    state.localRunSummary = null;
-    state.pendingApproval = null;
-    state.approvalResults = [];
     state.resolvingApproval = false;
-    state.stopRequestedThreadId = "";
-    state.transcriptSignature = "";
-    state.queueSignature = "";
-    renderQueuedMessages([]);
-    messagesEl.innerHTML = '<div class="loading-row">正在读取最近消息…</div>';
-    updateUserMessageNavigation();
+    var restored = restoreConversationSnapshot(state.currentAdapter, threadId);
+    if (!restored) {
+      state.serverMessages = [];
+      state.historyMessages = [];
+      state.latestMessages = [];
+      state.oldestMessageCursor = null;
+      state.hasOlderMessages = false;
+      state.historySource = "";
+      state.historyCaughtUp = true;
+      state.progressItems = [];
+      state.optimisticProgressTurnId = null;
+      state.pendingMessages = [];
+      state.messageNodes = Object.create(null);
+      state.editingQueuedMessageId = "";
+      state.editingQueuedImageCount = 0;
+      restoreComposerDraft(state.currentAdapter, threadId);
+      composerInput.placeholder = "有问题，尽管问";
+      composerImageButton.disabled = false;
+      state.pendingImages = [];
+      renderPendingImages();
+      resizeComposer();
+      state.runSummary = null;
+      state.localRunSummary = null;
+      state.pendingApproval = null;
+      state.approvalResults = [];
+      state.stopRequestedThreadId = "";
+      state.transcriptSignature = "";
+      state.queueSignature = "";
+      renderQueuedMessages([]);
+      messagesEl.innerHTML = '<div class="loading-row">正在读取最近消息…</div>';
+      messagesEl.dataset.threadId = threadId;
+      updateUserMessageNavigation();
+    }
     if (updateUrl) {
       var url = new URL(window.location.href);
       url.searchParams.set("task", threadId);
@@ -4549,6 +5114,10 @@ export const CODEX_MOBILE_JS = String.raw`
     closeSidebar();
     renderTasks();
     updateHeader();
+    if (restored) {
+      void loadMessages(false, false, false);
+      return;
+    }
     await loadMessages(true, true, false);
     if (threadId === state.currentThreadId) {
       void loadMessages(false, false, false);
@@ -4693,6 +5262,7 @@ export const CODEX_MOBILE_JS = String.raw`
     composerInput.value =
       composerInput.value.slice(0, start) + text + composerInput.value.slice(end);
     composerInput.selectionStart = composerInput.selectionEnd = start + text.length;
+    saveComposerDraft(state.currentAdapter, state.currentThreadId);
     resizeComposer();
   }
 
@@ -4749,6 +5319,7 @@ export const CODEX_MOBILE_JS = String.raw`
         });
         if (pending.optimisticRun) {
           state.localRunSummary = null;
+          state.optimisticProgressTurnId = null;
           pending.optimisticRun = false;
         }
         renderQueuedMessages(state.queuedMessages);
@@ -4765,6 +5336,7 @@ export const CODEX_MOBILE_JS = String.raw`
       if (pending.queued) {
         if (pending.optimisticRun) {
           state.localRunSummary = null;
+          state.optimisticProgressTurnId = null;
           pending.optimisticRun = false;
         }
         var queuedMessage = {
@@ -4785,6 +5357,9 @@ export const CODEX_MOBILE_JS = String.raw`
       } else {
         pending.displayInTranscript = true;
         renderQueuedMessages(state.queuedMessages);
+        if (pending.optimisticRun) {
+          state.optimisticProgressTurnId = pending.turnId || "";
+        }
         if (pending.optimisticRun && state.localRunSummary) {
           state.localRunSummary.turnId = pending.turnId || undefined;
         } else if (!state.localRunSummary || state.localRunSummary.status !== "running") {
@@ -4803,7 +5378,8 @@ export const CODEX_MOBILE_JS = String.raw`
         if (requestedThreadId === state.currentThreadId) loadMessages(true);
       }, 250);
     } catch (error) {
-      var uncertain = String(error && error.message || "").includes("暂未确认");
+      var uncertain = Boolean(error && error.network) ||
+        String(error && error.message || "").includes("暂未确认");
       pending.status = uncertain ? "unconfirmed" : "failed";
       pending.displayInTranscript = true;
       renderQueuedMessages(state.queuedMessages);
@@ -4837,6 +5413,8 @@ export const CODEX_MOBILE_JS = String.raw`
     var visibleSummary = currentVisibleRunSummary();
     if (visibleSummary && visibleSummary.status === "running") return;
     pending.optimisticRun = true;
+    state.optimisticProgressTurnId = "";
+    state.progressItems = [];
     state.localRunSummary = {
       status: "running",
       startedAtMs: Date.now(),
@@ -4891,6 +5469,7 @@ export const CODEX_MOBILE_JS = String.raw`
     state.composerRevision += 1;
     state.pendingMessages.push(pending);
     composerInput.value = "";
+    clearComposerDraft(state.currentAdapter, state.currentThreadId);
     state.pendingImages = [];
     renderPendingImages();
     resizeComposer();
@@ -4980,7 +5559,9 @@ export const CODEX_MOBILE_JS = String.raw`
     state.loadingOlderMessages = false;
     state.historyRequestId += 1;
     state.progressItems = [];
+    state.optimisticProgressTurnId = null;
     state.pendingMessages = [];
+    state.messageNodes = Object.create(null);
     state.queuedMessages = [];
     state.editingQueuedMessageId = "";
     state.editingQueuedImageCount = 0;
@@ -4993,6 +5574,10 @@ export const CODEX_MOBILE_JS = String.raw`
     updateDocumentTitle();
     state.adapterError = "";
     state.pendingImages = [];
+    state.conversationSnapshots = Object.create(null);
+    state.conversationSnapshotOrder = [];
+    state.composerDrafts = Object.create(null);
+    state.composerDraftOrder = [];
     composerInput.value = "";
     composerInput.placeholder = "有问题，尽管问";
     composerImageButton.disabled = false;
@@ -5007,6 +5592,9 @@ export const CODEX_MOBILE_JS = String.raw`
   });
 
   composerInput.addEventListener("input", function () {
+    if (!state.editingQueuedMessageId) {
+      saveComposerDraft(state.currentAdapter, state.currentThreadId);
+    }
     resizeComposer();
   });
   composerInput.addEventListener("keydown", function (event) {
@@ -5136,6 +5724,10 @@ export const CODEX_MOBILE_JS = String.raw`
   });
 
   updateDocumentTitle();
-  initializeAuthentication();
+  async function startMobileApplication() {
+    await waitForComputerConnection();
+    await initializeAuthentication();
+  }
+  void startMobileApplication();
 })();
 `;

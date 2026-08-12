@@ -43,6 +43,39 @@ describe("MobileMessageImageStore", () => {
     }
   });
 
+  test("uses the stored web originals instead of merging duplicate native input images", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-mobile-input-images-"));
+    const stateFile = path.join(directory, "mobile-message-images.json");
+    const originalPath = path.join(directory, "original.jpg");
+    const nativePath = path.join(directory, "native-converted.jpg");
+    fs.writeFileSync(originalPath, "original-image-bytes");
+    fs.writeFileSync(nativePath, "converted-image-bytes");
+    try {
+      const store = new MobileMessageImageStore("/tmp/project", { stateFile });
+      store.remember({
+        adapter: "codex",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        text: "这种连续审批应该怎么做",
+        images: [{ path: originalPath, alt: "审批截图.jpg" }],
+      });
+
+      expect(store.enrich([{
+        role: "user",
+        text: "这种连续审批应该怎么做\n[image]",
+        turnId: "turn-1",
+        images: [{ source: "local", path: nativePath, alt: "输入图片 1" }],
+      }], { adapter: "codex", threadId: "thread-1" })).toEqual([{
+        role: "user",
+        text: "这种连续审批应该怎么做\n[image]",
+        turnId: "turn-1",
+        images: [{ source: "local", path: originalPath, alt: "审批截图.jpg" }],
+      }]);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("matches repeated image-only inputs from newest to oldest without crossing threads", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-mobile-input-images-"));
     const stateFile = path.join(directory, "mobile-message-images.json");

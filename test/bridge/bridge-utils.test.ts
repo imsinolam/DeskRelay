@@ -181,7 +181,7 @@ describe("resolveBareCodexTaskSelection", () => {
     expect(resolveBareCodexTaskSelection({ ...base, text: "0" })).toBeNull();
   });
 
-  test("uses task-list numbers before approval or input shortcuts", () => {
+  test("suspends bare task-list numbers while approval or input prompts are pending", () => {
     expect(
       resolveBareCodexTaskSelection({
         adapter: "codex",
@@ -199,7 +199,7 @@ describe("resolveBareCodexTaskSelection", () => {
         hasPendingConfirmation: true,
         hasPendingUserInput: false,
       }),
-    ).toBe("2");
+    ).toBeNull();
     expect(
       resolveBareCodexTaskSelection({
         adapter: "codex",
@@ -208,7 +208,7 @@ describe("resolveBareCodexTaskSelection", () => {
         hasPendingConfirmation: true,
         hasPendingUserInput: false,
       }),
-    ).toBe("3");
+    ).toBeNull();
     expect(
       resolveBareCodexTaskSelection({
         adapter: "codex",
@@ -217,11 +217,33 @@ describe("resolveBareCodexTaskSelection", () => {
         hasPendingConfirmation: false,
         hasPendingUserInput: true,
       }),
-    ).toBe("3");
+    ).toBeNull();
   });
 });
 
 describe("parseWechatControlCommand", () => {
+  test("passes native slash commands through to command-capable agents", () => {
+    const options = {
+      adapter: "claude" as const,
+      hasPendingConfirmation: false,
+      hasPendingUserInput: false,
+    };
+
+    expect(parseWechatControlCommand("/help", options)).toBeNull();
+    expect(parseWechatControlCommand("/status", options)).toBeNull();
+    expect(parseWechatControlCommand("/reset", options)).toBeNull();
+    expect(parseWechatControlCommand("/model claude-sonnet-4-6", options)).toBeNull();
+
+    expect(parseWechatControlCommand("/stop", options)).toEqual({ type: "stop" });
+    expect(parseWechatControlCommand("/tasks", options)).toEqual({ type: "resume" });
+    expect(parseWechatControlCommand("/confirm", options)).toEqual({ type: "confirm" });
+
+    expect(parseWechatControlCommand("/help", {
+      ...options,
+      adapter: "codex",
+    })).toEqual({ type: "help" });
+  });
+
   test("adds Claude-only approval shortcuts while keeping slash commands intact", () => {
     expect(
       parseWechatControlCommand("confirm", {
@@ -1268,7 +1290,7 @@ describe("adapter-aware message formatting", () => {
       formatApprovalMessage(pending, claudeAdapterState, {
         allowTaskAutoApprove: true,
       }),
-    ).toContain("3 本任务结束前免审");
+    ).toContain("3 今日内本任务免审");
     expect(formatPendingApprovalReminder(pending, claudeAdapterState)).toContain("回复数字");
 
     const codexPending = { ...pending, allowForSession: true };
@@ -1279,12 +1301,12 @@ describe("adapter-aware message formatting", () => {
       formatApprovalMessage(codexPending, codexAdapterState, {
         allowTaskAutoApprove: true,
       }),
-    ).toContain("4 本任务结束前免审");
+    ).toContain("4 今日内本任务免审");
     expect(
       formatPendingApprovalReminder(codexPending, codexAdapterState, {
         allowTaskAutoApprove: true,
       }),
-    ).toContain("4 本任务结束前免审");
+    ).toContain("4 今日内本任务免审");
     expect(formatApprovalMessage(codexPending, codexAdapterState)).not.toMatch(
       /adapter:|summary:|target:/i,
     );
@@ -1609,7 +1631,8 @@ describe("formatResumeSessionList for Codex desktop tasks", () => {
     expect(output).not.toContain("dddddddd");
     expect(output).not.toContain("07/25");
     expect(output).toContain("当前 · 待审批");
-    expect(output).toContain("运行中");
+    expect(output).toContain("运行完整测试\u3000🟢");
+    expect(output).not.toContain("运行完整测试\u3000运行中");
     expect(output).not.toContain("[进行中]");
     expect(output).toContain("回复序号进入任务");
     expect(output).toContain("发送“任务”可重新选择");
@@ -1647,7 +1670,8 @@ describe("formatResumeSessionList for Codex desktop tasks", () => {
       hasMore: true,
     });
 
-    expect(output).toContain("11. 第十六个任务\u3000运行中");
+    expect(output).toContain("11. 第十六个任务\u3000🟢");
+    expect(output).not.toContain("11. 第十六个任务\u3000运行中");
     expect(output).toContain("12. 第十七个任务");
     expect(output).toContain("发送“下一页”查看更多");
     expect(output).toContain("发送“上一页”返回");

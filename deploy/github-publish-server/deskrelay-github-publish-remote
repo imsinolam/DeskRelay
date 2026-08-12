@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+umask 077
+BASE_DIR="${DESKRELAY_GITHUB_PUBLISH_ROOT:-$HOME/deskrelay-github-relay}"
+INCOMING_DIR="$BASE_DIR/incoming"
+BARE_REPO="$BASE_DIR/repo.git"
+WORK_ROOT="$BASE_DIR/work"
+SSH_CONFIG="${DESKRELAY_GITHUB_SSH_CONFIG:-$HOME/.ssh/deskrelay_github_config}"
+GITHUB_REPO="${DESKRELAY_GITHUB_REPOSITORY:-git@github.com:imsinolam/DeskRelay.git}"
+LOG_FILE="$BASE_DIR/push.log"
+AUTHOR_NAME="${DESKRELAY_GITHUB_AUTHOR_NAME:-imsinolam}"
+AUTHOR_EMAIL="${DESKRELAY_GITHUB_AUTHOR_EMAIL:-imsinolam@users.noreply.github.com}"
+WORK_DIR=""
+REPOSITORY=""
+ARCHIVE=""
+
+fail() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+cleanup() {
+  if [[ -n "$REPOSITORY" && -d "$REPOSITORY" && -d "$BARE_REPO" ]]; then
+    git --git-dir="$BARE_REPO" worktree remove --force "$REPOSITORY" >/dev/null 2>&1 || true
+  fi
+  [[ -z "$WORK_DIR" ]] || rm -rf "$WORK_DIR"
+  [[ -z "$ARCHIVE" ]] || rm -f "$ARCHIVE"
+}
+trap cleanup EXIT
+
+[[ $# -eq 3 && "$2" == "--message-base64url" ]] || fail "usage: deskrelay-github-publish-remote <snapshot.tar.gz> --message-base64url <encoded-message>"
+ARCHIVE="$1"
+COMMIT_MESSAGE="$(node -e 'process.stdout.write(Buffer.from(process.argv[1], "base64url").toString("utf8"))' "$3")"
+[[ -n "$COMMIT_MESSAGE" ]] || fail "commit message cannot be empty"
+[[ "$COMMIT_MESSAGE" != *$'\n'* && "$COMMIT_MESSAGE" != *$'\r'* ]] || fail "commit message must be one line"
+case "$ARCHIVE" in
+  "$INCOMING_DIR"/deskrelay-snapshot-*.tar.gz) ;;
+  *) fail "archive must be inside $INCOMING_DIR" ;;
+esac
+[[ -f "$ARCHIVE" ]] || fail "archive does not exist"
+[[ ! -L "$ARCHIVE" ]] || fail "archive cannot be a symlink"
+
+mkdir -p "$INCOMING_DIR" "$WORK_ROOT"
+chmod 700 "$BASE_DIR" "$INCOMING_DIR" "$WORK_ROOT"
+RELEASE_ID="$(basename "$ARCHIVE" .tar.gz)"
+WORK_DIR="$WORK_ROOT/$RELEASE_ID"
+mkdir -m 700 "$WORK_DIR"
+
+tar -tzf "$ARCHIVE" >/dev/null
+while IFS= read -r entry; do
+  [[ -z "$entry" ]] && continue
+  case "/$entry/" in
+    *"/../"*|*"/.git/"*|*"/.DS_Store/"*) fail "archive contains a forbidden path: $entry" ;;
+  esac
+  base="${entry##*/}"
+  [[ "$base" != ._* ]] || fail "archive contains AppleDouble metadata: $entry"
+done < <(tar -tzf "$ARCHIVE")
+
+SNAPSHOT="$WORK_DIR/snapshot"
+mkdir -m 700 "$SNAPSHOT"
+tar -xzf "$ARCHIVE" -C "$SNAPSHOT"
+
+if [[ ! -d "$BARE_REPO" ]]; then
+  git init --bare "$BARE_REPO" >/dev/null
+  git --git-dir="$BARE_REPO" remote add origin "$GITHUB_REPO"
+fi
+CURRENT_ORIGIN="$(git --git-dir="$BARE_REPO" remote get-url origin 2>/dev/null || true)"
+[[ "$CURRENT_ORIGIN" == "$GITHUB_REPO" ]] || fail "unexpected GitHub repository: $CURRENT_ORIGIN"
+
+export GIT_SSH_COMMAND="ssh -F $SSH_CONFIG"
+git --git-dir="$BARE_REPO" fetch --prune origin \
+  '+refs/heads/main:refs/remotes/origin/main' >/dev/null
+
+REPOSITORY="$WORK_DIR/repository"
+if git --git-dir="$BARE_REPO" show-ref --verify --quiet refs/remotes/origin/main; then
+  git --git-dir="$BARE_REPO" worktree add --detach "$REPOSITORY" refs/remotes/origin/main >/dev/null
+else
+  git --git-dir="$BARE_REPO" worktree add --detach "$REPOSITORY" >/dev/null
+  git -C "$REPOSITORY" switch --orphan main >/dev/null
+fi
+
+rsync -a --delete --exclude='.git' --filter='protect .git' "$SNAPSHOT"/ "$REPOSITORY"/
+find "$REPOSITORY" \( -name '.DS_Store' -o -name '._*' \) -print -quit | grep -q . && fail "working tree contains forbidden macOS metadata"
+find "$REPOSITORY" -type f \( -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' \) -print -quit | grep -q . && fail "working tree contains private key material"
+
+(
+  cd "$REPOSITORY"
+  node scripts/check-public-safety.mjs
+)
+git -C "$REPOSITORY" config user.name "$AUTHOR_NAME"
+git -C "$REPOSITORY" config user.email "$AUTHOR_EMAIL"
+git -C "$REPOSITORY" add --all
+
+if git -C "$REPOSITORY" diff --cached --quiet; then
+  COMMIT="$(git -C "$REPOSITORY" rev-parse HEAD)"
+  printf 'NO_CHANGES %s\n' "$COMMIT"
+else
+  git -C "$REPOSITORY" commit -m "$COMMIT_MESSAGE" >/dev/null
+  COMMIT="$(git -C "$REPOSITORY" rev-parse HEAD)"
+  git --git-dir="$BARE_REPO" update-ref refs/heads/main "$COMMIT"
+  git --git-dir="$BARE_REPO" push origin 'refs/heads/main:refs/heads/main' >/dev/null
+fi
+
+REMOTE_COMMIT="$(git --git-dir="$BARE_REPO" ls-remote origin refs/heads/main | awk 'NR == 1 { print $1 }')"
+[[ "$REMOTE_COMMIT" == "$COMMIT" ]] || fail "GitHub verification returned a different commit"
+printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$COMMIT" "$GITHUB_REPO" "$COMMIT_MESSAGE" >> "$LOG_FILE"
+chmod 600 "$LOG_FILE"
+printf 'PUSHED %s\n' "$COMMIT"

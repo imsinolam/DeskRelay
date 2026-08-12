@@ -40,6 +40,7 @@ import {
 import {
   ensureClaudeWorkspaceTrustAccepted,
   normalizeClaudeProjectConfigKey,
+  resolveClaudeRuntimeDirectoryName,
 } from "../../src/bridge/bridge-adapters.claude.ts";
 import {
   ShellAdapter,
@@ -1374,6 +1375,11 @@ describe("buildCodexCliArgs", () => {
 });
 
 describe("Claude CLI compatibility", () => {
+  test("isolates Claude Code and TClaude hook runtime files", () => {
+    expect(resolveClaudeRuntimeDirectoryName("claude")).toBe("claude-runtime");
+    expect(resolveClaudeRuntimeDirectoryName("tclaude")).toBe("tclaude-runtime");
+  });
+
   test("detects whether the installed help text exposes --no-alt-screen", () => {
     expect(
       hasClaudeNoAltScreenOption(`Options:\n  --settings <file>\n  --no-alt-screen\n`),
@@ -1597,6 +1603,7 @@ describe("Claude CLI compatibility", () => {
       },
       kill() {},
     };
+    adapter.cliSessionReady = true;
 
     await adapter.sendInput("Send a short reply");
 
@@ -1607,6 +1614,83 @@ describe("Claude CLI compatibility", () => {
     });
 
     await adapter.dispose();
+  });
+
+  test("waits for Claude SessionStart before submitting an early remote message", async () => {
+    const adapter = createBridgeAdapter({
+      kind: "tclaude",
+      command: "tclaude",
+      cwd: process.cwd(),
+      renderMode: "companion",
+    }) as any;
+    const writes: string[] = [];
+    adapter.pty = {
+      write: (text: string) => writes.push(text),
+    };
+    adapter.state.status = "starting";
+
+    let settled = false;
+    const pendingSend = adapter.sendInput("请只回复 OK").then(() => {
+      settled = true;
+    });
+    await wait(10);
+
+    expect(settled).toBe(false);
+    expect(writes).toEqual([]);
+
+    adapter.handleClaudeSessionStart({
+      session_id: "tclaude-session-ready",
+      source: "startup",
+    });
+    await pendingSend;
+
+    expect(writes).toHaveLength(2);
+    expect(writes[0]).toContain("请只回复 OK");
+    expect(writes[1]).toBe("\r");
+  });
+
+  test("fails an early TClaude message clearly when no startup hook arrives", async () => {
+    const adapter = createBridgeAdapter({
+      kind: "tclaude",
+      command: "tclaude",
+      cwd: process.cwd(),
+      renderMode: "companion",
+    }) as any;
+    adapter.pty = { write() {} };
+    adapter.state.status = "starting";
+
+    const pendingSend = adapter.sendInput("请只回复 OK");
+    adapter.handleClaudeHookHealthCheckTimeout();
+
+    await expect(pendingSend).rejects.toThrow(
+      "TClaude 启动后没有建立消息通道，请重新发送 /tclaude；如果仍失败，请在电脑端查看启动错误。",
+    );
+  });
+
+  test("reports Claude Code login requirement in Chinese while allowing /login", async () => {
+    const adapter = createBridgeAdapter({
+      kind: "claude",
+      command: "claude",
+      cwd: process.cwd(),
+      renderMode: "companion",
+    }) as any;
+    const writes: string[] = [];
+    adapter.pty = {
+      write: (text: string) => writes.push(text),
+    };
+    adapter.state.status = "starting";
+    adapter.renderLocalOutput = () => undefined;
+
+    adapter.handleData("Not logged in · Please run /login\r\n");
+
+    await expect(adapter.sendInput("请只回复 OK")).rejects.toThrow(
+      "Claude Code 尚未登录，请发送 /login 完成登录后再试。",
+    );
+
+    await adapter.sendInput("/login");
+    expect(writes).toHaveLength(2);
+    expect(writes[0]).toContain("/login");
+    expect(writes[1]).toBe("\r");
   });
 
   test("submits generated WeChat attachment guidance as bracketed paste before enter", async () => {
@@ -1626,6 +1710,7 @@ describe("Claude CLI compatibility", () => {
       },
       kill() {},
     };
+    adapter.cliSessionReady = true;
 
     const prompt = buildWechatInboundPrompt(
       "Please send any document from Desktop to WeChat.",
@@ -1663,6 +1748,7 @@ describe("Claude CLI compatibility", () => {
       },
       kill() {},
     };
+    adapter.cliSessionReady = true;
 
     adapter.handleData(
       "Accessing workspace:\r\n\r\n C:\\Users\\example\r\n\r\n Quick safety check: Is this a project ",
@@ -1678,6 +1764,137 @@ describe("Claude CLI compatibility", () => {
 
     expect(writes).toEqual(["\r"]);
     expect(events.filter((event) => event.type === "approval_required")).toEqual([]);
+  });
+
+  test("auto-confirms the real column-positioned TClaude trust screen", () => {
+    const adapter = createBridgeAdapter({
+      kind: "tclaude",
+      command: "tclaude",
+      cwd: process.cwd(),
+      renderMode: "companion",
+    }) as any;
+    const writes: string[] = [];
+    adapter.setEventSink(() => undefined);
+    adapter.renderLocalOutput = () => undefined;
+    adapter.pty = {
+      pid: 1234,
+      write(value: string) {
+        writes.push(value);
+      },
+      kill() {},
+    };
+
+    adapter.handleData(
+      "\u001b[2GAccessing\u001b[12Gworkspace:\r\n" +
+      "\u001b[2GQuick\u001b[8Gsafety\u001b[15Gcheck:\u001b[22GIs\u001b[25Gthis\u001b[30Ga\u001b[32Gproject\u001b[40Gyou\u001b[44Gcreated\u001b[52Gor\u001b[55Gone\u001b[59Gyou\u001b[63Gtrust?\r\n" +
+      "\u001b[2G❯\u001b[4G1.\u001b[7GYes,\u001b[12GI\u001b[14Gtrust\u001b[20Gthis\u001b[25Gfolder\r\n" +
+      "\u001b[2GEnter\u001b[8Gto\u001b[11Gconfirm",
+    );
+
+    expect(writes).toEqual(["\r"]);
+  });
+
+  test("uses the rendered TClaude prompt as a readiness fallback when hooks are unavailable", async () => {
+    const adapter = createBridgeAdapter({
+      kind: "tclaude",
+      command: "tclaude",
+      cwd: process.cwd(),
+      renderMode: "companion",
+    }) as any;
+    const writes: string[] = [];
+    adapter.setEventSink(() => undefined);
+    adapter.renderLocalOutput = () => undefined;
+    adapter.pty = {
+      pid: 1234,
+      write(value: string) {
+        writes.push(value);
+      },
+      kill() {},
+    };
+    adapter.state.status = "starting";
+
+    const pendingSend = adapter.sendInput("只回复 TCLAUDE_OK");
+    await wait(5);
+    expect(writes).toEqual([]);
+
+    adapter.handleData(
+      "\u001b[1A╭───\u001b[6GClaude\u001b[13GCode\u001b[18Gv2.1.154\r\n" +
+      "\u001b[1B❯ \u001b[7m \u001b[27m\r\n" +
+      "\u001b[3G?\u001b[5Gfor\u001b[9Gshortcuts",
+    );
+    await pendingSend;
+
+    expect(writes[0]).toContain("只回复 TCLAUDE_OK");
+    expect(writes[1]).toBe("\r");
+  });
+
+  test("stops the hook health timeout after the TClaude prompt becomes ready", () => {
+    const adapter = createBridgeAdapter({
+      kind: "tclaude",
+      command: "tclaude",
+      cwd: process.cwd(),
+      renderMode: "companion",
+    }) as any;
+    adapter.setEventSink(() => undefined);
+    adapter.renderLocalOutput = () => undefined;
+    adapter.pty = {
+      pid: 1234,
+      write() {},
+      kill() {},
+    };
+    adapter.state.status = "starting";
+    adapter.hookHealthCheckTimer = setTimeout(() => undefined, 60_000);
+
+    adapter.handleData(
+      "\u001b[1A╭───\u001b[6GClaude\u001b[13GCode\u001b[18Gv2.1.154\r\n" +
+      "\u001b[1B❯ \u001b[7m \u001b[27m\r\n" +
+      "\u001b[3G?\u001b[5Gfor\u001b[9Gshortcuts",
+    );
+
+    expect(adapter.hookHealthCheckTimer).toBeNull();
+  });
+
+  test("stops the hook health timeout when a Claude companion closes", async () => {
+    const adapter = createBridgeAdapter({
+      kind: "claude",
+      command: "claude",
+      cwd: process.cwd(),
+      renderMode: "companion",
+    }) as any;
+    adapter.hookHealthCheckTimer = setTimeout(() => undefined, 60_000);
+
+    await adapter.dispose();
+
+    expect(adapter.hookHealthCheckTimer).toBeNull();
+  });
+
+  test("completes a TClaude turn from its transcript when native hooks are unavailable", () => {
+    const adapter = createBridgeAdapter({
+      kind: "tclaude",
+      command: "tclaude",
+      cwd: process.cwd(),
+      renderMode: "companion",
+    }) as any;
+    const events: Array<{ type: string; text?: string }> = [];
+    adapter.setEventSink((event: { type: string; text?: string }) => events.push(event));
+    adapter.hasAcceptedInput = true;
+    adapter.currentPreview = "只回复 TCLAUDE_OK";
+    adapter.state.status = "busy";
+    adapter.state.activeTurnOrigin = "wechat";
+
+    adapter.handleTClaudeTranscriptAssistant({
+      message: {
+        stop_reason: "end_turn",
+        content: [{ type: "text", text: "TCLAUDE_OK" }],
+      },
+    });
+
+    expect(adapter.getState().status).toBe("idle");
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "final_reply",
+      text: "TCLAUDE_OK",
+    }));
+    expect(events).toContainEqual(expect.objectContaining({ type: "task_complete" }));
   });
 
   test("does not auto-confirm Claude workspace trust text during an active WeChat turn", () => {
@@ -1700,6 +1917,7 @@ describe("Claude CLI compatibility", () => {
       },
       kill() {},
     };
+    adapter.cliSessionReady = true;
 
     adapter.handleData(
       "Accessing workspace:\r\n\r\n C:\\Users\\example\r\n\r\n Quick safety check: Is this a project you created or one you trust?\r\n\r\n ❯ 1. Yes, I trust this folder\r\n   2. No, exit\r\n\r\n Enter to confirm · Esc to cancel",
@@ -2055,6 +2273,7 @@ describe("Claude CLI compatibility", () => {
       write() {},
       kill() {},
     };
+    adapter.cliSessionReady = true;
     adapter.workingNoticeDelayMs = 5;
 
     await adapter.sendInput("Review the failing Claude bridge tests");
@@ -2064,7 +2283,7 @@ describe("Claude CLI compatibility", () => {
     expect(noticeEvents).toHaveLength(1);
     expect(noticeEvents[0]).toMatchObject({
       level: "info",
-      text: "Claude is still working on:\nReview the failing Claude bridge tests",
+      text: "Claude Code 正在处理：\nReview the failing Claude bridge tests",
     });
 
     await wait(20);
@@ -2088,6 +2307,7 @@ describe("Claude CLI compatibility", () => {
       write() {},
       kill() {},
     };
+    adapter.cliSessionReady = true;
     adapter.workingNoticeDelayMs = 20;
 
     await adapter.sendInput("Run the risky shell command");
@@ -2129,6 +2349,7 @@ describe("Claude CLI compatibility", () => {
       write() {},
       kill() {},
     };
+    adapter.cliSessionReady = true;
     adapter.workingNoticeDelayMs = 20;
 
     await adapter.sendInput("Summarize the repo state");
@@ -2186,6 +2407,7 @@ describe("Claude CLI compatibility", () => {
       write() {},
       kill() {},
     };
+    adapter.cliSessionReady = true;
 
     await adapter.sendInput("Summarize the repo state");
     adapter.handleClaudeStop({});

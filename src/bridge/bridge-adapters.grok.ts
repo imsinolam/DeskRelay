@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -32,6 +32,9 @@ import { nowIso } from "./bridge-utils.ts";
 
 const GROK_LEADER_READY_TIMEOUT_MS = 10_000;
 const GROK_LEADER_POLL_INTERVAL_MS = 100;
+const GROK_EXISTING_LEADER_READY_TIMEOUT_MS = 3_000;
+const GROK_LEADER_EXIT_TIMEOUT_MS = 4_000;
+const GROK_PROCESS_PROBE_MAX_BUFFER_BYTES = 4 * 1024 * 1024;
 
 type GrokLeaderSocketOptions = {
   platform?: NodeJS.Platform;
@@ -109,6 +112,207 @@ async function canConnectToLeader(socketPath: string): Promise<boolean> {
     socket.once("connect", () => settle(true));
     socket.once("error", () => settle(false));
   });
+}
+
+function tokenizeProcessCommandLine(commandLine: string): string[] {
+  const tokens: string[] = [];
+  const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  for (const match of commandLine.matchAll(pattern)) {
+    tokens.push(match[1] ?? match[2] ?? match[3] ?? "");
+  }
+  return tokens.filter(Boolean);
+}
+
+function commandBasename(command: string): string {
+  return command.split(/[\\/]/).at(-1)?.toLowerCase() ?? "";
+}
+
+export function isGrokLeaderCommandLine(commandLine: string): boolean {
+  const tokens = tokenizeProcessCommandLine(commandLine);
+  return tokens.some((token, index) => {
+    const executable = commandBasename(token);
+    return (
+      (executable === "grok" || executable === "grok.exe") &&
+      tokens[index + 1]?.toLowerCase() === "agent" &&
+      tokens[index + 2]?.toLowerCase() === "leader"
+    );
+  });
+}
+
+export function parseGrokLeaderSocketOwnerPids(
+  lsofOutput: string,
+  socketPath: string,
+): number[] {
+  const owners = new Set<number>();
+  let currentPid: number | null = null;
+  for (const line of lsofOutput.split(/\r?\n/)) {
+    if (line.startsWith("p")) {
+      const pid = Number.parseInt(line.slice(1), 10);
+      currentPid = Number.isInteger(pid) && pid > 0 ? pid : null;
+      continue;
+    }
+    if (currentPid !== null && line === `n${socketPath}`) {
+      owners.add(currentPid);
+    }
+  }
+  return [...owners];
+}
+
+export function selectGrokLeaderSocketOwnerPids(
+  socketPath: string,
+  lsofOutput: string,
+  commandLines: ReadonlyMap<number, string>,
+): number[] {
+  return parseGrokLeaderSocketOwnerPids(lsofOutput, socketPath)
+    .filter((pid) => pid !== process.pid)
+    .filter((pid) => isGrokLeaderCommandLine(commandLines.get(pid) ?? ""));
+}
+
+type GrokLeaderOwnerProbe = {
+  available: boolean;
+  socketPids: number[];
+  pids: number[];
+  detail?: string;
+};
+
+function readProcessCommandLine(pid: number): string {
+  try {
+    const result = spawnSync("ps", ["-p", String(pid), "-o", "command="], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 2_000,
+    });
+    return result.status === 0 ? (result.stdout ?? "").trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+function readProcessCwd(pid: number): string | null {
+  try {
+    const result = spawnSync(
+      "lsof",
+      ["-a", "-p", String(pid), "-d", "cwd", "-Fn"],
+      {
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 2_000,
+      },
+    );
+    if (result.error || (result.status !== 0 && result.status !== 1)) {
+      return null;
+    }
+    for (const line of (result.stdout ?? "").split(/\r?\n/)) {
+      if (line.startsWith("n") && line.length > 1) {
+        return line.slice(1);
+      }
+    }
+  } catch {
+    // Process inspection is best effort.
+  }
+  return null;
+}
+
+function probeGrokLeaderSocketOwners(socketPath: string): GrokLeaderOwnerProbe {
+  if (process.platform === "win32") {
+    return {
+      available: false,
+      socketPids: [],
+      pids: [],
+      detail: "Windows 不支持 lsof socket owner 探测",
+    };
+  }
+  try {
+    const result = spawnSync("lsof", ["-n", "-U", "-Fpn"], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 5_000,
+      maxBuffer: GROK_PROCESS_PROBE_MAX_BUFFER_BYTES,
+    });
+    if (result.error || (result.status !== 0 && result.status !== 1)) {
+      return {
+        available: false,
+        socketPids: [],
+        pids: [],
+        detail: result.error?.message || (result.stderr ?? "").trim() || `lsof code ${result.status}`,
+      };
+    }
+    const output = result.stdout ?? "";
+    const candidatePids = parseGrokLeaderSocketOwnerPids(output, socketPath);
+    const commandLines = new Map(
+      candidatePids.map((pid) => [pid, readProcessCommandLine(pid)] as const),
+    );
+    return {
+      available: true,
+      socketPids: candidatePids,
+      pids: selectGrokLeaderSocketOwnerPids(socketPath, output, commandLines),
+    };
+  } catch (error) {
+    return {
+      available: false,
+      socketPids: [],
+      pids: [],
+      detail: describeUnknownError(error),
+    };
+  }
+}
+
+function resolveGrokLeaderLockPath(socketPath: string): string {
+  return socketPath.endsWith(".sock")
+    ? `${socketPath.slice(0, -".sock".length)}.lock`
+    : `${socketPath}.lock`;
+}
+
+function readGrokLeaderLockPid(socketPath: string): number | null {
+  if (process.platform === "win32") return null;
+  try {
+    const pid = Number.parseInt(
+      fs.readFileSync(resolveGrokLeaderLockPath(socketPath), "utf8").trim(),
+      10,
+    );
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForLeaderConnection(socketPath: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if (await canConnectToLeader(socketPath)) return true;
+    if (Date.now() >= deadline) break;
+    await delay(Math.min(GROK_LEADER_POLL_INTERVAL_MS, deadline - Date.now()));
+  } while (Date.now() < deadline);
+  return false;
+}
+
+async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) return true;
+    await delay(Math.min(GROK_LEADER_POLL_INTERVAL_MS, deadline - Date.now()));
+  }
+  return !isPidAlive(pid);
+}
+
+async function terminateVerifiedGrokLeader(pid: number): Promise<boolean> {
+  killProcessTreeSync(pid);
+  if (await waitForProcessExit(pid, GROK_LEADER_EXIT_TIMEOUT_MS)) return true;
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // It may have exited between the wait and the fallback signal.
+  }
+  return await waitForProcessExit(pid, GROK_LEADER_EXIT_TIMEOUT_MS);
 }
 
 export function findGrokSessionDirectory(
@@ -383,19 +587,69 @@ export class GrokAcpAdapter extends AcpBridgeAdapter {
     this.nativeGeneration += 1;
     this.stopNativeClient();
     await super.dispose();
-    this.stopOwnedLeader();
+    await this.stopOwnedLeader();
   }
 
   private async ensureLeaderProcess(): Promise<void> {
-    if (await canConnectToLeader(this.leaderSocket)) {
+    if (await waitForLeaderConnection(this.leaderSocket, 500)) {
       return;
     }
-    if (process.platform !== "win32") {
-      try {
-        fs.rmSync(this.leaderSocket, { force: true });
-      } catch {
-        // A concurrent Grok client may be creating the socket; spawning will report the real error.
+
+    const ownerProbe = probeGrokLeaderSocketOwners(this.leaderSocket);
+    const recoverablePids = new Set(ownerProbe.pids);
+    const lockPid = readGrokLeaderLockPid(this.leaderSocket);
+    if (
+      lockPid !== null &&
+      lockPid !== process.pid &&
+      isPidAlive(lockPid) &&
+      isGrokLeaderCommandLine(readProcessCommandLine(lockPid))
+    ) {
+      const ownerCwd = readProcessCwd(lockPid);
+      if (ownerCwd && path.resolve(ownerCwd) === path.resolve(this.grokOptions.cwd)) {
+        recoverablePids.add(lockPid);
       }
+    }
+
+    const recoveredPids: number[] = [];
+    if (recoverablePids.size > 0) {
+      if (
+        await waitForLeaderConnection(
+          this.leaderSocket,
+          GROK_EXISTING_LEADER_READY_TIMEOUT_MS,
+        )
+      ) {
+        return;
+      }
+      for (const pid of recoverablePids) {
+        if (!(await terminateVerifiedGrokLeader(pid))) {
+          throw new Error(
+            `Grok 共享会话服务被不可连接的旧进程占用，且无法安全回收（PID ${pid}，socket ${this.leaderSocket}）。`,
+          );
+        }
+        recoveredPids.push(pid);
+      }
+      if (process.platform !== "win32") {
+        fs.rmSync(this.leaderSocket, { force: true });
+        const currentLockPid = readGrokLeaderLockPid(this.leaderSocket);
+        if (
+          currentLockPid === null ||
+          recoveredPids.includes(currentLockPid) ||
+          !isPidAlive(currentLockPid)
+        ) {
+          fs.rmSync(resolveGrokLeaderLockPath(this.leaderSocket), { force: true });
+        }
+      }
+    } else if (
+      process.platform !== "win32" &&
+      ownerProbe.available &&
+      ownerProbe.socketPids.length === 0 &&
+      (lockPid === null || !isPidAlive(lockPid))
+    ) {
+      // Only remove stale artifacts after lsof proves that no process holds the
+      // socket and the lock does not point at a live process. A single failed
+      // 250 ms connection is not ownership evidence.
+      fs.rmSync(this.leaderSocket, { force: true });
+      fs.rmSync(resolveGrokLeaderLockPath(this.leaderSocket), { force: true });
     }
 
     const env = buildCliEnvironment("grok");
@@ -418,6 +672,9 @@ export class GrokAcpAdapter extends AcpBridgeAdapter {
     this.ownsLeaderProcess = true;
 
     let leaderError = "";
+    child.once("error", (error) => {
+      leaderError = describeUnknownError(error);
+    });
     child.stderr?.on("data", (chunk: Buffer | string) => {
       leaderError = `${leaderError}${String(chunk)}`.slice(-4000);
     });
@@ -433,12 +690,23 @@ export class GrokAcpAdapter extends AcpBridgeAdapter {
       await delay(GROK_LEADER_POLL_INTERVAL_MS);
     }
 
-    this.stopOwnedLeader();
+    const childPid = child.pid;
+    await this.stopOwnedLeader();
     const detail = leaderError.trim().replace(/\s+/g, " ");
+    const diagnostics = [
+      `socket=${this.leaderSocket}`,
+      ...(typeof childPid === "number" ? [`child_pid=${childPid}`] : []),
+      ...(recoveredPids.length > 0
+        ? [`recovered_orphan_pids=${recoveredPids.join(",")}`]
+        : []),
+      ...(!ownerProbe.available && ownerProbe.detail
+        ? [`owner_probe=${ownerProbe.detail.replace(/\s+/g, " ")}`]
+        : []),
+    ].join("，");
     throw new Error(
       detail
-        ? `Grok 共享会话服务启动失败：${detail}`
-        : "Grok 共享会话服务启动超时，请先运行 grok doctor 检查登录和本机环境。",
+        ? `Grok 共享会话服务启动失败：${detail}（${diagnostics}）`
+        : `Grok 共享会话服务启动超时（${diagnostics}），请运行 grok doctor 检查登录和本机环境。`,
     );
   }
 
@@ -497,7 +765,7 @@ export class GrokAcpAdapter extends AcpBridgeAdapter {
     }
   }
 
-  private stopOwnedLeader(): void {
+  private async stopOwnedLeader(): Promise<void> {
     const child = this.leaderProcess;
     const ownedLeader = this.ownsLeaderProcess;
     this.leaderProcess = null;
@@ -505,15 +773,29 @@ export class GrokAcpAdapter extends AcpBridgeAdapter {
     if (ownedLeader && child?.pid) {
       try {
         killProcessTreeSync(child.pid);
+        await waitForProcessExit(child.pid, GROK_LEADER_EXIT_TIMEOUT_MS);
       } catch {
         // Best effort shutdown.
       }
     }
     if (ownedLeader && process.platform !== "win32") {
-      try {
-        fs.rmSync(this.leaderSocket, { force: true });
-      } catch {
-        // Best effort stale socket cleanup.
+      const ownerProbe = probeGrokLeaderSocketOwners(this.leaderSocket);
+      const lockPid = readGrokLeaderLockPid(this.leaderSocket);
+      if (
+        ownerProbe.available &&
+        ownerProbe.socketPids.length === 0 &&
+        (
+          lockPid === null ||
+          lockPid === child?.pid ||
+          !isPidAlive(lockPid)
+        )
+      ) {
+        try {
+          fs.rmSync(this.leaderSocket, { force: true });
+          fs.rmSync(resolveGrokLeaderLockPath(this.leaderSocket), { force: true });
+        } catch {
+          // Best effort cleanup after proving no process owns the socket.
+        }
       }
     }
   }

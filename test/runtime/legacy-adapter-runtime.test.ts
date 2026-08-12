@@ -37,6 +37,7 @@ describe("LegacyAdapterRuntime optional capabilities", () => {
     expect(runtime.sendInputToSession).toBeUndefined();
     expect(runtime.getQueuedTaskInputs).toBeUndefined();
     expect(runtime.createSessionInProject).toBeUndefined();
+    expect(runtime.resolveApprovalRequest).toBeUndefined();
   });
 
   test("forwards optional session and queue methods to the wrapped adapter", async () => {
@@ -64,6 +65,12 @@ describe("LegacyAdapterRuntime optional capabilities", () => {
         expect(this.getState().kind).toBe("grok");
         expect(sourceSessionId).toBe("source-session");
       },
+      async resolveApprovalRequest(requestId, action) {
+        expect(this).toBe(adapter);
+        expect(requestId).toBe("approval-1");
+        expect(action).toBe("deny");
+        return true;
+      },
     });
     const runtime = new LegacyAdapterRuntime(adapter);
 
@@ -88,5 +95,6 @@ describe("LegacyAdapterRuntime optional capabilities", () => {
     ]);
     expect(runtime.createSessionInProject).toBeFunction();
     await runtime.createSessionInProject?.("source-session");
+    await expect(runtime.resolveApprovalRequest?.("approval-1", "deny")).resolves.toBe(true);
   });
 });

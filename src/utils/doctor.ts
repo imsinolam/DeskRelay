@@ -574,7 +574,7 @@ function chooseCliChecks(options: DoctorCliOptions): Array<{
       case "codex":
         return [{ name: "codex", label: "Codex CLI", optional: false }];
       case "claude":
-        return [{ name: "claude", label: "Claude CLI", optional: false }];
+        return [{ name: "claude", label: "Claude Code CLI", optional: false }];
       case "tclaude":
         return [{ name: "tclaude", label: "TClaude CLI", optional: false }];
       case "grok":
@@ -594,7 +594,7 @@ function chooseCliChecks(options: DoctorCliOptions): Array<{
 
   return [
     { name: "codex", label: "Codex CLI", optional: true },
-    { name: "claude", label: "Claude CLI", optional: true },
+    { name: "claude", label: "Claude Code CLI", optional: true },
     { name: "tclaude", label: "TClaude CLI", optional: true },
     { name: "grok", label: "Grok CLI", optional: true },
     { name: "codebuddy", label: "CodeBuddy CLI", optional: true },

@@ -20,6 +20,7 @@ export class LegacyAdapterRuntime implements RuntimeHost {
   readonly deleteQueuedTaskInput: BridgeAdapter["deleteQueuedTaskInput"];
   readonly steerQueuedTaskInput: BridgeAdapter["steerQueuedTaskInput"];
   readonly interruptSession: BridgeAdapter["interruptSession"];
+  readonly resolveApprovalRequest: BridgeAdapter["resolveApprovalRequest"];
   readonly resolveTaskApprovals: BridgeAdapter["resolveTaskApprovals"];
   readonly getPendingTaskApprovals: BridgeAdapter["getPendingTaskApprovals"];
   readonly submitTaskUserInput: BridgeAdapter["submitTaskUserInput"];
@@ -44,6 +45,7 @@ export class LegacyAdapterRuntime implements RuntimeHost {
     this.deleteQueuedTaskInput = adapter.deleteQueuedTaskInput?.bind(adapter);
     this.steerQueuedTaskInput = adapter.steerQueuedTaskInput?.bind(adapter);
     this.interruptSession = adapter.interruptSession?.bind(adapter);
+    this.resolveApprovalRequest = adapter.resolveApprovalRequest?.bind(adapter);
     this.resolveTaskApprovals = adapter.resolveTaskApprovals?.bind(adapter);
     this.getPendingTaskApprovals = adapter.getPendingTaskApprovals?.bind(adapter);
     this.submitTaskUserInput = adapter.submitTaskUserInput?.bind(adapter);

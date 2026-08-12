@@ -10,6 +10,42 @@ import {
 } from "../../src/daemon/daemon-state.ts";
 
 describe("daemon workspace state", () => {
+  test("persists task-scoped auto-approval across daemon restarts", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-daemon-state-"));
+    const stateFile = path.join(directory, "daemon-state.json");
+    const cwd = path.join(directory, "workspace");
+
+    try {
+      const store = new DaemonWorkspaceStateStore(cwd, { stateFile });
+      store.setTaskApprovalAutoApproveIdentities("codex", [{
+        threadId: "thread-a",
+        turnId: "turn-1",
+      }]);
+      store.setTaskApprovalAutoApproveIdentities("claude", [{
+        threadId: "session-b",
+        turnId: "turn-2",
+      }]);
+
+      const restored = new DaemonWorkspaceStateStore(cwd, { stateFile });
+      expect(restored.getTaskApprovalAutoApproveIdentities("codex")).toEqual([{
+        threadId: "thread-a",
+      }]);
+      expect(restored.getTaskApprovalAutoApproveIdentities("claude")).toEqual([{
+        threadId: "session-b",
+      }]);
+
+      restored.setTaskApprovalAutoApproveIdentities("codex", []);
+      expect(new DaemonWorkspaceStateStore(cwd, { stateFile })
+        .getTaskApprovalAutoApproveIdentities("codex")).toEqual([]);
+      expect(new DaemonWorkspaceStateStore(cwd, { stateFile })
+        .getTaskApprovalAutoApproveIdentities("claude")).toEqual([{
+          threadId: "session-b",
+        }]);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("persists pending and delivered Codex completion notifications", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-daemon-state-"));
     const stateFile = path.join(directory, "daemon-state.json");

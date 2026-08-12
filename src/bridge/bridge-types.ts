@@ -40,6 +40,7 @@ export type ApprovalRequest = {
   detailLabel?: string;
   detailPreview?: string;
   requestId?: string;
+  createdAt?: string;
   confirmInput?: string;
   denyInput?: string;
 };
@@ -142,6 +143,7 @@ export type BridgeSessionMessage = {
   id?: string;
   turnId?: string;
   phase?: "commentary" | "final_answer";
+  createdAtMs?: number;
   model?: string;
   images?: BridgeMessageImage[];
 };
@@ -183,6 +185,7 @@ export type BridgeSessionProgressItem = {
     | "tool";
   status: "running" | "completed" | "failed";
   text: string;
+  createdAtMs?: number;
 };
 
 export type BridgeSessionRunSummary = {
@@ -405,6 +408,10 @@ export interface BridgeAdapter {
   resolveAllApprovals(action: "confirm" | "deny"): Promise<number>;
   resolveApprovalForSession?(): Promise<boolean>;
   resolveAllApprovalsForSession?(): Promise<number>;
+  resolveApprovalRequest?(
+    requestId: string,
+    action: "confirm" | "confirm_session" | "deny",
+  ): Promise<boolean>;
   resolveTaskApprovals?(
     threadId: string,
     action: "confirm" | "confirm_session" | "deny",

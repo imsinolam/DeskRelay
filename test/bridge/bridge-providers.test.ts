@@ -54,11 +54,18 @@ describe("bridge provider registry", () => {
   });
 
   test("treats TClaude as an implemented Claude-compatible daemon provider", () => {
+    expect(getBridgeProvider("claude")).toMatchObject({
+      label: "Claude Code",
+      capabilities: {
+        nativeCommands: true,
+      },
+    });
     expect(isBridgeAdapterKind("tclaude")).toBe(true);
     expect(isDaemonAdapterKind("tclaude")).toBe(true);
     expect(isClaudeProviderKind("tclaude")).toBe(true);
     expect(DAEMON_PROVIDER_IDS).toContain("tclaude");
     expect(resolveDefaultAdapterCommand("tclaude")).toBe("tclaude");
+    expect(getBridgeProvider("tclaude").capabilities.nativeCommands).toBe(true);
   });
 
   test("never starts a second hidden owner for same-owner terminal providers", () => {

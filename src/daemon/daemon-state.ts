@@ -42,10 +42,23 @@ export type DaemonMobileApprovalResult = {
   commandPreview: string;
   detailLabel?: string;
   detailPreview?: string;
+  requestedAt?: string;
   resolvedAt: string;
 };
 
 const MAX_MOBILE_APPROVAL_RESULTS = 240;
+
+export type DaemonTaskApprovalAutoApproveIdentity = {
+  threadId?: string;
+  turnId?: string;
+};
+
+export type DaemonTaskApprovalAutoApproveEntry =
+  DaemonTaskApprovalAutoApproveIdentity & {
+    adapter: DaemonAdapterKind;
+  };
+
+const MAX_TASK_APPROVAL_AUTO_APPROVALS = 80;
 
 export type DaemonWorkspaceState = {
   version: 1;
@@ -59,6 +72,7 @@ export type DaemonWorkspaceState = {
   restartNoticeSentAt?: string;
   recentTaskCompletions?: DaemonRecentTaskCompletion[];
   mobileApprovalResults?: DaemonMobileApprovalResult[];
+  taskApprovalAutoApprovals?: DaemonTaskApprovalAutoApproveEntry[];
   codexCompletionDeliveries?: CodexCompletionDeliveryState;
   updatedAt: string;
 };
@@ -173,6 +187,10 @@ function normalizeMobileApprovalResult(
       value.detailPreview !== undefined &&
       (typeof value.detailPreview !== "string" || !value.detailPreview.trim())
     ) ||
+    (
+      value.requestedAt !== undefined &&
+      (typeof value.requestedAt !== "string" || !Number.isFinite(Date.parse(value.requestedAt)))
+    ) ||
     typeof value.resolvedAt !== "string" ||
     !Number.isFinite(Date.parse(value.resolvedAt))
   ) {
@@ -191,6 +209,9 @@ function normalizeMobileApprovalResult(
       : {}),
     ...(typeof value.detailPreview === "string"
       ? { detailPreview: value.detailPreview.trim() }
+      : {}),
+    ...(typeof value.requestedAt === "string"
+      ? { requestedAt: value.requestedAt.trim() }
       : {}),
     resolvedAt: value.resolvedAt.trim(),
   };
@@ -219,6 +240,51 @@ function normalizeMobileApprovalResults(
   const normalized = Array.from(newestById.values())
     .sort((left, right) => Date.parse(right.resolvedAt) - Date.parse(left.resolvedAt))
     .slice(0, MAX_MOBILE_APPROVAL_RESULTS);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeTaskApprovalAutoApproveEntry(
+  value: unknown,
+): DaemonTaskApprovalAutoApproveEntry | null {
+  if (!isRecord(value) || !isDaemonAdapterKind(value.adapter)) {
+    return null;
+  }
+  const threadId = typeof value.threadId === "string"
+    ? value.threadId.trim()
+    : "";
+  const turnId = typeof value.turnId === "string"
+    ? value.turnId.trim()
+    : "";
+  if (!threadId && !turnId) {
+    return null;
+  }
+  return threadId
+    ? { adapter: value.adapter, threadId }
+    : { adapter: value.adapter, turnId };
+}
+
+function taskApprovalAutoApproveEntryKey(
+  entry: DaemonTaskApprovalAutoApproveEntry,
+): string {
+  return [entry.adapter, entry.threadId ?? "", entry.turnId ?? ""].join("\u0000");
+}
+
+function normalizeTaskApprovalAutoApproveEntries(
+  value: unknown,
+): DaemonTaskApprovalAutoApproveEntry[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const normalizedByIdentity = new Map<string, DaemonTaskApprovalAutoApproveEntry>();
+  for (const candidate of value) {
+    const normalized = normalizeTaskApprovalAutoApproveEntry(candidate);
+    if (!normalized) {
+      continue;
+    }
+    normalizedByIdentity.set(taskApprovalAutoApproveEntryKey(normalized), normalized);
+  }
+  const normalized = Array.from(normalizedByIdentity.values())
+    .slice(0, MAX_TASK_APPROVAL_AUTO_APPROVALS);
   return normalized.length > 0 ? normalized : undefined;
 }
 
@@ -297,6 +363,9 @@ function normalizeDaemonWorkspaceState(
   const mobileApprovalResults = normalizeMobileApprovalResults(
     value.mobileApprovalResults,
   );
+  const taskApprovalAutoApprovals = normalizeTaskApprovalAutoApproveEntries(
+    value.taskApprovalAutoApprovals,
+  );
   const codexCompletionDeliveries = value.codexCompletionDeliveries === undefined
     ? undefined
     : normalizeCodexCompletionDeliveryState(value.codexCompletionDeliveries);
@@ -325,6 +394,7 @@ function normalizeDaemonWorkspaceState(
         : undefined,
     recentTaskCompletions,
     mobileApprovalResults,
+    taskApprovalAutoApprovals,
     codexCompletionDeliveries,
     updatedAt: value.updatedAt,
   };
@@ -389,6 +459,13 @@ export class DaemonWorkspaceStateStore {
         : {}),
       ...(this.state.mobileApprovalResults
         ? { mobileApprovalResults: this.state.mobileApprovalResults.map((entry) => ({ ...entry })) }
+        : {}),
+      ...(this.state.taskApprovalAutoApprovals
+        ? {
+            taskApprovalAutoApprovals: this.state.taskApprovalAutoApprovals.map(
+              (entry) => ({ ...entry }),
+            ),
+          }
         : {}),
       ...(this.state.codexCompletionDeliveries
         ? {
@@ -490,6 +567,32 @@ export class DaemonWorkspaceStateStore {
     ]
       .sort((left, right) => Date.parse(right.completedAt) - Date.parse(left.completedAt))
       .slice(0, MAX_RECENT_TASK_COMPLETIONS);
+    this.persist();
+  }
+
+  getTaskApprovalAutoApproveIdentities(
+    adapter: DaemonAdapterKind,
+  ): DaemonTaskApprovalAutoApproveIdentity[] {
+    return (this.state.taskApprovalAutoApprovals ?? [])
+      .filter((entry) => entry.adapter === adapter)
+      .map((entry) => ({
+        ...(entry.threadId ? { threadId: entry.threadId } : {}),
+        ...(entry.turnId ? { turnId: entry.turnId } : {}),
+      }));
+  }
+
+  setTaskApprovalAutoApproveIdentities(
+    adapter: DaemonAdapterKind,
+    identities: DaemonTaskApprovalAutoApproveIdentity[],
+  ): void {
+    const retained = (this.state.taskApprovalAutoApprovals ?? [])
+      .filter((entry) => entry.adapter !== adapter);
+    const nextForAdapter = normalizeTaskApprovalAutoApproveEntries(
+      identities.map((identity) => ({ ...identity, adapter })),
+    ) ?? [];
+    const next = [...retained, ...nextForAdapter]
+      .slice(0, MAX_TASK_APPROVAL_AUTO_APPROVALS);
+    this.state.taskApprovalAutoApprovals = next.length > 0 ? next : undefined;
     this.persist();
   }
 

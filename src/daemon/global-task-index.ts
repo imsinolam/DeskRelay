@@ -227,7 +227,7 @@ function runtimeMarker(candidate: GlobalTaskCandidate): string {
   if (status?.type === "active") {
     if (status.activeFlags.includes("waitingOnApproval")) return "　待审批";
     if (status.activeFlags.includes("waitingOnUserInput")) return "　待输入";
-    return "　运行中";
+    return "　🟢";
   }
   return status?.type === "systemError" ? "　异常" : "";
 }
