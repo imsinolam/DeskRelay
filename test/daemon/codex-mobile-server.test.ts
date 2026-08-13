@@ -290,7 +290,7 @@ describe("mobile approval result helpers", () => {
     ]);
   });
 
-  test("places timestamped approval decisions by message time when turn ids are missing or mismatched", () => {
+  test("uses timestamps for approval placement when accelerated messages have no turn ids", () => {
     const helpers = loadMobileApprovalResultHelpers();
     const timeline = helpers.buildTimeline({
       messages: [
@@ -300,8 +300,13 @@ describe("mobile approval result helpers", () => {
       ],
       approvalResults: [
         {
+          id: "approval-before-page",
+          turnId: "turn-before-page",
+          requestedAt: "1970-01-01T00:00:05.000Z",
+        },
+        {
           id: "approval-after-2",
-          turnId: "turn-not-in-page",
+          turnId: "turn-from-native-history",
           requestedAt: "1970-01-01T00:00:25.000Z",
           resolvedAt: "1970-01-01T00:00:26.000Z",
         },
@@ -324,45 +329,61 @@ describe("mobile approval result helpers", () => {
     ]);
   });
 
-  test("moves older approval decisions before the first loaded message instead of collecting them at the bottom", () => {
+  test("hides approval results whose real turn has not been loaded yet", () => {
     const helpers = loadMobileApprovalResultHelpers();
     const latestPage = helpers.buildTimeline({
       messages: [
-        { id: "latest-1", role: "assistant", createdAtMs: 30_000 },
-        { id: "latest-2", role: "assistant", createdAtMs: 40_000 },
+        { id: "latest-user", role: "user", turnId: "turn-latest", createdAtMs: 30_000 },
+        { id: "latest-final", role: "assistant", turnId: "turn-latest", createdAtMs: 40_000 },
       ],
       approvalResults: [
-        { id: "old-2", requestedAt: "1970-01-01T00:00:20.000Z" },
-        { id: "old-1", resolvedAt: "1970-01-01T00:00:10.000Z" },
+        {
+          id: "older-approval",
+          turnId: "turn-older",
+          requestedAt: "1970-01-01T00:00:20.000Z",
+        },
+        {
+          id: "latest-approval",
+          turnId: "turn-latest",
+          requestedAt: "1970-01-01T00:00:35.000Z",
+        },
       ],
     });
 
     expect(latestPage.map((item) =>
       item.message?.id ?? item.approvalResult?.id
-    )).toEqual(["old-1", "old-2", "latest-1", "latest-2"]);
+    )).toEqual(["latest-user", "latest-approval", "latest-final"]);
 
     const withOlderHistory = helpers.buildTimeline({
       messages: [
-        { id: "older-1", role: "assistant", createdAtMs: 5_000 },
-        { id: "older-2", role: "assistant", createdAtMs: 15_000 },
-        { id: "latest-1", role: "assistant", createdAtMs: 30_000 },
-        { id: "latest-2", role: "assistant", createdAtMs: 40_000 },
+        { id: "older-user", role: "user", turnId: "turn-older", createdAtMs: 10_000 },
+        { id: "older-final", role: "assistant", turnId: "turn-older", createdAtMs: 25_000 },
+        { id: "latest-user", role: "user", turnId: "turn-latest", createdAtMs: 30_000 },
+        { id: "latest-final", role: "assistant", turnId: "turn-latest", createdAtMs: 40_000 },
       ],
       approvalResults: [
-        { id: "old-2", requestedAt: "1970-01-01T00:00:20.000Z" },
-        { id: "old-1", resolvedAt: "1970-01-01T00:00:10.000Z" },
+        {
+          id: "older-approval",
+          turnId: "turn-older",
+          requestedAt: "1970-01-01T00:00:20.000Z",
+        },
+        {
+          id: "latest-approval",
+          turnId: "turn-latest",
+          requestedAt: "1970-01-01T00:00:35.000Z",
+        },
       ],
     });
 
     expect(withOlderHistory.map((item) =>
       item.message?.id ?? item.approvalResult?.id
     )).toEqual([
-      "older-1",
-      "old-1",
-      "older-2",
-      "old-2",
-      "latest-1",
-      "latest-2",
+      "older-user",
+      "older-approval",
+      "older-final",
+      "latest-user",
+      "latest-approval",
+      "latest-final",
     ]);
   });
 

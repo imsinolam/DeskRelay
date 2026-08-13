@@ -46,8 +46,10 @@ type OpenAgentLogHistoryResponse = {
   contentFormat: "normalized_text";
   contentComplete: boolean;
   messages: Array<{
+    messageId?: string | number;
     role: "user" | "assistant";
     content: string;
+    timestamp?: number;
     contentComplete: boolean;
     model?: string | null;
   }>;
@@ -170,11 +172,22 @@ function parseHistoryResponse(
       (item.role !== "user" && item.role !== "assistant") ||
       typeof item.content !== "string" ||
       typeof item.contentComplete !== "boolean" ||
+      !(
+        item.messageId === undefined ||
+        typeof item.messageId === "string" ||
+        (typeof item.messageId === "number" && Number.isFinite(item.messageId))
+      ) ||
+      !(
+        item.timestamp === undefined ||
+        (typeof item.timestamp === "number" && Number.isFinite(item.timestamp) && item.timestamp >= 0)
+      ) ||
       !(item.model === undefined || item.model === null || typeof item.model === "string")
     ) return null;
     messages.push({
+      ...(item.messageId !== undefined ? { messageId: item.messageId } : {}),
       role: item.role,
       content: item.content,
+      ...(typeof item.timestamp === "number" ? { timestamp: item.timestamp } : {}),
       contentComplete: item.contentComplete,
       ...(typeof item.model === "string" && item.model.trim()
         ? { model: item.model }
@@ -308,6 +321,12 @@ export class OpenAgentLogHistoryProvider {
         messages: payload.messages.map((message): BridgeSessionMessage => ({
           role: message.role,
           text: message.content,
+          ...(message.messageId !== undefined
+            ? { id: String(message.messageId) }
+            : {}),
+          ...(message.timestamp !== undefined
+            ? { createdAtMs: message.timestamp }
+            : {}),
           ...(message.model ? { model: message.model } : {}),
         })),
         hasMore: payload.hasMore,
