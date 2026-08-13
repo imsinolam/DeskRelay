@@ -67,6 +67,7 @@ import {
   retrySwitchedAdapterTaskList,
   waitForVisibleClientConnection,
 } from "../../src/daemon/deskrelay-daemon.ts";
+import { redactSensitiveCommandText } from "../../src/bridge/bridge-utils.ts";
 import type { BridgeLockPayload } from "../../src/bridge/bridge-state.ts";
 import type {
   DaemonEndpoint,
@@ -347,6 +348,20 @@ describe("daemon startup resilience", () => {
     expect(retryCompletions).toBeLessThan(handleInbound);
     expect(retryApprovals).toBeLessThan(handleInbound);
   });
+
+  test("keeps restored approval deliveries while the desktop approval index is still warming up", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const retryStart = source.indexOf("  private async isApprovalNotificationStillPending(");
+    const retryEnd = source.indexOf("  private deliverCodexCompletionNotification(", retryStart);
+    const retrySource = source.slice(retryStart, retryEnd);
+
+    expect(retrySource).toContain(
+      "const runtimePending = slot.runtime.getPendingTaskApprovals(delivery.threadId);",
+    );
+    expect(retrySource).toContain(
+      "return slot.pendingConfirmations.some((candidate) =>",
+    );
+  });
 });
 
 describe("mobile transcript visibility", () => {
@@ -390,6 +405,36 @@ describe("mobile transcript visibility", () => {
 });
 
 describe("deskrelay-daemon helpers", () => {
+  test("redacts command credentials before approval text is logged or persisted", () => {
+    expect(redactSensitiveCommandText(
+      "sshpass -p 'secret-value' ssh host Authorization=BearerToken --token=abc",
+    )).toBe(
+      "sshpass -p '[已隐藏]' ssh host Authorization=[已隐藏] --token=[已隐藏]",
+    );
+    expect(redactSensitiveCommandText("curl -H 'Authorization: Bearer abc.def' host"))
+      .toBe("curl -H 'Authorization: Bearer [已隐藏]' host");
+  });
+
+  test("redacts credentials in mobile approval cards and stable approval keys", () => {
+    const approval = {
+      summary: "Codex 请求运行命令。",
+      commandPreview: "sshpass -p 'secret-value' ssh host",
+      requestId: undefined,
+      threadId: "thread-a",
+      turnId: "turn-a",
+    };
+    expect(resolveCodexMobilePendingApprovalFromSignals({
+      threadId: "thread-a",
+      pendingConfirmations: [],
+      runtimeTaskApprovals: [approval],
+    })?.commandPreview).toBe("sshpass -p '[已隐藏]' ssh host");
+    expect(buildDaemonApprovalNotificationKey(approval)).toBe(
+      buildDaemonApprovalNotificationKey({
+        ...approval,
+        commandPreview: "sshpass -p '[已隐藏]' ssh host",
+      }),
+    );
+  });
   test("merges live tasks and recent completions across adapters into one board", () => {
     const board = buildCodexMobileTaskBoard({
       taskGroups: [

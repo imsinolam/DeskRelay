@@ -348,6 +348,23 @@ export function truncatePreview(text: string, maxLength = 140): string {
   return `${normalized.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
+export function redactSensitiveCommandText(text: string): string {
+  return text
+    .replace(
+      /(\bsshpass\s+(?:[^\r\n]*?\s)?-p\s+)(["'])(.*?)\2/gi,
+      "$1$2[已隐藏]$2",
+    )
+    .replace(
+      /(\b(?:--password|--passwd|--token|--api[-_]?key)\s*(?:=|\s)\s*)(["']?)([^\s"']+)\2/gi,
+      "$1$2[已隐藏]$2",
+    )
+    .replace(
+      /(\b(?:password|passwd|token|api[-_]?key|authorization)\s*=\s*)(["']?)([^\s"']+)\2/gi,
+      "$1$2[已隐藏]$2",
+    )
+    .replace(/(\bBearer\s+)[A-Za-z0-9._~+/-]+/gi, "$1[已隐藏]");
+}
+
 function truncateMobileText(text: string, maxLength: number): string {
   const normalized = normalizeOutput(text).trim();
   if (!normalized) {

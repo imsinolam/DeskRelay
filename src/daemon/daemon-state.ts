@@ -13,6 +13,10 @@ import {
   normalizeCodexCompletionDeliveryState,
   type CodexCompletionDeliveryState,
 } from "./codex-completion-delivery.ts";
+import {
+  normalizeApprovalNotificationDeliveryState,
+  type ApprovalNotificationDeliveryState,
+} from "./approval-notification-delivery.ts";
 
 export type CodexWechatReplyMode = "preview" | "full";
 
@@ -74,6 +78,7 @@ export type DaemonWorkspaceState = {
   mobileApprovalResults?: DaemonMobileApprovalResult[];
   taskApprovalAutoApprovals?: DaemonTaskApprovalAutoApproveEntry[];
   codexCompletionDeliveries?: CodexCompletionDeliveryState;
+  approvalNotificationDeliveries?: ApprovalNotificationDeliveryState;
   updatedAt: string;
 };
 
@@ -369,6 +374,9 @@ function normalizeDaemonWorkspaceState(
   const codexCompletionDeliveries = value.codexCompletionDeliveries === undefined
     ? undefined
     : normalizeCodexCompletionDeliveryState(value.codexCompletionDeliveries);
+  const approvalNotificationDeliveries = value.approvalNotificationDeliveries === undefined
+    ? undefined
+    : normalizeApprovalNotificationDeliveryState(value.approvalNotificationDeliveries);
 
   return {
     version: 1,
@@ -396,6 +404,7 @@ function normalizeDaemonWorkspaceState(
     mobileApprovalResults,
     taskApprovalAutoApprovals,
     codexCompletionDeliveries,
+    approvalNotificationDeliveries,
     updatedAt: value.updatedAt,
   };
 }
@@ -480,6 +489,18 @@ export class DaemonWorkspaceStateStore {
             },
           }
         : {}),
+      ...(this.state.approvalNotificationDeliveries
+        ? {
+            approvalNotificationDeliveries: {
+              pending: this.state.approvalNotificationDeliveries.pending.map(
+                (entry) => ({ ...entry }),
+              ),
+              delivered: this.state.approvalNotificationDeliveries.delivered.map(
+                (entry) => ({ ...entry }),
+              ),
+            },
+          }
+        : {}),
     };
   }
 
@@ -491,6 +512,20 @@ export class DaemonWorkspaceStateStore {
 
   setCodexCompletionDeliveryState(state: CodexCompletionDeliveryState): void {
     this.state.codexCompletionDeliveries = normalizeCodexCompletionDeliveryState(state);
+    this.persist();
+  }
+
+  getApprovalNotificationDeliveryState(): ApprovalNotificationDeliveryState {
+    return normalizeApprovalNotificationDeliveryState(
+      this.state.approvalNotificationDeliveries,
+    );
+  }
+
+  setApprovalNotificationDeliveryState(
+    state: ApprovalNotificationDeliveryState,
+  ): void {
+    this.state.approvalNotificationDeliveries =
+      normalizeApprovalNotificationDeliveryState(state);
     this.persist();
   }
 

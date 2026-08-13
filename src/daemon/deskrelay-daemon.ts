@@ -92,6 +92,7 @@ import {
   OutputBatcher,
   parsePendingUserInputAnswerCommand,
   parseWechatControlCommand,
+  redactSensitiveCommandText,
   resolveBareCodexTaskSelection,
   resolveCompactCodexTaskSearchTarget,
   resolveCodexTaskListPageNavigation,
@@ -181,6 +182,10 @@ import {
   CodexCompletionDeliveryQueue,
   type CodexCompletionDeliveryResult,
 } from "./codex-completion-delivery.ts";
+import {
+  ApprovalNotificationDeliveryQueue,
+  type PendingApprovalNotificationDelivery,
+} from "./approval-notification-delivery.ts";
 import { CodexMobileAuthStore } from "./codex-mobile-auth.ts";
 import { MobileMessageImageStore } from "./mobile-message-image-store.ts";
 import {
@@ -530,8 +535,15 @@ export function buildDaemonApprovalNotificationKey(
   return [
     approval.threadId ?? "unknown-thread",
     approval.turnId ?? "unknown-turn",
-    approval.requestId ?? approval.commandPreview,
+    approval.requestId ?? redactSensitiveCommandText(approval.commandPreview),
   ].join("\u0000");
+}
+
+export function buildDaemonApprovalDeliveryKey(
+  adapter: DaemonAdapterKind,
+  approval: Pick<ApprovalRequest, "threadId" | "turnId" | "requestId" | "commandPreview">,
+): string {
+  return `${adapter}\u0000${buildDaemonApprovalNotificationKey(approval)}`;
 }
 
 type DaemonSystemCommand = NonNullable<
@@ -856,7 +868,7 @@ export function resolveDaemonSessionStartMode(params: {
 function toPendingApproval(request: BridgeEvent & { type: "approval_required" }): PendingApproval {
   const rawRequest = request.request;
   if (typeof (rawRequest as PendingApproval).code === "string") {
-    return {
+    const pending = {
       ...(rawRequest as PendingApproval),
       ...(rawRequest.threadId || !request.threadId
         ? {}
@@ -865,9 +877,16 @@ function toPendingApproval(request: BridgeEvent & { type: "approval_required" })
         ? {}
         : { turnId: request.turnId }),
     };
+    return {
+      ...pending,
+      commandPreview: redactSensitiveCommandText(pending.commandPreview),
+      ...(pending.detailPreview
+        ? { detailPreview: redactSensitiveCommandText(pending.detailPreview) }
+        : {}),
+    };
   }
 
-  return {
+  const pending = {
     ...rawRequest,
     ...(rawRequest.threadId || !request.threadId
       ? {}
@@ -877,6 +896,13 @@ function toPendingApproval(request: BridgeEvent & { type: "approval_required" })
       : { turnId: request.turnId }),
     code: buildOneTimeCode(),
     createdAt: request.timestamp,
+  };
+  return {
+    ...pending,
+    commandPreview: redactSensitiveCommandText(pending.commandPreview),
+    ...(pending.detailPreview
+      ? { detailPreview: redactSensitiveCommandText(pending.detailPreview) }
+      : {}),
   };
 }
 
@@ -1681,7 +1707,7 @@ export function resolveCodexMobilePendingApprovalFromSignals(params: {
     : Number.NaN;
   return {
     summary: pending.summary,
-    commandPreview: pending.commandPreview,
+    commandPreview: redactSensitiveCommandText(pending.commandPreview),
     ...(pending.requestId ? { requestId: pending.requestId } : {}),
     ...(pending.turnId ? { turnId: pending.turnId } : {}),
     ...(Number.isFinite(createdAtMs) ? { createdAtMs } : {}),
@@ -1690,7 +1716,9 @@ export function resolveCodexMobilePendingApprovalFromSignals(params: {
       : {}),
     ...(pending.toolName ? { toolName: pending.toolName } : {}),
     ...(pending.detailLabel ? { detailLabel: pending.detailLabel } : {}),
-    ...(pending.detailPreview ? { detailPreview: pending.detailPreview } : {}),
+    ...(pending.detailPreview
+      ? { detailPreview: redactSensitiveCommandText(pending.detailPreview) }
+      : {}),
   };
 }
 
@@ -2360,6 +2388,7 @@ class DeskRelayDaemon {
     ttlMs: DAEMON_TRANSIENT_CACHE_TTL_MS,
   });
   private readonly codexCompletionDeliveries: CodexCompletionDeliveryQueue;
+  private readonly approvalNotificationDeliveries: ApprovalNotificationDeliveryQueue;
   private readonly wechatGeneratedImageKeys = new BoundedTtlSet<string>({
     maxSize: WECHAT_GENERATED_IMAGE_KEY_CACHE_MAX_SIZE,
     ttlMs: DAEMON_TRANSIENT_CACHE_TTL_MS,
@@ -2388,6 +2417,10 @@ class DeskRelayDaemon {
     this.codexCompletionDeliveries = new CodexCompletionDeliveryQueue({
       initial: params.stateStore.getCodexCompletionDeliveryState(),
       persist: (state) => params.stateStore.setCodexCompletionDeliveryState(state),
+    });
+    this.approvalNotificationDeliveries = new ApprovalNotificationDeliveryQueue({
+      initial: params.stateStore.getApprovalNotificationDeliveryState(),
+      persist: (state) => params.stateStore.setApprovalNotificationDeliveryState(state),
     });
     this.codexWechatReplyMode =
       params.stateStore.getState().codexWechatReplyMode ?? "preview";
@@ -3269,6 +3302,7 @@ class DeskRelayDaemon {
             event,
           );
           const notificationKey = buildDaemonApprovalNotificationKey(pending);
+          const deliveryKey = buildDaemonApprovalDeliveryKey(slot.adapter, pending);
           if (!slot.pendingConfirmations.some(
             (candidate) =>
               buildDaemonApprovalNotificationKey(candidate) === notificationKey
@@ -3315,6 +3349,7 @@ class DeskRelayDaemon {
                   ? { turnId: approvalIdentity.turnId }
                   : {}),
               });
+              this.approvalNotificationDeliveries.cancel(deliveryKey);
               appendDaemonLog(
                 `approval_task_auto_confirmed: adapter=${slot.adapter} thread=${taskThreadId ?? "unknown"} turn=${approvalIdentity.turnId ?? "unknown"} count=${count}`,
               );
@@ -3327,18 +3362,33 @@ class DeskRelayDaemon {
           if (slot.notifiedApprovalKeys.has(notificationKey)) {
             return;
           }
-          const sent = await this.queueWechatMessage(
-            this.authorizedUserId,
-            this.prefixSlotMessageWithMobileLink(
+          const threadId = event.threadId ?? pending.threadId;
+          if (!threadId) {
+            appendDaemonLog(
+              `approval_notification_deferred: adapter=${slot.adapter} reason=missing_thread`,
+            );
+            return;
+          }
+          this.approvalNotificationDeliveries.enqueue({
+            key: deliveryKey,
+            adapter: slot.adapter,
+            threadId,
+            ...(pending.turnId ? { turnId: pending.turnId } : {}),
+            ...(pending.requestId ? { requestId: pending.requestId } : {}),
+            text: this.prefixSlotMessageWithMobileLink(
               slot,
               formatApprovalMessage(pending, adapterState, {
                 allowTaskAutoApprove: true,
               }),
-              event.threadId ?? pending.threadId,
+              threadId,
             ),
-            "approval_required",
+            commandPreview: pending.commandPreview,
+          });
+          const result = await this.deliverApprovalNotification(
+            deliveryKey,
+            this.authorizedUserId,
           );
-          if (sent) {
+          if (result.status === "delivered") {
             slot.notifiedApprovalKeys.add(notificationKey);
           }
         }));
@@ -4442,14 +4492,16 @@ class DeskRelayDaemon {
       id: randomUUID(),
       action,
       summary: pending.summary,
-      commandPreview: pending.commandPreview,
+      commandPreview: redactSensitiveCommandText(pending.commandPreview),
       resolvedAt: nowIso(),
       ...(identity.turnId ? { turnId: identity.turnId } : {}),
       ...(typeof pending.createdAt === "string"
         ? { requestedAt: pending.createdAt }
         : {}),
       ...(pending.detailLabel ? { detailLabel: pending.detailLabel } : {}),
-      ...(pending.detailPreview ? { detailPreview: pending.detailPreview } : {}),
+      ...(pending.detailPreview
+        ? { detailPreview: redactSensitiveCommandText(pending.detailPreview) }
+        : {}),
     };
     this.stateStore.recordMobileApprovalResult({
       ...result,
@@ -4474,12 +4526,27 @@ class DeskRelayDaemon {
     exactRequest: boolean,
   ): void {
     const notificationKey = buildDaemonApprovalNotificationKey(pending);
+    const cancelCandidate = (candidate: PendingApproval): void => {
+      this.approvalNotificationDeliveries.cancel(
+        buildDaemonApprovalDeliveryKey(slot.adapter, candidate),
+      );
+    };
     if (exactRequest || resolvedCount === 1) {
+      for (const candidate of slot.pendingConfirmations) {
+        if (buildDaemonApprovalNotificationKey(candidate) === notificationKey) {
+          cancelCandidate(candidate);
+        }
+      }
       slot.pendingConfirmations = slot.pendingConfirmations.filter(
         (candidate) =>
           buildDaemonApprovalNotificationKey(candidate) !== notificationKey,
       );
       return;
+    }
+    for (const candidate of slot.pendingConfirmations) {
+      if (pending.threadId ? candidate.threadId === pending.threadId : candidate === pending) {
+        cancelCandidate(candidate);
+      }
     }
     slot.pendingConfirmations = pending.threadId
       ? slot.pendingConfirmations.filter(
@@ -4533,7 +4600,7 @@ class DeskRelayDaemon {
         slot,
         {
           startedAt: Date.now(),
-          inputPreview: pending.commandPreview,
+          inputPreview: redactSensitiveCommandText(pending.commandPreview),
           ...(identity.turnId ? { turnId: identity.turnId } : {}),
         },
         identity.threadId,
@@ -5617,6 +5684,19 @@ class DeskRelayDaemon {
     if (!count) {
       return { count: 0 };
     }
+    const resolvedPendingConfirmations = slot.pendingConfirmations.filter(
+      (candidate) => candidate.threadId === threadId,
+    );
+    for (const candidate of resolvedPendingConfirmations) {
+      if (candidate.threadId === threadId) {
+        this.approvalNotificationDeliveries.cancel(
+          buildDaemonApprovalDeliveryKey(slot.adapter, candidate),
+        );
+      }
+    }
+    this.approvalNotificationDeliveries.cancel(
+      buildDaemonApprovalDeliveryKey(slot.adapter, pending),
+    );
     slot.pendingConfirmations = slot.pendingConfirmations.filter(
       (candidate) => candidate.threadId !== threadId,
     );
@@ -5631,7 +5711,7 @@ class DeskRelayDaemon {
       );
     }
     appendDaemonLog(
-      `mobile_approval_${action}: adapter=${slot.adapter} thread=${threadId} count=${count} command=${truncatePreview(pending.commandPreview)}`,
+      `mobile_approval_${action}: adapter=${slot.adapter} thread=${threadId} count=${count} command=${truncatePreview(redactSensitiveCommandText(pending.commandPreview))}`,
     );
     const result = this.recordMobileApprovalResult(slot, pending, action, {
       threadId,
@@ -7011,50 +7091,84 @@ class DeskRelayDaemon {
   private async retryUndeliveredApprovalNotifications(
     senderId: string,
   ): Promise<void> {
-    for (const slot of this.slots.values()) {
-      const runtimeState = slot.runtime.getState();
-      for (const pending of [...slot.pendingConfirmations]) {
-        const notificationKey = buildDaemonApprovalNotificationKey(pending);
-        if (slot.notifiedApprovalKeys.has(notificationKey)) {
-          continue;
-        }
-        if (slot.adapter === "codex" && slot.runtime.getPendingTaskApprovals) {
-          const threadId = pending.threadId;
-          const stillPending = Boolean(
-            threadId &&
-            slot.runtime.getPendingTaskApprovals(threadId).some(
-              (candidate) =>
-                buildDaemonApprovalNotificationKey(candidate) === notificationKey
-            ),
-          );
-          if (!stillPending) {
-            slot.pendingConfirmations = slot.pendingConfirmations.filter(
-              (candidate) =>
-                buildDaemonApprovalNotificationKey(candidate) !== notificationKey,
-            );
-            continue;
-          }
-        }
-
-        const sent = await this.queueWechatMessage(
-          senderId,
-          this.prefixSlotMessageWithMobileLink(
-            slot,
-            formatApprovalMessage(pending, runtimeState, {
-              allowTaskAutoApprove: true,
-            }),
-            pending.threadId,
-          ),
-          "approval_required",
+    for (const delivery of this.approvalNotificationDeliveries.getPending()) {
+      if (!await this.isApprovalNotificationStillPending(delivery)) {
+        this.approvalNotificationDeliveries.cancel(delivery.key);
+        continue;
+      }
+      const result = await this.deliverApprovalNotification(delivery.key, senderId);
+      if (result.status === "in_flight") continue;
+      if (result.status === "delivered") {
+        const slot = this.slots.get(delivery.adapter);
+        const tracked = slot?.pendingConfirmations.find((candidate) =>
+          buildDaemonApprovalDeliveryKey(delivery.adapter, candidate) === delivery.key
         );
-        if (sent) {
-          slot.notifiedApprovalKeys.add(notificationKey);
-          appendDaemonLog(
-            `approval_resent_after_context_refresh: adapter=${slot.adapter} thread=${pending.threadId ?? "unknown"}`,
-          );
+        if (tracked) {
+          slot?.notifiedApprovalKeys.add(buildDaemonApprovalNotificationKey(tracked));
         }
+        appendDaemonLog(
+          `approval_resent_after_context_refresh: adapter=${delivery.adapter} thread=${delivery.threadId}`,
+        );
+        continue;
+      }
+      break;
+    }
+  }
+
+  private deliverApprovalNotification(
+    key: string,
+    senderId: string,
+  ) {
+    return this.approvalNotificationDeliveries.deliver(
+      key,
+      (delivery) => this.queueWechatMessage(
+        senderId,
+        delivery.text,
+        "approval_required",
+      ),
+    );
+  }
+
+  private async isApprovalNotificationStillPending(
+    delivery: PendingApprovalNotificationDelivery,
+  ): Promise<boolean> {
+    let slot = this.slots.get(delivery.adapter);
+    if (!slot && delivery.adapter === "codex") {
+      try {
+        await this.ensureSlot(delivery.adapter, {
+          openVisible: false,
+          reuseExistingVisible: true,
+          sessionStartMode: "restore",
+          activate: false,
+        });
+        slot = this.slots.get(delivery.adapter);
+      } catch (error) {
+        appendDaemonLog(
+          `approval_retry_restore_pending: adapter=${delivery.adapter} thread=${delivery.threadId} error=${truncatePreview(error instanceof Error ? error.message : String(error), 300)}`,
+        );
+        return true;
       }
     }
+    if (!slot) return true;
+    if (slot.runtime.getPendingTaskApprovals) {
+      const runtimePending = slot.runtime.getPendingTaskApprovals(delivery.threadId);
+      if (runtimePending.some((candidate) =>
+        buildDaemonApprovalDeliveryKey(delivery.adapter, candidate) === delivery.key ||
+        Boolean(
+          delivery.commandPreview &&
+          redactSensitiveCommandText(candidate.commandPreview) === delivery.commandPreview &&
+          (!delivery.turnId || !candidate.turnId || candidate.turnId === delivery.turnId),
+        )
+      )) {
+        return true;
+      }
+      return slot.pendingConfirmations.some((candidate) =>
+        buildDaemonApprovalDeliveryKey(delivery.adapter, candidate) === delivery.key
+      );
+    }
+    return slot.pendingConfirmations.some((candidate) =>
+      buildDaemonApprovalDeliveryKey(delivery.adapter, candidate) === delivery.key
+    ) || Boolean(slot.runtime.getState().pendingApproval);
   }
 
   private deliverCodexCompletionNotification(
