@@ -99,6 +99,52 @@ describe("daemon workspace state", () => {
     }
   });
 
+  test("persists pending and delivered approval notifications", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-daemon-state-"));
+    const stateFile = path.join(directory, "daemon-state.json");
+    const cwd = path.join(directory, "workspace");
+
+    try {
+      const store = new DaemonWorkspaceStateStore(cwd, { stateFile });
+      store.setApprovalNotificationDeliveryState({
+        pending: [{
+          key: "codex:thread:turn:request",
+          adapter: "codex",
+          threadId: "thread",
+          turnId: "turn",
+          requestId: "request",
+          text: "需要确认",
+          commandPreview: "ssh example",
+          createdAt: "2026-08-13T03:00:00.000Z",
+        }],
+        delivered: [{
+          key: "codex:thread:old:request",
+          deliveredAt: "2026-08-13T02:00:00.000Z",
+        }],
+      });
+
+      const restored = new DaemonWorkspaceStateStore(cwd, { stateFile });
+      expect(restored.getApprovalNotificationDeliveryState()).toEqual({
+        pending: [{
+          key: "codex:thread:turn:request",
+          adapter: "codex",
+          threadId: "thread",
+          turnId: "turn",
+          requestId: "request",
+          text: "需要确认",
+          commandPreview: "ssh example",
+          createdAt: "2026-08-13T03:00:00.000Z",
+        }],
+        delivered: [{
+          key: "codex:thread:old:request",
+          deliveredAt: "2026-08-13T02:00:00.000Z",
+        }],
+      });
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("persists the active adapter and selected Codex thread", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-daemon-state-"));
     const stateFile = path.join(directory, "daemon-state.json");
