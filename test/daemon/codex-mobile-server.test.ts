@@ -290,6 +290,82 @@ describe("mobile approval result helpers", () => {
     ]);
   });
 
+  test("places timestamped approval decisions by message time when turn ids are missing or mismatched", () => {
+    const helpers = loadMobileApprovalResultHelpers();
+    const timeline = helpers.buildTimeline({
+      messages: [
+        { id: "message-1", role: "assistant", createdAtMs: 10_000 },
+        { id: "message-2", role: "assistant", createdAtMs: 20_000 },
+        { id: "message-3", role: "assistant", createdAtMs: 30_000 },
+      ],
+      approvalResults: [
+        {
+          id: "approval-after-2",
+          turnId: "turn-not-in-page",
+          requestedAt: "1970-01-01T00:00:25.000Z",
+          resolvedAt: "1970-01-01T00:00:26.000Z",
+        },
+        {
+          id: "approval-after-1",
+          requestedAt: "1970-01-01T00:00:15.000Z",
+          resolvedAt: "1970-01-01T00:00:16.000Z",
+        },
+      ],
+    });
+
+    expect(timeline.map((item) =>
+      item.message?.id ?? item.approvalResult?.id
+    )).toEqual([
+      "message-1",
+      "approval-after-1",
+      "message-2",
+      "approval-after-2",
+      "message-3",
+    ]);
+  });
+
+  test("moves older approval decisions before the first loaded message instead of collecting them at the bottom", () => {
+    const helpers = loadMobileApprovalResultHelpers();
+    const latestPage = helpers.buildTimeline({
+      messages: [
+        { id: "latest-1", role: "assistant", createdAtMs: 30_000 },
+        { id: "latest-2", role: "assistant", createdAtMs: 40_000 },
+      ],
+      approvalResults: [
+        { id: "old-2", requestedAt: "1970-01-01T00:00:20.000Z" },
+        { id: "old-1", resolvedAt: "1970-01-01T00:00:10.000Z" },
+      ],
+    });
+
+    expect(latestPage.map((item) =>
+      item.message?.id ?? item.approvalResult?.id
+    )).toEqual(["old-1", "old-2", "latest-1", "latest-2"]);
+
+    const withOlderHistory = helpers.buildTimeline({
+      messages: [
+        { id: "older-1", role: "assistant", createdAtMs: 5_000 },
+        { id: "older-2", role: "assistant", createdAtMs: 15_000 },
+        { id: "latest-1", role: "assistant", createdAtMs: 30_000 },
+        { id: "latest-2", role: "assistant", createdAtMs: 40_000 },
+      ],
+      approvalResults: [
+        { id: "old-2", requestedAt: "1970-01-01T00:00:20.000Z" },
+        { id: "old-1", resolvedAt: "1970-01-01T00:00:10.000Z" },
+      ],
+    });
+
+    expect(withOlderHistory.map((item) =>
+      item.message?.id ?? item.approvalResult?.id
+    )).toEqual([
+      "older-1",
+      "old-1",
+      "older-2",
+      "old-2",
+      "latest-1",
+      "latest-2",
+    ]);
+  });
+
   test("keeps equal-time items stable and scopes undated approval fallbacks to their turn", () => {
     const helpers = loadMobileApprovalResultHelpers();
     const timeline = helpers.buildTimeline({

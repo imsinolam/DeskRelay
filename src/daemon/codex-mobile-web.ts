@@ -4092,9 +4092,6 @@ export const CODEX_MOBILE_JS = String.raw`
 
     return items.sort(function (left, right) {
       if (
-        left.turnId &&
-        right.turnId &&
-        left.turnId === right.turnId &&
         left.occurredAtMs !== null &&
         right.occurredAtMs !== null &&
         left.occurredAtMs !== right.occurredAtMs
