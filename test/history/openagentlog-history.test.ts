@@ -112,8 +112,14 @@ describe("OpenAgentLog history provider", () => {
 
     expect(page).toEqual({
       messages: [
-        { role: "user", text: "先检查性能" },
-        { role: "assistant", text: "已经定位到正文读取链路。", model: "gpt-5.6" },
+        { id: "11", role: "user", text: "先检查性能", createdAtMs: 100 },
+        {
+          id: "12",
+          role: "assistant",
+          text: "已经定位到正文读取链路。",
+          createdAtMs: 200,
+          model: "gpt-5.6",
+        },
       ],
       hasMore: true,
       nextBefore: "oal:signed-cursor",

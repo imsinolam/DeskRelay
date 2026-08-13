@@ -4047,14 +4047,36 @@ export const CODEX_MOBILE_JS = String.raw`
         sequence: sequence++
       });
     });
+    var loadedMessageTurnIds = new Set(items.filter(function (item) {
+      return item.kind === "message" && item.turnId;
+    }).map(function (item) { return item.turnId; }));
+    var timestampedMessages = items.filter(function (item) {
+      return item.kind === "message" && item.occurredAtMs !== null;
+    });
+    var earliestLoadedMessageAtMs = timestampedMessages.length
+      ? Math.min.apply(null, timestampedMessages.map(function (item) { return item.occurredAtMs; }))
+      : null;
     results.forEach(function (approvalResult, resultIndex) {
       var requestedAtMs = timelineOccurredAtMs(approvalResult, "requestedAt");
       var resolvedAtMs = timelineOccurredAtMs(approvalResult, "resolvedAt");
+      var occurredAtMs = requestedAtMs !== null ? requestedAtMs : resolvedAtMs;
+      var approvalTurnId = approvalResult && approvalResult.turnId || "";
+      if (
+        approvalTurnId &&
+        loadedMessageTurnIds.size > 0 &&
+        !loadedMessageTurnIds.has(approvalTurnId)
+      ) return;
+      if (
+        loadedMessageTurnIds.size === 0 &&
+        occurredAtMs !== null &&
+        earliestLoadedMessageAtMs !== null &&
+        occurredAtMs < earliestLoadedMessageAtMs
+      ) return;
       items.push({
         kind: "approval-result",
         approvalResult: approvalResult,
-        turnId: approvalResult && approvalResult.turnId || "",
-        occurredAtMs: requestedAtMs !== null ? requestedAtMs : resolvedAtMs,
+        turnId: approvalTurnId,
+        occurredAtMs: occurredAtMs,
         anchorIndex: messages.length,
         fallbackOrder: resultIndex * 10 + 2,
         sequence: sequence++
