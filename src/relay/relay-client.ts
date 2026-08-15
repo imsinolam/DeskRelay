@@ -22,6 +22,7 @@ export type StartDeskRelayRelayClientOptions = {
   deviceId: string;
   deviceToken: string;
   localBaseUrl: string;
+  localPrewarmToken?: string;
   journalFile?: string;
   logger?: (message: string) => void;
   fetchImpl?: typeof fetch;
@@ -210,6 +211,7 @@ async function executeRelayCommand(
   command: DeskRelayRelayCommand,
   options: {
     localBaseUrl: string;
+    localPrewarmToken?: string;
     fetchImpl: typeof fetch;
   },
 ): Promise<DeskRelayRelayCommandResponse> {
@@ -228,6 +230,14 @@ async function executeRelayCommand(
   }
 
   const headers = new Headers(command.request.headers);
+  const prewarmRequest = headers.get("x-deskrelay-prewarm") === "1";
+  headers.delete("x-deskrelay-prewarm");
+  if (prewarmRequest) {
+    if (!options.localPrewarmToken) {
+      return buildJsonErrorResponse(command.id, 403, "电脑未启用 Relay 预热授权。");
+    }
+    headers.set("x-deskrelay-relay-prewarm", options.localPrewarmToken);
+  }
   headers.set("x-real-ip", command.request.clientAddress);
   headers.set("x-forwarded-proto", command.request.forwardedProto);
   headers.set("x-deskrelay-relay", "1");
@@ -351,6 +361,9 @@ export function startDeskRelayRelayClient(
         if (!commandResponse) {
           commandResponse = await executeRelayCommand(command, {
             localBaseUrl,
+            ...(options.localPrewarmToken
+              ? { localPrewarmToken: options.localPrewarmToken }
+              : {}),
             fetchImpl,
           });
           if (command.request.method !== "GET") {

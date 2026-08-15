@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+import os from "node:os";
+import path from "node:path";
+
 import {
   startDeskRelayRelayServer,
 } from "./relay-server.ts";
@@ -10,6 +13,7 @@ export type RelayServerCliOptions = {
   deviceId: string;
   deviceToken: string;
   allowNonLoopback: boolean;
+  taskLinkStateFile: string;
 };
 
 function readOption(args: string[], name: string): string | undefined {
@@ -70,7 +74,17 @@ export function parseRelayServerCliOptions(
   if (!deviceToken) {
     throw new Error("缺少 DESKRELAY_RELAY_DEVICE_TOKEN，Relay 无法启动。");
   }
-  return { host, port, deviceId, deviceToken, allowNonLoopback };
+  const dataDir = env.DESKRELAY_DATA_DIR?.trim() || path.join(os.homedir(), ".deskrelay");
+  const taskLinkStateFile = env.DESKRELAY_RELAY_TASK_LINK_STATE_FILE?.trim() ||
+    path.join(dataDir, "relay-task-links.json");
+  return {
+    host,
+    port,
+    deviceId,
+    deviceToken,
+    allowNonLoopback,
+    taskLinkStateFile,
+  };
 }
 
 export async function main(
@@ -85,6 +99,7 @@ export async function main(
     port: options.port,
     deviceId: options.deviceId,
     deviceToken: options.deviceToken,
+    taskLinkStateFile: options.taskLinkStateFile,
     logger: (message) => process.stderr.write(`[DeskRelay Relay] ${message}\n`),
   });
   process.stdout.write(

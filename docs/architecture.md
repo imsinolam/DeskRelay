@@ -12,7 +12,7 @@ flowchart TB
 
     ClawBot["微信 ClawBot"] <--> Runtime
     LanWeb["局域网网页"] <--> Runtime
-    PublicWeb["公网网页"] <--> Relay["DeskRelay Relay Server"]
+    PublicWeb["公网网页"] <--> Relay["DeskRelay Relay Server\nHTTPS 请求队列 · 有界内存预热缓存"]
     Relay <--> Runtime
 ```
 
@@ -63,6 +63,8 @@ ClawBot 是轻量远程控制与通知入口。Mac 主动长轮询微信服务�
 ```
 
 服务器不反向连接 Mac，不扫描局域网，也不提供任意 URL/TCP/HTTP 转发。Relay 只理解 DeskRelay 协议中的页面请求、消息、状态、审批和附件。
+
+电脑连接 Relay 后，会主动用设备级只读授权刷新终端状态、全局任务看板、当前终端任务列表和最近任务的消息尾页。Relay 只在有界内存中保存最近一次验证过的响应，使浏览器打开前数据已经准备好；浏览器仍需通过移动端登录会话才能读取，写操作仍必须交给在线电脑。这个预热过程不会创建新的 Agent owner，不会自动打开尚未连接的 Agent，也不能发送消息、审批、停止或新建任务。真实任务、完整上下文和执行权限始终只由电脑端 Agent 持有。
 
 ## 同一任务保证
 

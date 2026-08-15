@@ -8,13 +8,17 @@ describe("DeskRelay relay server CLI", () => {
   test("defaults to a loopback listener without putting the device token in process arguments", () => {
     expect(parseRelayServerCliOptions(
       ["--host", "127.0.0.1", "--port", "14396", "--device-id", "example-device"],
-      { DESKRELAY_RELAY_DEVICE_TOKEN: "server-secret" },
+      {
+        DESKRELAY_RELAY_DEVICE_TOKEN: "server-secret",
+        DESKRELAY_DATA_DIR: "/tmp/deskrelay-test",
+      },
     )).toEqual({
       host: "127.0.0.1",
       port: 14396,
       deviceId: "example-device",
       deviceToken: "server-secret",
       allowNonLoopback: false,
+      taskLinkStateFile: "/tmp/deskrelay-test/relay-task-links.json",
     });
   });
 

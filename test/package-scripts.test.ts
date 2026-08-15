@@ -29,4 +29,20 @@ describe("package quality scripts", () => {
       "bin/deskrelay-bridge-deepseek.mjs",
     );
   });
+
+  test("gives the hardened relay service a writable private task-link state directory", () => {
+    const service = fs.readFileSync(
+      path.resolve(import.meta.dir, "..", "deploy/systemd/deskrelay-relay.service.example"),
+      "utf8",
+    );
+    const environment = fs.readFileSync(
+      path.resolve(import.meta.dir, "..", "deploy/systemd/deskrelay-relay.env.example"),
+      "utf8",
+    );
+    expect(service).toContain("StateDirectory=deskrelay");
+    expect(service).toContain("StateDirectoryMode=0700");
+    expect(environment).toContain(
+      "DESKRELAY_RELAY_TASK_LINK_STATE_FILE=/var/lib/deskrelay/relay-task-links.json",
+    );
+  });
 });

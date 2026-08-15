@@ -146,6 +146,60 @@ describe("mobile cache freshness", () => {
       await server.close();
     }
   });
+
+  test("allows only device-authenticated read-only Relay prewarming", async () => {
+    const authStore = createAuthStore("relay prewarm password");
+    const server = await startCodexMobileServer({
+      host: "127.0.0.1",
+      port: 0,
+      lanAddress: "127.0.0.1",
+      accessToken: "mobile-secret",
+      relayPrewarmToken: "relay-prewarm-secret",
+      authStore,
+      listTasks: async () => [{
+        threadId: "thread-1",
+        title: "预热任务",
+        status: "idle",
+      }],
+      readMessages: async (threadId) => ({
+        threadId,
+        messages: [{ role: "assistant", text: "预热详情" }],
+        queuedMessages: [],
+      }),
+      sendMessage: async () => ({ queued: false }),
+    });
+
+    try {
+      const root = `http://127.0.0.1:${server.port}`;
+      const prewarmHeaders = {
+        "x-deskrelay-relay": "1",
+        "x-deskrelay-relay-prewarm": "relay-prewarm-secret",
+      };
+      expect((await fetch(`${root}/api/tasks`, { headers: prewarmHeaders })).status).toBe(200);
+      expect((await fetch(`${root}/api/tasks/thread-1/messages`, {
+        headers: prewarmHeaders,
+      })).status).toBe(200);
+      expect((await fetch(`${root}/api/tasks`, {
+        headers: {
+          ...prewarmHeaders,
+          "x-deskrelay-relay-prewarm": "wrong-secret",
+        },
+      })).status).toBe(401);
+      expect((await fetch(`${root}/api/tasks/thread-1/messages?before=older`, {
+        headers: prewarmHeaders,
+      })).status).toBe(401);
+      expect((await fetch(`${root}/api/tasks/thread-1/messages?limit=41`, {
+        headers: prewarmHeaders,
+      })).status).toBe(401);
+      expect((await fetch(`${root}/api/tasks/thread-1/messages`, {
+        method: "POST",
+        headers: { ...prewarmHeaders, "content-type": "application/json" },
+        body: JSON.stringify({ text: "不能通过预热写入", images: [] }),
+      })).status).toBe(401);
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 describe("mobile task short links", () => {
@@ -171,6 +225,37 @@ describe("mobile task short links", () => {
       threadId: "session/中文-42",
     });
     expect(decodeCodexMobileTaskShortCode("invalid")).toBeNull();
+  });
+
+  test("allows the public relay to replace reversible links with registered aliases", async () => {
+    const server = await startCodexMobileServer({
+      host: "127.0.0.1",
+      port: 0,
+      lanAddress: "127.0.0.1",
+      publicBaseUrl: "https://deskrelay.example",
+      accessToken: "access-token",
+      authStore: {
+        isConfigured: () => true,
+      } as never,
+      buildPublicTaskUrl: (threadId, adapter, searchParams) =>
+        `https://deskrelay.example/Ab3dE7kPq2${searchParams.size > 0 ? `?${searchParams}` : ""}`,
+      listTasks: async () => [],
+      readMessages: async () => ({
+        messages: [],
+        hasMore: false,
+        nextBefore: null,
+        total: 0,
+      }),
+      sendMessage: async () => ({ accepted: true }),
+    });
+    try {
+      expect(server.buildTaskUrl(
+        "0000000a-0000-7000-8000-00000000000a",
+        "workbuddy",
+      )).toBe("https://deskrelay.example/Ab3dE7kPq2");
+    } finally {
+      await server.close();
+    }
   });
 });
 

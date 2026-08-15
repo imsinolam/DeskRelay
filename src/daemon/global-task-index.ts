@@ -254,14 +254,12 @@ export function formatGlobalTaskList(params: {
   const showAdapterLabels = shouldShowGlobalTaskAdapterLabels(page.candidates);
   return [
     "全部终端最近任务",
-    "────────",
     ...page.candidates.map((candidate, index) => {
       const adapterLabel = showAdapterLabels
         ? `[${getBridgeProvider(candidate.adapter).label}] `
         : "";
       return `${page.startIndex + index + 1}. ${adapterLabel}${candidate.title}${runtimeMarker(candidate)}`;
     }),
-    "────────",
     ...actions,
     "序号在再次发送“任务”前保持不变。",
   ].join("\n");
@@ -275,7 +273,6 @@ export function formatGlobalTaskSearchResults(params: {
   const showAdapterLabels = shouldShowGlobalTaskAdapterLabels(params.matches);
   return [
     `匹配任务：${params.target}`,
-    "────────",
     ...params.matches.map((candidate) => {
       const number = params.snapshot.numberByIdentity.get(
         globalTaskIdentityKey(candidate.adapter, candidate.sessionId),
@@ -285,7 +282,6 @@ export function formatGlobalTaskSearchResults(params: {
         : "";
       return `${number ?? "?"}. ${adapterLabel}${candidate.title}${runtimeMarker(candidate)}`;
     }),
-    "────────",
     "回复序号进入任务，或补充关键词缩小范围。",
   ].join("\n");
 }

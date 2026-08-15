@@ -209,6 +209,7 @@ import {
   startDeskRelayRelayClient,
   type DeskRelayRelayClientHandle,
 } from "../relay/relay-client.ts";
+import { DeskRelayRelayTaskLinkClient } from "../relay/relay-task-links.ts";
 import {
   activateGlobalTaskCandidate,
   buildGlobalTaskSnapshot,
@@ -2396,6 +2397,7 @@ class DeskRelayDaemon {
   private pendingRestartNotice: string | null = null;
   private codexMobileServer: CodexMobileServerHandle | null = null;
   private deskRelayRelayClient: DeskRelayRelayClientHandle | null = null;
+  private deskRelayRelayTaskLinks: DeskRelayRelayTaskLinkClient | null = null;
   private codexTaskMonitorTimer: ReturnType<typeof setTimeout> | null = null;
   private codexTaskMonitorRunning = false;
   private readonly codexTaskObservations = new BoundedTtlMap<string, CodexTaskObservation>({
@@ -2565,10 +2567,28 @@ class DeskRelayDaemon {
       const authStore = new CodexMobileAuthStore({
         stateFile: path.join(workspaceDir, "codex-mobile-auth.json"),
       });
+      const relayTaskLinks = relayConfig
+        ? new DeskRelayRelayTaskLinkClient({
+            relayUrl: relayConfig.relayUrl,
+            deviceId: relayConfig.deviceId,
+            deviceToken: relayConfig.deviceToken,
+          })
+        : null;
+      this.deskRelayRelayTaskLinks = relayTaskLinks;
       this.codexMobileServer = await startCodexMobileServer({
         port,
         publicBaseUrl,
         accessToken,
+        ...(relayConfig ? { relayPrewarmToken: accessToken } : {}),
+        ...(relayTaskLinks
+          ? {
+              buildPublicTaskUrl: (
+                threadId: string,
+                adapter: string,
+                searchParams: URLSearchParams,
+              ) => relayTaskLinks.buildTaskUrl(threadId, adapter, searchParams),
+            }
+          : {}),
         authStore,
         listAdapters: () => Promise.resolve(this.listMobileAdapters()),
         switchAdapter: (adapter) => this.switchMobileAdapter(adapter),
@@ -2602,6 +2622,7 @@ class DeskRelayDaemon {
           deviceId: relayConfig.deviceId,
           deviceToken: relayConfig.deviceToken,
           localBaseUrl: `http://127.0.0.1:${this.codexMobileServer.port}`,
+          localPrewarmToken: accessToken,
           journalFile: path.join(workspaceDir, "relay-command-journal.json"),
           logger: (message) => appendDaemonLog(
             `relay_client: ${truncatePreview(message, 400)}`,
@@ -2625,6 +2646,11 @@ class DeskRelayDaemon {
         log(`DeskRelay public relay is connecting to ${relayConfig.relayUrl}`);
       }
     } catch (error) {
+      if (this.deskRelayRelayTaskLinks) {
+        const taskLinks = this.deskRelayRelayTaskLinks;
+        this.deskRelayRelayTaskLinks = null;
+        void taskLinks.close();
+      }
       appendDaemonLog(
         `codex_mobile_start_error: error=${truncatePreview(error instanceof Error ? error.message : String(error), 400)}`,
       );
@@ -2812,6 +2838,15 @@ class DeskRelayDaemon {
       this.deskRelayRelayClient = null;
       try {
         await relayClient.close();
+      } catch {
+        // Best effort shutdown.
+      }
+    }
+    if (this.deskRelayRelayTaskLinks) {
+      const taskLinks = this.deskRelayRelayTaskLinks;
+      this.deskRelayRelayTaskLinks = null;
+      try {
+        await taskLinks.close();
       } catch {
         // Best effort shutdown.
       }
@@ -3989,7 +4024,6 @@ class DeskRelayDaemon {
             ? formatCodexWechatHelp()
             : [
                 `${formatDaemonAdapterLabel(activeSlot.adapter)} 微信使用`,
-                "────────",
                 "查看任务：发送“任务”",
                 "进入任务：回复序号",
                 "指定任务发送：发送“数字：内容”（如：6：继续处理）",
@@ -3998,7 +4032,6 @@ class DeskRelayDaemon {
                 "继续对话：直接发送消息",
                 "查看状态：发送“状态”",
                 "停止任务：发送“停止”",
-                "────────",
                 "任务运行较久时，可打开消息中的网页版链接查看进展。",
               ].join("\n"),
         );
