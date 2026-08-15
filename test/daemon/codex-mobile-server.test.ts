@@ -12,6 +12,7 @@ import {
 import { DaemonWorkspaceStateStore } from "../../src/daemon/daemon-state.ts";
 import {
   CODEX_MOBILE_ASSET_VERSION,
+  createCodexMobileTranscriptRevision,
   decodeCodexMobileTaskShortCode,
   encodeCodexMobileTaskShortCode,
   MobileAdapterUnavailableError,
@@ -20,6 +21,132 @@ import {
   resolvePreferredLanAddress,
   startCodexMobileServer,
 } from "../../src/daemon/codex-mobile-server.ts";
+
+describe("mobile cache freshness", () => {
+  test("builds a stable lightweight revision and changes it for visible updates", () => {
+    const transcript = {
+      threadId: "thread-1",
+      messages: [
+        { role: "user" as const, text: "请检查缓存" },
+        { role: "assistant" as const, text: "正在检查", turnId: "turn-1" },
+      ],
+      progressItems: [
+        {
+          id: "progress-1",
+          turnId: "turn-1",
+          kind: "command" as const,
+          status: "running" as const,
+          text: "读取最新状态",
+        },
+      ],
+      queuedMessages: [],
+      runSummary: {
+        turnId: "turn-1",
+        status: "running" as const,
+        startedAtMs: 1_786_796_400_000,
+      },
+      pendingApproval: null,
+      approvalResults: [],
+    };
+
+    const revision = createCodexMobileTranscriptRevision(transcript);
+    expect(revision).toHaveLength(16);
+    expect(createCodexMobileTranscriptRevision(structuredClone(transcript))).toBe(revision);
+    expect(createCodexMobileTranscriptRevision({
+      ...transcript,
+      runSummary: { ...transcript.runSummary, durationMs: 9_999 },
+    })).toBe(revision);
+    expect(createCodexMobileTranscriptRevision({
+      ...transcript,
+      messages: transcript.messages.concat({
+        role: "assistant",
+        text: "已完成同步",
+        turnId: "turn-1",
+      }),
+    })).not.toBe(revision);
+    expect(createCodexMobileTranscriptRevision({
+      ...transcript,
+      progressItems: transcript.progressItems.map((item) => ({
+        ...item,
+        status: "completed" as const,
+      })),
+    })).not.toBe(revision);
+  });
+
+  test("validates cached content with a tiny revision request before loading messages", () => {
+    expect(CODEX_MOBILE_HTML).toContain('id="cache-sync-indicator"');
+    expect(CODEX_MOBILE_CSS).toContain(".cache-sync-indicator");
+    expect(CODEX_MOBILE_JS).toContain("async function refreshMessagesIfChanged");
+    expect(CODEX_MOBILE_JS).toContain('"/sync-state?known="');
+    expect(CODEX_MOBILE_JS).toContain('setCacheSyncState("checking")');
+    expect(CODEX_MOBILE_JS).toContain('setCacheSyncState("updating")');
+    expect(CODEX_MOBILE_JS).toContain('setCacheSyncState("current")');
+    expect(CODEX_MOBILE_JS).toContain("if (!payload.changed)");
+    expect(CODEX_MOBILE_JS).toContain("var refreshed = await loadMessages(forceBottom, false, false);");
+    expect(CODEX_MOBILE_JS).toContain('if (!refreshed) setCacheSyncState("idle");');
+    expect(CODEX_MOBILE_JS).toContain("var resumedCachedPreview = state.cachePreviewMode;");
+    expect(CODEX_MOBILE_JS).toContain(
+      "var shouldValidateCachedContent = Boolean(resumedCachedPreview || restoredCache);",
+    );
+  });
+
+  test("returns unchanged from the lightweight endpoint when the cached revision matches", async () => {
+    const authStore = createAuthStore("cache freshness password");
+    const sessionCookie = `codex_mobile_session=${authStore.createSessionToken()}`;
+    let answer = "缓存内容";
+    const reads: Array<{ limit?: number; lightweight?: boolean }> = [];
+    const server = await startCodexMobileServer({
+      host: "127.0.0.1",
+      port: 0,
+      lanAddress: "127.0.0.1",
+      accessToken: "mobile-secret",
+      authStore,
+      listTasks: async () => [],
+      readMessages: async (threadId, options) => {
+        reads.push({ limit: options?.limit, lightweight: options?.lightweight });
+        return {
+          threadId,
+          messages: [{ role: "assistant", text: answer, turnId: "turn-1" }],
+          queuedMessages: [],
+          progressItems: [],
+          runSummary: { turnId: "turn-1", status: "completed" },
+        };
+      },
+      sendMessage: async () => ({ queued: false }),
+    });
+
+    try {
+      const root = `http://127.0.0.1:${server.port}`;
+      const headers = { cookie: sessionCookie };
+      const fullResponse = await fetch(`${root}/api/tasks/thread-1/messages`, { headers });
+      const full = await fullResponse.json() as { revision: string };
+      const currentResponse = await fetch(
+        `${root}/api/tasks/thread-1/sync-state?known=${full.revision}`,
+        { headers },
+      );
+      expect(await currentResponse.json()).toEqual({
+        threadId: "thread-1",
+        revision: full.revision,
+        changed: false,
+      });
+      expect(reads.at(-1)).toEqual({ limit: 1, lightweight: true });
+
+      answer = "电脑端已有新内容";
+      const changedResponse = await fetch(
+        `${root}/api/tasks/thread-1/sync-state?known=${full.revision}`,
+        { headers },
+      );
+      const changed = await changedResponse.json() as {
+        revision: string;
+        changed: boolean;
+      };
+      expect(changed.changed).toBe(true);
+      expect(changed.revision).not.toBe(full.revision);
+    } finally {
+      await server.close();
+    }
+  });
+});
 
 describe("mobile task short links", () => {
   test("round-trips UUID and opaque session ids without cross-adapter collisions", () => {

@@ -311,6 +311,69 @@ export type CodexMobileTranscript = {
   approvalResults?: CodexMobileApprovalResult[];
 };
 
+export function createCodexMobileTranscriptRevision(
+  transcript: Pick<
+    CodexMobileTranscript,
+    | "threadId"
+    | "messages"
+    | "progressItems"
+    | "queuedMessages"
+    | "runSummary"
+    | "pendingApproval"
+    | "approvalResults"
+  >,
+): string {
+  const latestMessage = transcript.messages.at(-1);
+  const runSummary = transcript.runSummary;
+  const payload = {
+    threadId: transcript.threadId,
+    latestMessage: latestMessage
+      ? {
+          id: latestMessage.id ?? "",
+          role: latestMessage.role,
+          text: latestMessage.text,
+          turnId: latestMessage.turnId ?? "",
+          phase: latestMessage.phase ?? "",
+          createdAtMs: latestMessage.createdAtMs ?? 0,
+          model: latestMessage.model ?? "",
+          images: (latestMessage.images ?? []).map((image) => image.source === "local"
+            ? [image.source, image.path, image.alt ?? ""]
+            : [image.source, image.url, image.alt ?? ""]),
+        }
+      : null,
+    progressItems: (transcript.progressItems ?? []).map((item) => ({
+      id: item.id,
+      turnId: item.turnId ?? "",
+      kind: item.kind,
+      status: item.status,
+      text: item.text,
+      createdAtMs: item.createdAtMs ?? 0,
+    })),
+    queuedMessages: transcript.queuedMessages.map((message) => ({
+      id: message.id,
+      text: message.text,
+      imageCount: message.imageCount,
+      createdAtMs: message.createdAtMs ?? 0,
+    })),
+    runSummary: runSummary
+      ? {
+          turnId: runSummary.turnId ?? "",
+          status: runSummary.status,
+          startedAtMs: runSummary.startedAtMs ?? 0,
+          completedAtMs: runSummary.completedAtMs ?? 0,
+          durationMs: runSummary.status === "running" ? 0 : runSummary.durationMs ?? 0,
+          errorMessage: runSummary.errorMessage ?? "",
+        }
+      : null,
+    pendingApproval: transcript.pendingApproval ?? null,
+    approvalResults: transcript.approvalResults ?? [],
+  };
+  return crypto.createHash("sha256")
+    .update(JSON.stringify(payload))
+    .digest("hex")
+    .slice(0, 16);
+}
+
 export type CodexMobileMessagePage = {
   messages: BridgeSessionMessage[];
   start: number;
@@ -1467,6 +1530,31 @@ function createRequestHandler(
       }
 
       const messageRoute = url.pathname.match(/^\/api\/tasks\/([^/]+)\/messages$/);
+      const syncStateRoute = url.pathname.match(/^\/api\/tasks\/([^/]+)\/sync-state$/);
+      if (method === "GET" && syncStateRoute?.[1]) {
+        const requestedThreadId = decodeURIComponent(syncStateRoute[1]).trim();
+        if (!requestedThreadId) {
+          throw new HttpError(400, "任务 ID 不能为空。");
+        }
+        const threadId = /^[0-9a-f]{8}$/i.test(requestedThreadId)
+          ? resolveTaskBySelector(
+              await options.listTasks(requestedAdapter),
+              requestedThreadId,
+            ).threadId
+          : requestedThreadId;
+        const transcript = await options.readMessages(threadId, {
+          limit: 1,
+          lightweight: true,
+        }, requestedAdapter);
+        const revision = createCodexMobileTranscriptRevision(transcript);
+        const known = url.searchParams.get("known")?.trim() ?? "";
+        sendJson(response, 200, {
+          threadId: transcript.threadId,
+          revision,
+          changed: !known || known !== revision,
+        });
+        return;
+      }
       if (messageRoute?.[1]) {
         const requestedThreadId = decodeURIComponent(messageRoute[1]).trim();
         if (!requestedThreadId) {
@@ -1489,6 +1577,7 @@ function createRequestHandler(
             ...(historyOnly ? { historyOnly: true } : {}),
             lightweight: true,
           }, requestedAdapter);
+          const revision = createCodexMobileTranscriptRevision(transcript);
           const fallbackPage = transcript.messagePage
             ? null
             : paginateCodexMobileMessages(transcript.messages, {
@@ -1517,6 +1606,7 @@ function createRequestHandler(
             runSummary: transcript.runSummary ?? null,
             pendingApproval: transcript.pendingApproval ?? null,
             approvalResults: transcript.approvalResults ?? [],
+            revision,
           });
           return;
         }
