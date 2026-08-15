@@ -2,9 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { createCipheriv } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
+import http from "node:http";
 import path from "node:path";
 
 import {
+  apiFetch,
   assertWechatApiResponseOk,
   assertMediaUploadSizeAllowed,
   buildCdnDownloadUrl,
@@ -74,6 +76,37 @@ describe("wechat upload limits", () => {
         WECHAT_MAX_INBOUND_FILE_MB: "12",
       } as NodeJS.ProcessEnv),
     ).toBe(12 * 1024 * 1024);
+  });
+
+  test("keeps the request timeout active while reading a stalled response body", async () => {
+    const server = http.createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.flushHeaders();
+      setTimeout(() => response.end(JSON.stringify({ ret: 0, msgs: [] })), 200);
+    });
+    const port = await new Promise<number>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        if (!address || typeof address === "string") reject(new Error("missing address"));
+        else resolve(address.port);
+      });
+    });
+
+    try {
+      const startedAt = Date.now();
+      await expect(apiFetch({
+        baseUrl: `http://127.0.0.1:${port}`,
+        endpoint: "ilink/bot/getupdates",
+        body: "{}",
+        token: "test-token",
+        timeoutMs: 30,
+      })).rejects.toMatchObject({ name: "AbortError" });
+      expect(Date.now() - startedAt).toBeLessThan(150);
+    } finally {
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   test("classifies transient fetch failures as retryable network errors", () => {

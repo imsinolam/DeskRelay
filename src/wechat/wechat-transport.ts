@@ -595,7 +595,7 @@ function buildHeaders(token?: string, body?: string): Record<string, string> {
   return headers;
 }
 
-async function apiFetch(params: {
+export async function apiFetch(params: {
   baseUrl: string;
   endpoint: string;
   body: string;
@@ -614,17 +614,14 @@ async function apiFetch(params: {
       body: params.body,
       signal: controller.signal,
     });
-    clearTimeout(timer);
-
     const text = await res.text();
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}: ${text}`);
     }
 
     return text;
-  } catch (err) {
+  } finally {
     clearTimeout(timer);
-    throw err;
   }
 }
 
@@ -896,7 +893,6 @@ async function downloadBufferFromCdn(params: {
         method: "GET",
         signal: controller.signal,
       });
-      clearTimeout(timer);
 
       if (res.status >= 400 && res.status < 500) {
         const errMsg = res.headers.get("x-error-message") ?? (await res.text());
@@ -916,7 +912,6 @@ async function downloadBufferFromCdn(params: {
 
       return Buffer.from(await res.arrayBuffer());
     } catch (err) {
-      clearTimeout(timer);
       lastError = err;
       if (err instanceof Error && err.message.includes("client error")) {
         throw err;
@@ -925,6 +920,8 @@ async function downloadBufferFromCdn(params: {
         break;
       }
       params.onRetry?.(attempt);
+    } finally {
+      clearTimeout(timer);
     }
   }
 

@@ -1662,7 +1662,6 @@ export function formatResumeSessionList(params: {
     }
     return [
       "最近任务",
-      "────────",
       ...candidates.map((candidate, index) => {
         const isCurrent = Boolean(
           currentSessionId && candidate.sessionId === currentSessionId,
@@ -1675,7 +1674,6 @@ export function formatResumeSessionList(params: {
         const projectLabel = formatCodexTaskProjectLabel(candidate);
         return `${resolvedStartIndex + index + 1}. ${projectLabel}${candidate.title}${markers}`;
       }),
-      "────────",
       ...actions,
       "切换任务不会中断后台运行。",
       "序号在再次发送“任务”前保持不变。",
@@ -1698,13 +1696,11 @@ export function formatResumeSessionList(params: {
   }
   return [
     title,
-    "────────",
     ...candidates.map((candidate, index) => {
       const marker =
         currentSessionId && candidate.sessionId === currentSessionId ? " [当前]" : "";
       return `${resolvedStartIndex + index + 1}. ${candidate.title}${marker}`;
     }),
-    "────────",
     ...actions,
     "序号在再次发送“任务”前保持不变。",
   ].join("\n");
@@ -1722,7 +1718,6 @@ export function formatResumeSessionSearchResults(params: {
   const remaining = Math.max(0, params.matches.length - visibleMatches.length);
   return [
     `匹配任务：${params.target}`,
-    "────────",
     ...visibleMatches.map((match) => {
       const isCurrent = Boolean(
         params.currentSessionId && match.candidate.sessionId === params.currentSessionId,
@@ -1735,7 +1730,6 @@ export function formatResumeSessionSearchResults(params: {
       const projectLabel = formatCodexTaskProjectLabel(match.candidate);
       return `${match.index + 1}. ${projectLabel}${match.candidate.title}${markers}`;
     }),
-    "────────",
     "回复序号或发送“任务2”进入",
     ...(remaining > 0 ? [`还有 ${remaining} 条，请补充关键词缩小范围。`] : []),
   ].join("\n");
@@ -1744,7 +1738,6 @@ export function formatResumeSessionSearchResults(params: {
 export function formatCodexWechatHelp(): string {
   return [
     "Codex 微信使用",
-    "────────",
     "查看任务：发送“任务”",
     "进入任务：发送“任务：2”",
     "指定任务发送：发送“数字：内容”（如：6：继续处理）",
@@ -1755,7 +1748,6 @@ export function formatCodexWechatHelp(): string {
     "停止任务：发送“停止”",
     "完整回答：发送“全文”",
     "翻页：发送“下一页”、“下一页20”或“上一页”",
-    "────────",
     "任务运行较久时，可打开消息中的网页版链接查看实时进展。",
   ].join("\n");
 }

@@ -37,6 +37,7 @@ describe("global task index", () => {
       "claude:claude-1",
     ]);
     const output = formatGlobalTaskList({ snapshot, startIndex: 0, pageSize: 10 });
+    expect(output).not.toContain("────────");
     expect(output).toContain("1. [Codex] Codex 最新任务");
     expect(output).toContain("2. [WorkBuddy] WorkBuddy 中间任务");
     expect(output).toContain("3. [Claude Code] Claude 较旧任务");
@@ -87,6 +88,7 @@ describe("global task index", () => {
     const output = formatGlobalTaskList({ snapshot, startIndex: 0, pageSize: 10 });
     expect(output).toContain("1. [Codex] Codex 任务");
     expect(output).toContain("2. [Claude Code] Claude 任务");
+    expect(output).not.toContain("────────");
   });
 
   test("recomputes terminal-label visibility after crossing a page boundary", () => {

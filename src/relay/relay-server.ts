@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import http, {
   type IncomingMessage,
   type Server,
@@ -30,6 +31,10 @@ import {
   type DeskRelayRelayCommandResponse,
   type DeskRelayRelayHeaderMap,
 } from "./relay-protocol.ts";
+import {
+  DESKRELAY_RELAY_TASK_LINK_REGISTER_PATH,
+  DeskRelayRelayTaskLinkStore,
+} from "./relay-task-links.ts";
 
 const ASSET_VERSION_PLACEHOLDER = "__DESK_RELAY_ASSET_VERSION__";
 const MOBILE_HTML = CODEX_MOBILE_HTML.replaceAll(
@@ -49,6 +54,16 @@ const DEFAULT_POLL_TIMEOUT_MS = 25_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 90_000;
 const DEFAULT_COMMAND_LEASE_MS = 35_000;
 const DEFAULT_DEVICE_OFFLINE_MS = 45_000;
+const DEFAULT_WARM_REFRESH_INTERVAL_MS = 8_000;
+const DEFAULT_WARM_CACHE_FRESH_MS = 5_000;
+const DEFAULT_WARM_CACHE_TTL_MS = 30 * 60_000;
+const DEFAULT_WARM_FAILURE_RETRY_MS = 60_000;
+const MAX_WARM_SESSIONS = 4;
+const MAX_WARM_PATHS_PER_SESSION = 24;
+const MAX_WARM_PENDING_COMMANDS = 4;
+const MAX_WARM_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_WARM_SESSION_BYTES = 12 * 1024 * 1024;
+const GLOBAL_WARM_SESSION_KEY = "__device_warm_cache__";
 const MAX_PENDING_COMMANDS = 64;
 
 export type StartDeskRelayRelayServerOptions = {
@@ -60,6 +75,10 @@ export type StartDeskRelayRelayServerOptions = {
   commandTimeoutMs?: number;
   commandLeaseMs?: number;
   deviceOfflineMs?: number;
+  warmRefreshIntervalMs?: number;
+  warmCacheFreshMs?: number;
+  warmCacheTtlMs?: number;
+  taskLinkStateFile?: string;
   now?: () => number;
   logger?: (message: string) => void;
 };
@@ -83,6 +102,24 @@ type WaitingPoll = {
   request: IncomingMessage;
   response: ServerResponse;
   timer: ReturnType<typeof setTimeout>;
+};
+
+type WarmCacheEntry = {
+  response: DeskRelayRelayCommandResponse;
+  updatedAtMs: number;
+  sizeBytes: number;
+};
+
+type WarmSession = {
+  key: string;
+  cookieHeader: string;
+  expiresAtMs: number;
+  activeAdapter: string;
+  paths: string[];
+  entries: Map<string, WarmCacheEntry>;
+  refreshing: Set<string>;
+  refreshCursor: number;
+  touchedAtMs: number;
 };
 
 class RelayHttpError extends Error {
@@ -217,6 +254,67 @@ function forwardedRequestHeaders(request: IncomingMessage): Record<string, strin
   return headers;
 }
 
+function readCookieValue(cookieHeader: string | undefined, name: string): string {
+  if (!cookieHeader) return "";
+  for (const part of cookieHeader.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator < 0 || part.slice(0, separator).trim() !== name) continue;
+    try {
+      return decodeURIComponent(part.slice(separator + 1).trim());
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+function sessionTokenExpiryMs(token: string, fallbackMs: number): number {
+  const parts = token.split(".");
+  const parsed = parts[0] === "v1" ? Number(parts[1]) : Number.NaN;
+  return Number.isSafeInteger(parsed) && parsed > Date.now() ? parsed : fallbackMs;
+}
+
+function warmSessionKey(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function isWarmCacheablePath(method: string, url: URL): boolean {
+  if (method !== "GET") return false;
+  const pathname = url.pathname;
+  if (pathname === "/api/auth/status" || pathname === "/api/adapters" ||
+      pathname === "/api/task-board" || pathname === "/api/tasks") return true;
+  if (/^\/api\/tasks\/[^/]+\/model$/.test(pathname)) return true;
+  if (/^\/api\/tasks\/[^/]+\/messages$/.test(pathname)) {
+    return !url.searchParams.has("before");
+  }
+  return false;
+}
+
+function responseJson(response: DeskRelayRelayCommandResponse): unknown {
+  if (!response.bodyBase64) return null;
+  try {
+    return JSON.parse(Buffer.from(response.bodyBase64, "base64").toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function cachedRelayResponse(
+  response: DeskRelayRelayCommandResponse,
+): DeskRelayRelayCommandResponse {
+  const headers: DeskRelayRelayHeaderMap = {};
+  for (const [name, value] of Object.entries(response.headers)) {
+    if (["set-cookie", "content-length", "transfer-encoding", "date"].includes(name.toLowerCase())) {
+      continue;
+    }
+    headers[name] = value;
+  }
+  return {
+    ...response,
+    headers,
+  };
+}
+
 function isRelayCommandResponse(value: unknown): value is DeskRelayRelayCommandResponse {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return false;
@@ -250,6 +348,7 @@ function validateDeviceRequest(
 function writeForwardedResponse(
   response: ServerResponse,
   commandResponse: DeskRelayRelayCommandResponse,
+  extraHeaders: DeskRelayRelayHeaderMap = {},
 ): void {
   let body: Buffer;
   try {
@@ -268,6 +367,7 @@ function writeForwardedResponse(
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
     ...commandResponse.headers,
+    ...extraHeaders,
   });
   response.end(body);
 }
@@ -288,11 +388,32 @@ export async function startDeskRelayRelayServer(
   const commandTimeoutMs = options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
   const commandLeaseMs = options.commandLeaseMs ?? DEFAULT_COMMAND_LEASE_MS;
   const deviceOfflineMs = options.deviceOfflineMs ?? DEFAULT_DEVICE_OFFLINE_MS;
+  const warmRefreshIntervalMs = Math.max(
+    10,
+    options.warmRefreshIntervalMs ?? DEFAULT_WARM_REFRESH_INTERVAL_MS,
+  );
+  const warmCacheFreshMs = Math.max(
+    0,
+    options.warmCacheFreshMs ?? DEFAULT_WARM_CACHE_FRESH_MS,
+  );
+  const warmCacheTtlMs = Math.max(
+    warmCacheFreshMs,
+    options.warmCacheTtlMs ?? DEFAULT_WARM_CACHE_TTL_MS,
+  );
   const logger = options.logger ?? (() => undefined);
+  const taskLinks = new DeskRelayRelayTaskLinkStore({
+    deviceToken,
+    ...(options.taskLinkStateFile
+      ? { stateFile: options.taskLinkStateFile }
+      : {}),
+  });
   const pendingCommands = new Map<string, PendingCommand>();
   const commandOrder: string[] = [];
+  const warmSessions = new Map<string, WarmSession>();
+  const warmSessionOrder: string[] = [];
   let waitingPoll: WaitingPoll | null = null;
   let lastDeviceSeenAtMs = 0;
+  let globalWarmRetryAtMs = 0;
 
   const cleanCommandOrder = () => {
     while (commandOrder.length > 0 && !pendingCommands.has(commandOrder[0] ?? "")) {
@@ -344,21 +465,20 @@ export async function startDeskRelayRelayServer(
     clearTimeout(activePoll.timer);
   };
 
-  const enqueueBrowserRequest = async (
-    request: IncomingMessage,
-    url: URL,
-  ): Promise<DeskRelayRelayCommandResponse> => {
+  const enqueueRelayRequest = async (input: {
+    method: DeskRelayRelayCommand["request"]["method"];
+    path: string;
+    headers: Record<string, string>;
+    body?: Buffer;
+    clientAddress: string;
+    forwardedProto: "http" | "https";
+  }): Promise<DeskRelayRelayCommandResponse> => {
     if (pendingCommands.size >= MAX_PENDING_COMMANDS) {
       throw new RelayHttpError(503, "待处理请求过多，请稍后重试。");
     }
     if (!lastDeviceSeenAtMs || now() - lastDeviceSeenAtMs > deviceOfflineMs) {
       throw new RelayHttpError(503, "电脑当前离线，请确认 DeskRelay 正在运行。");
     }
-    const method = request.method ?? "GET";
-    if (!isDeskRelayRelayApiRequest(method, url.pathname)) {
-      throw new RelayHttpError(404, "页面不存在。");
-    }
-    const body = await readBody(request, DESKRELAY_RELAY_REQUEST_BODY_LIMIT);
     const commandId = createDeskRelayRelayCommandId();
     const createdAtMs = now();
     const command: DeskRelayRelayCommand = {
@@ -368,12 +488,12 @@ export async function startDeskRelayRelayServer(
       createdAtMs,
       expiresAtMs: createdAtMs + commandTimeoutMs,
       request: {
-        method,
-        path: `${url.pathname}${url.search}`,
-        headers: forwardedRequestHeaders(request),
-        ...(body.length > 0 ? { bodyBase64: body.toString("base64") } : {}),
-        clientAddress: requestClientAddress(request),
-        forwardedProto: requestForwardedProto(request),
+        method: input.method,
+        path: input.path,
+        headers: input.headers,
+        ...(input.body?.length ? { bodyBase64: input.body.toString("base64") } : {}),
+        clientAddress: input.clientAddress,
+        forwardedProto: input.forwardedProto,
       },
     };
 
@@ -398,6 +518,315 @@ export async function startDeskRelayRelayServer(
     dispatchWaitingPoll();
     return await responsePromise;
   };
+
+  const enqueueBrowserRequest = async (
+    request: IncomingMessage,
+    url: URL,
+  ): Promise<DeskRelayRelayCommandResponse> => {
+    const method = request.method ?? "GET";
+    if (!isDeskRelayRelayApiRequest(method, url.pathname)) {
+      throw new RelayHttpError(404, "页面不存在。");
+    }
+    const body = await readBody(request, DESKRELAY_RELAY_REQUEST_BODY_LIMIT);
+    return await enqueueRelayRequest({
+      method,
+      path: `${url.pathname}${url.search}`,
+      headers: forwardedRequestHeaders(request),
+      ...(body.length ? { body } : {}),
+      clientAddress: requestClientAddress(request),
+      forwardedProto: requestForwardedProto(request),
+    });
+  };
+
+  const deleteWarmSession = (key: string) => {
+    warmSessions.delete(key);
+    const index = warmSessionOrder.indexOf(key);
+    if (index >= 0) warmSessionOrder.splice(index, 1);
+  };
+
+  const touchWarmSession = (session: WarmSession) => {
+    session.touchedAtMs = now();
+    if (session.key === GLOBAL_WARM_SESSION_KEY) return;
+    const index = warmSessionOrder.indexOf(session.key);
+    if (index >= 0) warmSessionOrder.splice(index, 1);
+    warmSessionOrder.push(session.key);
+    while (warmSessionOrder.length > MAX_WARM_SESSIONS) {
+      const removed = warmSessionOrder.shift();
+      if (removed) warmSessions.delete(removed);
+    }
+  };
+
+  const addWarmPath = (session: WarmSession, path: string) => {
+    let url: URL;
+    try {
+      url = new URL(path, "http://deskrelay-relay.local");
+    } catch {
+      return;
+    }
+    if (!isWarmCacheablePath("GET", url)) return;
+    const normalized = `${url.pathname}${url.search}`;
+    const existing = session.paths.indexOf(normalized);
+    if (existing >= 0) return;
+    session.paths.push(normalized);
+    while (session.paths.length > MAX_WARM_PATHS_PER_SESSION) {
+      const removed = session.paths.shift();
+      if (removed) session.entries.delete(removed);
+    }
+  };
+
+  const ensureWarmSession = (token: string): WarmSession => {
+    const key = warmSessionKey(token);
+    const existing = warmSessions.get(key);
+    if (existing) {
+      existing.cookieHeader = `codex_mobile_session=${encodeURIComponent(token)}`;
+      existing.expiresAtMs = sessionTokenExpiryMs(token, now() + warmCacheTtlMs);
+      touchWarmSession(existing);
+      return existing;
+    }
+    const session: WarmSession = {
+      key,
+      cookieHeader: `codex_mobile_session=${encodeURIComponent(token)}`,
+      expiresAtMs: sessionTokenExpiryMs(token, now() + warmCacheTtlMs),
+      activeAdapter: "",
+      paths: [],
+      entries: new Map(),
+      refreshing: new Set(),
+      refreshCursor: 0,
+      touchedAtMs: now(),
+    };
+    for (const path of [
+      "/api/auth/status",
+      "/api/adapters",
+      "/api/task-board",
+      "/api/tasks",
+    ]) addWarmPath(session, path);
+    warmSessions.set(key, session);
+    touchWarmSession(session);
+    return session;
+  };
+
+  const globalWarmSession: WarmSession = {
+    key: GLOBAL_WARM_SESSION_KEY,
+    cookieHeader: "",
+    expiresAtMs: Number.MAX_SAFE_INTEGER,
+    activeAdapter: "",
+    paths: [],
+    entries: new Map(),
+    refreshing: new Set(),
+    refreshCursor: 0,
+    touchedAtMs: now(),
+  };
+  for (const path of ["/api/adapters", "/api/task-board", "/api/tasks"]) {
+    addWarmPath(globalWarmSession, path);
+  }
+
+  const warmSessionFromRequest = (request: IncomingMessage): WarmSession | null => {
+    const token = readCookieValue(request.headers.cookie, "codex_mobile_session");
+    if (!token) return null;
+    const key = warmSessionKey(token);
+    const session = warmSessions.get(key) ?? null;
+    if (!session) return null;
+    if (session.expiresAtMs <= now() || now() - session.touchedAtMs > warmCacheTtlMs) {
+      deleteWarmSession(key);
+      return null;
+    }
+    if (session.key === GLOBAL_WARM_SESSION_KEY) session.touchedAtMs = now();
+    else touchWarmSession(session);
+    return session;
+  };
+
+  const learnWarmPaths = (
+    session: WarmSession,
+    path: string,
+    response: DeskRelayRelayCommandResponse,
+  ) => {
+    const payload = responseJson(response);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
+    const record = payload as Record<string, unknown>;
+    const url = new URL(path, "http://deskrelay-relay.local");
+    if (url.pathname === "/api/adapters" && typeof record.activeAdapter === "string") {
+      session.activeAdapter = record.activeAdapter;
+      addWarmPath(
+        session,
+        `/api/tasks?adapter=${encodeURIComponent(record.activeAdapter)}`,
+      );
+    }
+    const isTaskList = url.pathname === "/api/tasks";
+    const isTaskBoard = url.pathname === "/api/task-board";
+    if ((!isTaskList && !isTaskBoard) || !Array.isArray(record.tasks)) return;
+    const fallbackAdapter = url.searchParams.get("adapter")?.trim() || session.activeAdapter;
+    for (const task of record.tasks.slice(0, 5)) {
+      if (!task || typeof task !== "object" || Array.isArray(task)) continue;
+      const taskRecord = task as Record<string, unknown>;
+      const threadId = taskRecord.threadId;
+      const adapter = isTaskBoard && typeof taskRecord.adapter === "string"
+        ? taskRecord.adapter.trim()
+        : fallbackAdapter;
+      if (typeof threadId !== "string" || !threadId || !adapter) continue;
+      addWarmPath(session, `/api/tasks?adapter=${encodeURIComponent(adapter)}`);
+      const base = `/api/tasks/${encodeURIComponent(threadId)}/messages`;
+      addWarmPath(
+        session,
+        `${base}?limit=40&history=1&adapter=${encodeURIComponent(adapter)}`,
+      );
+      addWarmPath(
+        session,
+        `${base}?limit=5&adapter=${encodeURIComponent(adapter)}`,
+      );
+    }
+  };
+
+  const storeWarmResponse = (
+    session: WarmSession,
+    path: string,
+    response: DeskRelayRelayCommandResponse,
+  ) => {
+    if (response.statusCode < 200 || response.statusCode >= 300) return;
+    const sizeBytes = response.bodyBase64
+      ? Buffer.byteLength(response.bodyBase64, "base64")
+      : 0;
+    if (sizeBytes > MAX_WARM_RESPONSE_BYTES) return;
+    addWarmPath(session, path);
+    session.entries.set(path, {
+      response: cachedRelayResponse(response),
+      updatedAtMs: now(),
+      sizeBytes,
+    });
+    let totalBytes = [...session.entries.values()].reduce(
+      (total, entry) => total + entry.sizeBytes,
+      0,
+    );
+    while (totalBytes > MAX_WARM_SESSION_BYTES && session.entries.size > 1) {
+      const oldest = [...session.entries.entries()].sort(
+        (left, right) => left[1].updatedAtMs - right[1].updatedAtMs,
+      )[0];
+      if (!oldest) break;
+      session.entries.delete(oldest[0]);
+      totalBytes -= oldest[1].sizeBytes;
+    }
+    learnWarmPaths(session, path, response);
+    touchWarmSession(session);
+  };
+
+  const responseAuthenticatesSession = (
+    path: string,
+    response: DeskRelayRelayCommandResponse,
+  ): boolean => {
+    if (response.statusCode < 200 || response.statusCode >= 300) return false;
+    const url = new URL(path, "http://deskrelay-relay.local");
+    if (url.pathname !== "/api/auth/status") {
+      return !url.pathname.startsWith("/api/auth/");
+    }
+    const payload = responseJson(response);
+    return Boolean(
+      payload && typeof payload === "object" && !Array.isArray(payload) &&
+      (payload as Record<string, unknown>).authenticated === true
+    );
+  };
+
+  const invalidateWarmResponses = () => {
+    globalWarmSession.entries.clear();
+    globalWarmSession.refreshCursor = 0;
+    for (const warmSession of warmSessions.values()) {
+      warmSession.entries.clear();
+      warmSession.refreshCursor = 0;
+    }
+  };
+
+  const recordBrowserResponse = (
+    request: IncomingMessage,
+    url: URL,
+    commandResponse: DeskRelayRelayCommandResponse,
+  ) => {
+    const path = `${url.pathname}${url.search}`;
+    const requestToken = readCookieValue(request.headers.cookie, "codex_mobile_session");
+    let session = requestToken ? warmSessions.get(warmSessionKey(requestToken)) : undefined;
+    if (requestToken && responseAuthenticatesSession(path, commandResponse)) {
+      session = ensureWarmSession(requestToken);
+    }
+    if (session && request.method === "GET" && isWarmCacheablePath("GET", url)) {
+      storeWarmResponse(session, path, commandResponse);
+    }
+    if (request.method !== "GET" && commandResponse.statusCode < 400) {
+      invalidateWarmResponses();
+    }
+  };
+
+  const refreshWarmPath = async (session: WarmSession, path: string) => {
+    if (
+      session.refreshing.has(path) ||
+      session.expiresAtMs <= now() ||
+      pendingCommands.size >= MAX_WARM_PENDING_COMMANDS ||
+      (session.key === GLOBAL_WARM_SESSION_KEY && now() < globalWarmRetryAtMs)
+    ) return;
+    session.refreshing.add(path);
+    try {
+      const response = await enqueueRelayRequest({
+        method: "GET",
+        path,
+        headers: session.key === GLOBAL_WARM_SESSION_KEY
+          ? { "x-deskrelay-prewarm": "1" }
+          : { cookie: session.cookieHeader },
+        clientAddress: "relay-cache",
+        forwardedProto: "https",
+      });
+      if (response.statusCode === 401 || response.statusCode === 403) {
+        if (session.key === GLOBAL_WARM_SESSION_KEY) {
+          session.entries.clear();
+          session.refreshCursor = 0;
+          session.touchedAtMs = now();
+          globalWarmRetryAtMs = now() + DEFAULT_WARM_FAILURE_RETRY_MS;
+        } else {
+          deleteWarmSession(session.key);
+        }
+        return;
+      }
+      const pathname = new URL(path, "http://deskrelay-relay.local").pathname;
+      if (pathname === "/api/auth/status" && !responseAuthenticatesSession(path, response)) {
+        deleteWarmSession(session.key);
+        return;
+      }
+      if (responseAuthenticatesSession(path, response) ||
+          !pathname.startsWith("/api/auth/")) {
+        if (session.key === GLOBAL_WARM_SESSION_KEY) globalWarmRetryAtMs = 0;
+        storeWarmResponse(session, path, response);
+      }
+    } catch {
+      // Warm refresh failures stay silent; the last verified snapshot remains usable.
+    } finally {
+      session.refreshing.delete(path);
+    }
+  };
+
+  const scheduleWarmRefresh = () => {
+    if (!lastDeviceSeenAtMs || now() - lastDeviceSeenAtMs > deviceOfflineMs) return;
+    for (const session of [globalWarmSession, ...warmSessions.values()]) {
+      if (
+        session.key !== GLOBAL_WARM_SESSION_KEY &&
+        (session.expiresAtMs <= now() || now() - session.touchedAtMs > warmCacheTtlMs)
+      ) {
+        deleteWarmSession(session.key);
+        continue;
+      }
+      if (
+        !session.paths.length ||
+        (session.key === GLOBAL_WARM_SESSION_KEY && now() < globalWarmRetryAtMs)
+      ) continue;
+      for (let offset = 0; offset < session.paths.length; offset += 1) {
+        const index = (session.refreshCursor + offset) % session.paths.length;
+        const path = session.paths[index];
+        if (!path || session.refreshing.has(path)) continue;
+        const entry = session.entries.get(path);
+        if (entry && now() - entry.updatedAtMs < warmCacheFreshMs) continue;
+        session.refreshCursor = (index + 1) % session.paths.length;
+        void refreshWarmPath(session, path);
+        break;
+      }
+    }
+  };
+
+  const warmRefreshTimer = setInterval(scheduleWarmRefresh, warmRefreshIntervalMs);
+  warmRefreshTimer.unref?.();
 
   const activeSockets = new Set<import("node:net").Socket>();
   const server: Server = http.createServer((request, response) => {
@@ -443,8 +872,48 @@ export async function startDeskRelayRelayServer(
         });
         return;
       }
+      const rootTaskAlias = method === "GET"
+        ? url.pathname.match(/^\/([A-Za-z0-9_-]{10})$/)?.[1]
+        : undefined;
+      if (rootTaskAlias) {
+        const registered = taskLinks.resolve(rootTaskAlias);
+        if (!registered) {
+          sendJson(response, 404, { error: "短链接不存在或已失效。" });
+          return;
+        }
+        const query = new URLSearchParams();
+        query.set("task", registered.threadId);
+        query.set("adapter", registered.adapter);
+        query.set("appv", CODEX_MOBILE_ASSET_VERSION);
+        for (const key of ["setup", "key"] as const) {
+          const value = url.searchParams.get(key)?.trim();
+          if (value) query.set(key, value);
+        }
+        response.writeHead(302, {
+          location: `/?${query}`,
+          "cache-control": "no-store",
+          "x-content-type-options": "nosniff",
+          "referrer-policy": "no-referrer",
+        });
+        response.end();
+        return;
+      }
       if (method === "GET" && url.pathname.startsWith("/t/")) {
-        const target = resolveCodexMobileTaskShortRedirect(url.pathname, url.searchParams);
+        const alias = url.pathname.match(/^\/t\/([A-Za-z0-9_-]{10})$/)?.[1];
+        const registered = alias ? taskLinks.resolve(alias) : null;
+        const target = registered
+          ? (() => {
+              const query = new URLSearchParams();
+              query.set("task", registered.threadId);
+              query.set("adapter", registered.adapter);
+              query.set("appv", CODEX_MOBILE_ASSET_VERSION);
+              for (const key of ["setup", "key"] as const) {
+                const value = url.searchParams.get(key)?.trim();
+                if (value) query.set(key, value);
+              }
+              return `/?${query}`;
+            })()
+          : resolveCodexMobileTaskShortRedirect(url.pathname, url.searchParams);
         if (!target) {
           sendJson(response, 404, { error: "短链接不存在或已失效。" });
           return;
@@ -456,6 +925,22 @@ export async function startDeskRelayRelayServer(
           "referrer-policy": "no-referrer",
         });
         response.end();
+        return;
+      }
+
+      if (method === "POST" && url.pathname === DESKRELAY_RELAY_TASK_LINK_REGISTER_PATH) {
+        validateDeviceRequest(request, deviceId, deviceToken);
+        const body = await readJson<{
+          alias?: string;
+          adapter?: string;
+          threadId?: string;
+        }>(request, 4_096);
+        taskLinks.register(body.alias ?? "", {
+          adapter: body.adapter ?? "",
+          threadId: body.threadId ?? "",
+        });
+        lastDeviceSeenAtMs = now();
+        sendJson(response, 200, { ok: true });
         return;
       }
 
@@ -490,6 +975,7 @@ export async function startDeskRelayRelayServer(
           clearTimeout(waitingPoll.timer);
           waitingPoll = null;
         });
+        scheduleWarmRefresh();
         return;
       }
 
@@ -517,10 +1003,26 @@ export async function startDeskRelayRelayServer(
 
       if (isDeskRelayRelayApiRequest(method, url.pathname)) {
         try {
-          writeForwardedResponse(
-            response,
-            await enqueueBrowserRequest(request, url),
-          );
+          const path = `${url.pathname}${url.search}`;
+          if (isWarmCacheablePath(method, url)) {
+            const warmSession = warmSessionFromRequest(request);
+            const entry = warmSession?.entries.get(path) ??
+              (warmSession ? globalWarmSession.entries.get(path) : undefined);
+            if (warmSession && entry && now() - entry.updatedAtMs <= warmCacheTtlMs) {
+              writeForwardedResponse(response, entry.response, {
+                "x-deskrelay-cache": "warm",
+                "x-deskrelay-cache-age": String(Math.max(0, now() - entry.updatedAtMs)),
+              });
+              if (
+                now() - entry.updatedAtMs >= warmCacheFreshMs &&
+                lastDeviceSeenAtMs && now() - lastDeviceSeenAtMs <= deviceOfflineMs
+              ) void refreshWarmPath(warmSession, path);
+              return;
+            }
+          }
+          const commandResponse = await enqueueBrowserRequest(request, url);
+          recordBrowserResponse(request, url, commandResponse);
+          writeForwardedResponse(response, commandResponse);
         } catch (error) {
           if (error instanceof RelayHttpError) {
             throw error;
@@ -570,6 +1072,7 @@ export async function startDeskRelayRelayServer(
     port,
     baseUrl: `http://${host}:${port}`,
     close: async () => {
+      clearInterval(warmRefreshTimer);
       if (waitingPoll) {
         clearTimeout(waitingPoll.timer);
         if (!waitingPoll.response.headersSent) {

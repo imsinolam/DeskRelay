@@ -110,6 +110,7 @@ DESKRELAY_RELAY_HOST=127.0.0.1
 DESKRELAY_RELAY_PORT=14396
 DESKRELAY_RELAY_DEVICE_ID=deskrelay-device
 DESKRELAY_RELAY_DEVICE_TOKEN=替换为随机设备密钥
+DESKRELAY_RELAY_TASK_LINK_STATE_FILE=/var/lib/deskrelay/relay-task-links.json
 ```
 
 设置权限：
@@ -149,6 +150,7 @@ sudo editor /etc/systemd/system/deskrelay-relay.service
 - `ExecStart` 等于 `command -v deskrelay-relay-server` 的输出；
 - `User` 与 `Group` 使用受限账号；
 - `EnvironmentFile` 指向 `/etc/deskrelay-relay.env`；
+- `StateDirectory=deskrelay`、`StateDirectoryMode=0700`，并让短链接映射写入 `/var/lib/deskrelay/relay-task-links.json`；
 - Relay 监听 `127.0.0.1`，不监听 `0.0.0.0`。
 
 Relay CLI 默认拒绝 `0.0.0.0`、`::`、局域网地址和其他非回环地址，避免误把内部 HTTP 端口直接暴露到公网。仅在特殊部署已经具备独立防火墙、TLS 和访问控制时，才可显式添加 `--allow-non-loopback`，或设置 `DESKRELAY_RELAY_ALLOW_NON_LOOPBACK=1`；启动时会输出醒目的危险警告。标准 Nginx/Caddy 部署不需要、也不应启用这个开关。
@@ -220,10 +222,12 @@ deskrelay --adapter codex
 
 - 本地移动服务继续运行，可用于局域网直连；
 - daemon 主动连接公网 Relay；
-- 完成通知自动使用 `/t/...` 短任务链接；同一短码同时包含终端和会话身份，内网与公网都不会退回完整 UUID 查询串；
+- 完成通知自动使用根路径短任务链接，例如 `https://relay.example.com/Ab3dE7kPq2`；Relay 私有保存终端和会话映射，旧 `/t/...` 链接继续兼容；
 - 公网页面 API 通过请求队列交给电脑处理；
+- 电脑连接 Relay 后会使用仅限 GET 的设备预热授权，提前刷新终端列表、全局任务看板、当前终端任务列表，以及最近 5 个任务的历史尾页和实时尾页；这个过程不依赖浏览器已经打开，也不能发送消息、审批、停止任务或调用其他写接口；
 - 非 GET 操作使用命令 ID 和本地 journal 去重，网络重试不会重复发送同一任务；
-- 已认证浏览器会先展示 24 小时内的任务列表、会话消息、看板和草稿缓存，再静默刷新；电脑暂时离线时仍可查看缓存，恢复连接后页面自动更新；
+- Relay 只在内存中保存有界的预热响应，并按已验证的浏览器登录会话隔离返回；浏览器进入前服务器已经完成预热时，任务列表和最近详情无需等待电脑再次读取；缓存命中后仍会在后台静默重验证，下一次轮询自动更新；
+- 已认证浏览器也会先展示 24 小时内的本地任务列表、会话消息、看板和草稿缓存，再静默刷新；电脑暂时离线时仍可查看浏览器缓存或服务器最近一次验证过的预热内容，恢复连接后页面自动更新；
 - 没有可用缓存时，电脑离线页面才显示“正在等待你的电脑主动连接服务器…”。
 
 ### 6. 完整验收
@@ -247,6 +251,8 @@ deskrelay --adapter codex
 6. **桌面端保持唯一 owner。** 不可用时明确报错，不自动启动隐藏 CLI/ACP 会话。
 7. **定期升级。** 同时更新服务器和电脑上的 DeskRelay，并在升级后重启进程。
 8. **发布前审计。** 运行 `npm run privacy:check`，公开仓库使用干净历史。
+9. **预热缓存不落盘且严格只读。** Relay 只缓存允许的任务 GET 响应，单条最多 2 MB、每个浏览器会话最多 12 MB、最多保留 4 个会话，并在 30 分钟未刷新后失效；Cookie 和任务正文不写入服务器文件。浏览器仍必须先拥有经过电脑验证的登录会话，不能因为缓存存在而绕过密码。
+10. **短链接映射使用私有状态文件。** 映射只保存短码、终端和任务 ID，不保存消息正文、Cookie 或审批内容；文件必须保持 `0600`，所在目录保持 `0700`，并由受限 Relay 服务账号持有。
 
 更多边界见 [安全策略](../SECURITY.md)。
 
@@ -266,7 +272,7 @@ deskrelay --adapter codex
 
 ### 公网页面能打开，但 API 超时
 
-静态页面由 Relay 提供，任务数据必须由在线电脑返回。检查：
+静态页面和最近一次验证过的预热数据可由 Relay 立即提供；首次登录、缓存未建立、缓存过期和所有写操作仍必须由在线电脑处理。检查：
 
 - 本机 `http://127.0.0.1:4396/health`；
 - Relay 长轮询是否被代理提前断开；

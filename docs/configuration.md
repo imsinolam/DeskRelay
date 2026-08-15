@@ -49,8 +49,9 @@ Relay 地址必须是 HTTPS 基础地址，不能包含账号密码、查询参�
 | `DESKRELAY_RELAY_ALLOW_NON_LOOPBACK` | 未设置 | 危险开关；仅在明确完成防火墙、TLS 和访问控制后允许 Relay 监听非回环地址 |
 | `DESKRELAY_RELAY_DEVICE_ID` | `default` | 允许连接的设备 ID |
 | `DESKRELAY_RELAY_DEVICE_TOKEN` | 无 | 设备密钥；缺失时拒绝启动 |
+| `DESKRELAY_RELAY_TASK_LINK_STATE_FILE` | `~/.deskrelay/relay-task-links.json` | 短任务链接映射文件；systemd 部署建议设为 `/var/lib/deskrelay/relay-task-links.json` |
 
-服务器和电脑必须配置相同的设备 ID 与设备密钥。服务器环境文件建议使用 `0600` 权限，由 systemd 读取；外部访问由 Nginx/Caddy 提供 HTTPS。
+服务器和电脑必须配置相同的设备 ID 与设备密钥。服务器环境文件和短链接映射文件建议使用 `0600` 权限，由 systemd 读取；外部访问由 Nginx/Caddy 提供 HTTPS。
 
 ## Agent 环境继承
 

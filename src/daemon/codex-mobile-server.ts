@@ -416,7 +416,13 @@ export type StartCodexMobileServerOptions = {
   maxPortAttempts?: number;
   lanAddress?: string;
   publicBaseUrl?: string;
+  buildPublicTaskUrl?: (
+    threadId: string,
+    adapter: string,
+    searchParams: URLSearchParams,
+  ) => string;
   accessToken: string;
+  relayPrewarmToken?: string;
   authStore?: CodexMobileAuthStore;
   resolveDesktopPublicAddress?: () => Promise<string | null>;
   listAdapters?: () => Promise<CodexMobileAdapterList>;
@@ -479,6 +485,35 @@ export type StartCodexMobileServerOptions = {
   ) => Promise<boolean>;
   stopTask?: (threadId: string, adapter?: string) => Promise<boolean>;
 };
+
+function relayPrewarmSearchIsAllowed(url: URL, allowed: Set<string>): boolean {
+  return [...url.searchParams.keys()].every((key) => allowed.has(key));
+}
+
+function isRelayPrewarmRead(method: string, url: URL): boolean {
+  if (method !== "GET") return false;
+  const pathname = url.pathname;
+  if (pathname === "/api/adapters" || pathname === "/api/task-board") {
+    return relayPrewarmSearchIsAllowed(url, new Set());
+  }
+  if (pathname === "/api/tasks") {
+    return relayPrewarmSearchIsAllowed(url, new Set(["adapter"]));
+  }
+  if (/^\/api\/tasks\/[^/]+\/model$/.test(pathname)) {
+    return relayPrewarmSearchIsAllowed(url, new Set(["adapter"]));
+  }
+  if (!/^\/api\/tasks\/[^/]+\/messages$/.test(pathname)) return false;
+  if (!relayPrewarmSearchIsAllowed(url, new Set(["adapter", "limit", "history"]))) {
+    return false;
+  }
+  const limitValue = url.searchParams.get("limit");
+  if (limitValue !== null) {
+    const limit = Number(limitValue);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 40) return false;
+  }
+  const history = url.searchParams.get("history");
+  return history === null || history === "1";
+}
 
 export type CodexMobileServerHandle = {
   port: number;
@@ -1241,6 +1276,14 @@ function createRequestHandler(
         const sessionToken = readCookie(request, MOBILE_SESSION_COOKIE);
         const authenticated = authStore.verifySessionToken(sessionToken) ||
           verifyLanSession(request, sessionToken);
+        const relayPrewarmHeader = request.headers["x-deskrelay-relay-prewarm"];
+        const relayPrewarmAuthorized = Boolean(
+          options.relayPrewarmToken &&
+          request.headers["x-deskrelay-relay"] === "1" &&
+          typeof relayPrewarmHeader === "string" &&
+          timingSafeTokenEqual(relayPrewarmHeader, options.relayPrewarmToken) &&
+          isRelayPrewarmRead(method, url)
+        );
 
         if (url.pathname === "/api/auth/status" && method === "GET") {
           sendJson(response, 200, {
@@ -1316,7 +1359,7 @@ function createRequestHandler(
         if (!authStore.isConfigured()) {
           throw new HttpError(428, "请先设置移动版访问密码。");
         }
-        if (!authenticated) {
+        if (!authenticated && !relayPrewarmAuthorized) {
           throw new HttpError(401, "请先输入访问密码。");
         }
       } else if (!timingSafeTokenEqual(
@@ -1842,13 +1885,21 @@ export async function startCodexMobileServer(
       const selector = threadId.trim();
       const baseUrl = publicBaseUrl ?? `http://${lanAddress}:${port}`;
       const shortCode = encodeCodexMobileTaskShortCode(adapter ?? "codex", selector);
+      const searchParams = new URLSearchParams();
       if (!options.authStore) {
-        return `${baseUrl}/t/${shortCode}?key=${encodeURIComponent(options.accessToken)}`;
+        searchParams.set("key", options.accessToken);
+      } else if (!options.authStore.isConfigured()) {
+        searchParams.set("setup", options.accessToken);
       }
-      const setupQuery = options.authStore.isConfigured()
-        ? ""
-        : `?setup=${encodeURIComponent(options.accessToken)}`;
-      return `${baseUrl}/t/${shortCode}${setupQuery}`;
+      if (publicBaseUrl && options.buildPublicTaskUrl) {
+        return options.buildPublicTaskUrl(
+          selector,
+          adapter ?? "codex",
+          searchParams,
+        );
+      }
+      const query = searchParams.toString();
+      return `${baseUrl}/t/${shortCode}${query ? `?${query}` : ""}`;
     },
     close: async () => {
       await new Promise<void>((resolve) => {

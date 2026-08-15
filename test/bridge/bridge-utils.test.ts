@@ -1623,7 +1623,8 @@ describe("formatResumeSessionList for Codex desktop tasks", () => {
       currentWorkerStatus: "awaiting_approval",
     });
 
-    expect(output).toContain("最近任务\n────────");
+    expect(output).toContain("最近任务\n1.");
+    expect(output).not.toContain("────────");
     expect(output).toContain("[design-system]");
     expect(output).not.toContain("[generated-task]");
     expect(output).not.toContain("aaaaaaaa");
