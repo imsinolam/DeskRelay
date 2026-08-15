@@ -98,6 +98,7 @@ export type WorkspaceEndpointAdapter =
   | "codebuddy"
   | "reasonix"
   | "workbuddy"
+  | "deepseek"
   | "opencode"
   | "shell";
 

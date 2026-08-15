@@ -15,10 +15,10 @@ const DEFAULT_FAILURE_COOLDOWN_MS = 5_000;
 const MAX_RUNTIME_FILE_BYTES = 16 * 1024;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
-export const OPENAGENTLOG_HISTORY_SOURCE_BY_ADAPTER: Record<
+export const OPENAGENTLOG_HISTORY_SOURCE_BY_ADAPTER: Partial<Record<
   DaemonAdapterKind,
   string
-> = {
+>> = {
   codex: "codex",
   claude: "claude",
   tclaude: "tclaude",

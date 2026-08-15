@@ -506,11 +506,13 @@ describe("deskrelay-daemon helpers", () => {
       "/Users/test/.hermes/node/lib/node_modules/@vendor/tclaude/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
       "grok",
       "reasonix acp",
+      "node /Users/test/.workbuddy/node/bin/dsh web",
       "opencode serve",
     ].join("\n"), { codexDesktopOpen: true });
 
     expect([...open].sort()).toEqual([
       "codex",
+      "deepseek",
       "grok",
       "opencode",
       "reasonix",
@@ -1117,6 +1119,7 @@ describe("deskrelay-daemon helpers", () => {
   test("replaces Codex final output with one named linked completion notice", () => {
     expect(shouldForwardDaemonFinalReply("codex")).toBe(false);
     expect(shouldForwardDaemonFinalReply("claude")).toBe(true);
+    expect(shouldForwardDaemonFinalReply("deepseek")).toBe(true);
     expect(formatCompactTaskDuration(547_000)).toBe("9m 7s");
     expect(
       formatCodexTaskCompletionMessage({
@@ -1227,6 +1230,59 @@ describe("deskrelay-daemon helpers", () => {
         phase: "final_answer",
       },
     })).toBe(true);
+    expect(shouldSendCodexCompletionNotification({
+      runSummary: {
+        turnId: "turn_unphased",
+        status: "completed",
+        completedAtMs: 21_000,
+        durationMs: 4_000,
+      },
+      latestMessage: {
+        role: "assistant",
+        text: "这是缺少 phase 的真实最终回答",
+        turnId: "turn_unphased",
+      },
+    })).toBe(true);
+    expect(shouldSendCodexCompletionNotification({
+      runSummary: {
+        turnId: "turn_new",
+        status: "completed",
+        completedAtMs: 22_000,
+        durationMs: 4_000,
+      },
+      latestMessage: {
+        role: "assistant",
+        text: "旧轮次回答",
+        turnId: "turn_old",
+      },
+    })).toBe(false);
+    expect(shouldSendCodexCompletionNotification({
+      runSummary: {
+        turnId: "turn_commentary",
+        status: "completed",
+        completedAtMs: 23_000,
+        durationMs: 4_000,
+      },
+      latestMessage: {
+        role: "assistant",
+        text: "处理中",
+        turnId: "turn_commentary",
+        phase: "commentary",
+      },
+    })).toBe(false);
+    expect(shouldSendCodexCompletionNotification({
+      runSummary: {
+        turnId: "turn_thinking_only",
+        status: "completed",
+        completedAtMs: 24_000,
+        durationMs: 4_000,
+      },
+      latestMessage: {
+        role: "assistant",
+        text: "<thinking>仅内部思考</thinking>",
+        turnId: "turn_thinking_only",
+      },
+    })).toBe(false);
     expect(shouldSendCodexCompletionNotification({
       eventTurnId: "turn_failed",
       runSummary: null,
@@ -1801,6 +1857,8 @@ describe("deskrelay-daemon helpers", () => {
     expect(parseDaemonSwitchCommand("/codebuddy")).toBe("codebuddy");
     expect(parseDaemonSwitchCommand("/reasonix")).toBe("reasonix");
     expect(parseDaemonSwitchCommand("/reasonix code")).toBe("reasonix");
+    expect(parseDaemonSwitchCommand("/deepseek")).toBe("deepseek");
+    expect(parseDaemonSwitchCommand("/dsh")).toBe("deepseek");
     expect(parseDaemonSwitchCommand("/workbuddy")).toBe("workbuddy");
     expect(parseDaemonSwitchCommand("/opencode")).toBe("opencode");
     expect(parseDaemonSwitchCommand("/grok cli")).toBe("grok");
@@ -1894,8 +1952,10 @@ describe("deskrelay-daemon helpers", () => {
     }
   });
 
-  test("defaultDaemonSessionStartMode starts Claude and OpenCode fresh", () => {
+  test("defaultDaemonSessionStartMode restores desktop owners and starts CLI owners fresh", () => {
     expect(defaultDaemonSessionStartMode("codex")).toBe("restore");
+    expect(defaultDaemonSessionStartMode("workbuddy")).toBe("restore");
+    expect(defaultDaemonSessionStartMode("deepseek")).toBe("restore");
     expect(defaultDaemonSessionStartMode("claude")).toBe("new");
     expect(defaultDaemonSessionStartMode("tclaude")).toBe("new");
     expect(defaultDaemonSessionStartMode("grok")).toBe("new");
@@ -2027,7 +2087,7 @@ describe("deskrelay-daemon helpers", () => {
     });
 
     expect(output).toBe(
-      "当前：Codex\nCodex：空闲\nClaude Code：待审批\nTClaude：未启动\nGrok CLI：未启动\nCodeBuddy：未启动\nreasonix：未启动\nWorkBuddy：未启动\nOpenCode：未启动",
+      "当前：Codex\nCodex：空闲\nClaude Code：待审批\nTClaude：未启动\nGrok CLI：未启动\nCodeBuddy：未启动\nreasonix：未启动\nWorkBuddy：未启动\nDeepSeek Harness：未启动\nOpenCode：未启动",
     );
     expect(output).not.toMatch(/cwd|started_at|pid|D:\/work/);
   });

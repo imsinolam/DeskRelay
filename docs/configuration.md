@@ -30,6 +30,7 @@ DeskRelay 通过进程环境变量配置。仓库中的 `.env.example` 只是参
 | `DESKRELAY_STRICT_APPROVAL` | 未设置 | 设为 `1` 后，低风险审批也全部交给远程端确认 |
 | `DESKRELAY_THINKING_FORWARD` | 未设置 | 设为 `1` 时转发可用的思考进度摘要 |
 | `DESKRELAY_REASONIX_OPEN_WEB` | 未设置 | 设为 `0` 时不自动打开 reasonix 官方 Web UI |
+| `DESKRELAY_DEEPSEEK_HARNESS_URL` | `http://127.0.0.1:3080` | 已运行的 DeepSeek Harness Host API；只接受本机回环地址 |
 | `DESKRELAY_SKIP_NODE_CHECK` | 未设置 | 设为 `1` 跳过 Node.js 版本检查，自担风险 |
 | `WECHAT_ILINK_BASE_URL` | 内置服务地址 | 覆盖微信 iLink API 地址 |
 | `WECHAT_MAX_IMAGE_MB` | `20` | 微信出站图片大小限制 |

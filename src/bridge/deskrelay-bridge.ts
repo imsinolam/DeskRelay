@@ -494,7 +494,7 @@ export function parseCliArgs(argv: string[]): BridgeCliOptions {
   }
 
   if (!adapter) {
-    throw new Error("Missing required --adapter <codex|claude|tclaude|grok|codebuddy|reasonix|workbuddy|opencode|shell>");
+    throw new Error("Missing required --adapter <codex|claude|tclaude|grok|codebuddy|reasonix|workbuddy|deepseek|opencode|shell>");
   }
 
   const defaultCommand = resolveDefaultAdapterCommand(adapter);
@@ -511,7 +511,7 @@ export function parseCliArgs(argv: string[]): BridgeCliOptions {
 function printUsageAndExit(): never {
   process.stdout.write(
     [
-      "Usage: deskrelay-bridge --adapter <codex|claude|tclaude|grok|codebuddy|reasonix|workbuddy|opencode|shell> [--cmd <executable>] [--cwd <path>] [--profile <name-or-path>] [--lifecycle <persistent|companion_bound>] [--session-start-mode <restore|new>]",
+      "Usage: deskrelay-bridge --adapter <codex|claude|tclaude|grok|codebuddy|reasonix|workbuddy|deepseek|opencode|shell> [--cmd <executable>] [--cwd <path>] [--profile <name-or-path>] [--lifecycle <persistent|companion_bound>] [--session-start-mode <restore|new>]",
       "",
       "Examples:",
       "  deskrelay-bridge-codex",
@@ -521,6 +521,7 @@ function printUsageAndExit(): never {
       "  deskrelay-bridge-codebuddy --cwd ~/work/my-project",
       "  deskrelay-bridge-reasonix --cwd ~/work/my-project",
       "  deskrelay-bridge-workbuddy --cwd ~/work/my-project",
+      "  deskrelay-bridge-deepseek --cwd ~/work/my-project",
       "  deskrelay-bridge-shell --cmd pwsh   # headless shell executor for non-interactive commands/scripts",
       "  deskrelay-bridge-shell --cmd bash   # headless shell executor for non-interactive commands/scripts",
       "  deskrelay-bridge-codex --lifecycle companion_bound",
@@ -530,6 +531,7 @@ function printUsageAndExit(): never {
       "  bun run bridge:codebuddy         # repo-local development entrypoint",
       "  bun run bridge:reasonix          # repo-local development entrypoint",
       "  bun run bridge:workbuddy         # repo-local development entrypoint",
+      "  bun run bridge:deepseek          # repo-local development entrypoint",
       "",
     ].join("\n"),
   );

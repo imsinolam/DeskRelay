@@ -3,6 +3,7 @@ import { ClaudeCompanionAdapter } from "./bridge-adapters.claude.ts";
 import { CodeBuddyAcpAdapter } from "./bridge-adapters.codebuddy.ts";
 import { LocalCompanionProxyAdapter } from "./bridge-adapters.core.ts";
 import { CodexPtyAdapter } from "./bridge-adapters.codex.ts";
+import { DeepSeekHarnessAdapter } from "./bridge-adapters.deepseek.ts";
 import {
   GrokAcpAdapter,
   readGrokStoredSessionMessages,
@@ -47,6 +48,8 @@ export function createBridgeAdapter(options: AdapterOptions): BridgeAdapter {
         : new LocalCompanionProxyAdapter(options);
     case "workbuddy":
       return new WorkBuddyDesktopAdapter(options);
+    case "deepseek":
+      return new DeepSeekHarnessAdapter(options);
     case "shell":
       return new ShellAdapter(options);
     default:

@@ -64,6 +64,7 @@ deskrelay --adapter codex
 | Grok CLI | 是，同一个 Grok leader 会话 | 是，DeskRelay 打开的 Grok 终端实时同步 | 电脑 TUI 和远程入口连接同一个共享 leader |
 | CodeBuddy | 是，同一 CodeBuddy `--serve` 任务 | 是，DeskRelay 打开的 CodeBuddy 界面实时同步 | 可见界面与 HTTP ACP 共用一个 `--serve` owner，不启动独立 `--acp` |
 | reasonix | 是，直接恢复原 transcript | 是，官方 reasonix Web UI 与远程入口实时同步 | 使用 `serve -resume` 打开原文件，不复制或转换历史 |
+| DeepSeek Harness | 是，同一 Harness session | 是，当前 `dsh web` 页面实时同步 | 连接本机 Harness Host API，不启动第二个 headless Harness；内部 reasoning 不发送到网页或微信 |
 
 Shell 只是可选的命令执行适配器，不是有任务历史的 Agent，因此不列入会话支持范围。
 

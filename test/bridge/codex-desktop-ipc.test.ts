@@ -104,7 +104,7 @@ describe("Codex desktop IPC framing and state", () => {
     expect(state.values).toEqual(["a", "c"]);
   });
 
-  test("keeps only approval monitoring fields for summary subscriptions", () => {
+  test("keeps approval and model fields for summary subscriptions", () => {
     const requests = [{
       id: 2,
       method: "mcpServer/elicitation/request",
@@ -115,6 +115,10 @@ describe("Codex desktop IPC framing and state", () => {
       updatedAt: 123,
       threadRuntimeStatus: { type: "active", activeFlags: ["waitingOnApproval"] },
       requests,
+      modelProvider: "custom",
+      latestModel: "gpt-5.6-sol",
+      latestReasoningEffort: "high",
+      latestThreadSettings: { model: "gpt-5.6-sol", effort: "high" },
       turnHistory: {
         history: {
           entitiesByKey: {
@@ -127,6 +131,10 @@ describe("Codex desktop IPC framing and state", () => {
       updatedAt: 123,
       threadRuntimeStatus: { type: "active", activeFlags: ["waitingOnApproval"] },
       requests,
+      modelProvider: "custom",
+      latestModel: "gpt-5.6-sol",
+      latestReasoningEffort: "high",
+      latestThreadSettings: { model: "gpt-5.6-sol", effort: "high" },
     });
   });
 });
@@ -380,7 +388,7 @@ describe("Codex desktop IPC client", () => {
     const turn = await client.startTurn("thread-1", [
       { type: "text", text: "真实桌面消息" },
       { type: "localImage", path: "/tmp/mobile-image.png" },
-    ]);
+    ], { model: "gpt-5.6-terra" });
 
     expect(turn).toMatchObject({ id: "turn-1", status: "inProgress" });
     expect(
@@ -394,6 +402,7 @@ describe("Codex desktop IPC client", () => {
             { type: "text", text: "真实桌面消息" },
             { type: "localImage", path: "/tmp/mobile-image.png" },
           ],
+          model: "gpt-5.6-terra",
         },
       },
     });

@@ -1,6 +1,6 @@
 {
   "name": "deskrelay",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "Extend real desktop coding-agent sessions to WeChat, LAN web, and an optional public relay without forking context",
   "type": "module",
   "files": [
@@ -66,6 +66,7 @@
     "deskrelay-bridge-codebuddy": "bin/deskrelay-bridge-codebuddy.mjs",
     "deskrelay-bridge-reasonix": "bin/deskrelay-bridge-reasonix.mjs",
     "deskrelay-bridge-workbuddy": "bin/deskrelay-bridge-workbuddy.mjs",
+    "deskrelay-bridge-deepseek": "bin/deskrelay-bridge-deepseek.mjs",
     "deskrelay-bridge-opencode": "bin/deskrelay-bridge-opencode.mjs",
     "deskrelay-opencode": "bin/deskrelay-opencode.mjs",
     "deskrelay-opencode-start": "bin/deskrelay-opencode-start.mjs",
@@ -118,6 +119,7 @@
     "test:wechat": "bun test test/wechat",
     "test:watch": "bun test --watch test",
     "bridge:workbuddy": "node --no-warnings --experimental-strip-types src/bridge/deskrelay-bridge.ts --adapter workbuddy",
+    "bridge:deepseek": "node --no-warnings --experimental-strip-types src/bridge/deskrelay-bridge.ts --adapter deepseek",
     "privacy:check": "node scripts/check-public-safety.mjs",
     "privacy:check:history": "node scripts/check-public-safety.mjs --history",
     "public:snapshot": "node scripts/create-public-snapshot.mjs",

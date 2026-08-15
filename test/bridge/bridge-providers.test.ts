@@ -37,9 +37,21 @@ describe("bridge provider registry", () => {
     expect(isDaemonAdapterKind("codebuddy")).toBe(true);
     expect(isDaemonAdapterKind("reasonix")).toBe(true);
     expect(isBridgeAdapterKind("workbuddy")).toBe(true);
+    expect(isBridgeAdapterKind("deepseek")).toBe(true);
     expect(isDaemonAdapterKind("workbuddy")).toBe(true);
     expect(DAEMON_PROVIDER_IDS).toContain("workbuddy");
     expect(DAEMON_PROVIDER_IDS).toContain("reasonix");
+    expect(DAEMON_PROVIDER_IDS).toContain("deepseek");
+    expect(getBridgeProvider("deepseek")).toMatchObject({
+      label: "DeepSeek Harness",
+      command: "dsh",
+      transport: "harness_host",
+      sessionIntegration: {
+        owner: "desktop_owner",
+        continuity: "same_owner",
+        localVisibility: "live",
+      },
+    });
     expect(getBridgeProvider("reasonix")).toMatchObject({
       label: "reasonix",
       command: "reasonix",
@@ -51,6 +63,7 @@ describe("bridge provider registry", () => {
       },
     });
     expect(resolveDefaultAdapterCommand("reasonix")).toBe("reasonix");
+    expect(resolveDefaultAdapterCommand("deepseek")).toBe("dsh");
   });
 
   test("treats TClaude as an implemented Claude-compatible daemon provider", () => {

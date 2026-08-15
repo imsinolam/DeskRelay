@@ -48,6 +48,7 @@ bun install
 | reasonix companion | `npm run reasonix:companion` |
 | reasonix 单命令启动器 | `npm run reasonix:start` |
 | WorkBuddy bridge | `npm run bridge:workbuddy` |
+| DeepSeek Harness bridge | `npm run bridge:deepseek` |
 | 公网 Relay server | `npm run relay:server` |
 | Shell bridge | `npm run bridge:shell` |
 | 通用 bridge 入口 | `npm run bridge:bun -- --adapter codex` |
@@ -185,7 +186,8 @@ npm pack --dry-run --json
 | `src/daemon/codex-mobile-server.ts` | 多 Agent 移动网页 API、认证与任务操作 |
 | `src/relay/relay-server.ts` | 公网应用层 Relay server |
 | `src/relay/relay-client.ts` | 电脑主动连接 Relay 的长轮询 client |
-| `src/bridge/bridge-adapters.ts` | `codex` / `claude` / `grok` / `codebuddy` / `reasonix` / `workbuddy` / `opencode` / `shell` 适配器入口 |
+| `src/bridge/bridge-adapters.ts` | `codex` / `claude` / `grok` / `codebuddy` / `reasonix` / `workbuddy` / `deepseek` / `opencode` / `shell` 适配器入口 |
+| `src/bridge/bridge-adapters.deepseek.ts` | DeepSeek Harness Host API、同 session 消息、审批和完成通知 |
 | `src/bridge/bridge-adapters.opencode.ts` | OpenCode 适配器实现 |
 | `src/bridge/bridge-adapters.reasonix.ts` | reasonix 官方 serve owner、原 transcript 恢复与 SSE 事件实现 |
 | `src/companion/local-companion.ts` | Claude、TClaude、Grok、CodeBuddy、reasonix 与 OpenCode 的可见 companion 入口 |

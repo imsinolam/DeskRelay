@@ -11,6 +11,7 @@ import { BoundedTtlMap } from "../utils/bounded-ttl-cache.ts";
 
 import type {
   BridgeSessionMessage,
+  BridgeSessionModelState,
   BridgeSessionProgressItem,
   BridgeSessionRunSummary,
 } from "../bridge/bridge-types.ts";
@@ -240,6 +241,15 @@ export type StartCodexMobileServerOptions = {
     title: string,
     adapter?: string,
   ) => Promise<void>;
+  readTaskModel?: (
+    threadId: string,
+    adapter?: string,
+  ) => Promise<BridgeSessionModelState>;
+  setTaskModel?: (
+    threadId: string,
+    model: string,
+    adapter?: string,
+  ) => Promise<BridgeSessionModelState>;
   readMessages: (
     threadId: string,
     options?: {
@@ -1254,6 +1264,45 @@ function createRequestHandler(
           throw new HttpError(
             409,
             error instanceof Error ? error.message : "任务重命名失败。",
+          );
+        }
+        return;
+      }
+
+      const modelRoute = url.pathname.match(/^\/api\/tasks\/([^/]+)\/model$/);
+      if (modelRoute?.[1] && (method === "GET" || method === "PUT")) {
+        const tasks = await options.listTasks(requestedAdapter);
+        const task = resolveTaskBySelector(tasks, decodeURIComponent(modelRoute[1]));
+        if (method === "GET") {
+          if (!options.readTaskModel) {
+            throw new HttpError(409, "当前连接暂不支持读取模型。");
+          }
+          sendJson(
+            response,
+            200,
+            await options.readTaskModel(task.threadId, requestedAdapter),
+          );
+          return;
+        }
+        if (!options.setTaskModel) {
+          throw new HttpError(409, "当前连接暂不支持切换模型。");
+        }
+        const body = await readJsonBody(request, 4_096);
+        const model = typeof body.model === "string" ? body.model.trim() : "";
+        if (!model) throw new HttpError(400, "请选择一个模型。");
+        if (Array.from(model).length > 200) {
+          throw new HttpError(413, "模型名称过长。");
+        }
+        try {
+          sendJson(
+            response,
+            200,
+            await options.setTaskModel(task.threadId, model, requestedAdapter),
+          );
+        } catch (error) {
+          throw new HttpError(
+            409,
+            error instanceof Error ? error.message : "模型切换失败。",
           );
         }
         return;
