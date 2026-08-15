@@ -86,6 +86,10 @@ export const CODEX_MOBILE_HTML = `<!doctype html>
           <div class="topbar-meta" id="current-meta"></div>
         </div>
         <div class="topbar-actions">
+          <div class="cache-sync-indicator" id="cache-sync-indicator" role="status" aria-live="polite" hidden>
+            <span class="cache-sync-icon" aria-hidden="true"></span>
+            <span class="cache-sync-text"></span>
+          </div>
           <div class="status-label" id="current-status">未选择</div>
           <button class="new-task-button" id="new-task-button" type="button" aria-label="新建任务" title="新建任务">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
@@ -662,6 +666,12 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.75; stro
 .topbar-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; font-weight: 420; }
 .topbar-meta { display: none; }
 .topbar-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
+.cache-sync-indicator { min-height: 24px; display: inline-flex; align-items: center; gap: 5px; padding: 0 7px; border-radius: 999px; color: var(--muted); background: var(--surface); font-size: 11px; white-space: nowrap; }
+.cache-sync-indicator[hidden] { display: none; }
+.cache-sync-icon { width: 10px; height: 10px; flex: 0 0 auto; border: 1.4px solid var(--border-strong); border-top-color: var(--green); border-radius: 50%; animation: switch-spin .8s linear infinite; }
+.cache-sync-indicator.is-current .cache-sync-icon { border: 0; animation: none; }
+.cache-sync-indicator.is-current .cache-sync-icon::before { content: ""; display: block; width: 8px; height: 4px; margin: 1px 0 0 1px; border-left: 1.5px solid var(--green); border-bottom: 1.5px solid var(--green); transform: rotate(-45deg); }
+.cache-sync-indicator.is-updating { color: var(--muted-strong); }
 .status-label { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 8px; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .new-task-button { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 9px; background: transparent; color: var(--text); cursor: pointer; }
 .new-task-button:hover { background: var(--surface-hover); }
@@ -1135,6 +1145,8 @@ body.task-rename-open { overflow: hidden; }
   .topbar-title { max-width: 46vw; font-size: 11px; }
   .status-label { width: 28px; padding: 0; justify-content: center; font-size: 0; }
   .topbar-actions { gap: 1px; }
+  .cache-sync-indicator { min-width: 24px; padding: 0 6px; justify-content: center; }
+  .cache-sync-text { display: none; }
   .new-task-button { width: 34px; height: 34px; }
   .messages { padding: calc(64px + env(safe-area-inset-top)) 16px 116px; }
   .message-row { margin-bottom: 18px; }
@@ -1235,6 +1247,7 @@ export const CODEX_MOBILE_JS = String.raw`
   var titleEl = document.getElementById("current-title");
   var metaEl = document.getElementById("current-meta");
   var statusEl = document.getElementById("current-status");
+  var cacheSyncIndicator = document.getElementById("cache-sync-indicator");
   var newTaskButton = document.getElementById("new-task-button");
   var workspaceSwitcher = document.getElementById("workspace-switcher");
   var workspaceMenu = document.getElementById("workspace-menu");
@@ -1313,6 +1326,9 @@ export const CODEX_MOBILE_JS = String.raw`
     optimisticProgressTurnId: null,
     pendingMessages: [],
     transcriptSignature: "",
+    contentRevision: "",
+    cacheSyncState: "idle",
+    cacheSyncResetTimer: null,
     queueSignature: "",
     queuedMessages: [],
     editingQueuedMessageId: "",
@@ -1696,6 +1712,9 @@ export const CODEX_MOBILE_JS = String.raw`
       optimisticProgressTurnId: null,
       pendingMessages: [],
       transcriptSignature: "",
+      contentRevision: typeof snapshot.contentRevision === "string"
+        ? snapshot.contentRevision
+        : "",
       queueSignature: "",
       queuedMessages: [],
       editingQueuedMessageId: "",
@@ -2099,6 +2118,7 @@ export const CODEX_MOBILE_JS = String.raw`
         optimisticProgressTurnId: state.optimisticProgressTurnId,
         pendingMessages: state.pendingMessages.slice(),
         transcriptSignature: state.transcriptSignature,
+        contentRevision: state.contentRevision,
         queueSignature: state.queueSignature,
         queuedMessages: state.queuedMessages.slice(),
         editingQueuedMessageId: state.editingQueuedMessageId,
@@ -2136,6 +2156,7 @@ export const CODEX_MOBILE_JS = String.raw`
     state.optimisticProgressTurnId = snapshot.optimisticProgressTurnId || null;
     state.pendingMessages = snapshot.pendingMessages.slice();
     state.transcriptSignature = snapshot.transcriptSignature || "";
+    state.contentRevision = snapshot.contentRevision || "";
     state.queueSignature = snapshot.queueSignature || "";
     state.queuedMessages = snapshot.queuedMessages.slice();
     state.editingQueuedMessageId = snapshot.editingQueuedMessageId || "";
@@ -2841,6 +2862,8 @@ export const CODEX_MOBILE_JS = String.raw`
     state.progressItems = [];
     state.optimisticProgressTurnId = null;
     state.pendingMessages = [];
+    state.contentRevision = "";
+    setCacheSyncState("idle");
     state.messageNodes = Object.create(null);
     state.queuedMessages = [];
     state.editingQueuedMessageId = "";
@@ -2996,6 +3019,7 @@ export const CODEX_MOBILE_JS = String.raw`
   }
 
   function startAuthenticatedApp() {
+    var resumedCachedPreview = state.cachePreviewMode;
     state.authenticated = true;
     state.cachePreviewMode = false;
     state.persistentCacheAuthenticatedAtMs = Date.now();
@@ -3014,6 +3038,7 @@ export const CODEX_MOBILE_JS = String.raw`
       requestedAdapter || state.currentAdapter,
       requestedTask
     );
+    var shouldValidateCachedContent = Boolean(resumedCachedPreview || restoredCache);
     var needsInitialTask = firstStart || !state.currentThreadId;
     state.appStarted = true;
     if (!state.runClockTimer) {
@@ -3037,7 +3062,8 @@ export const CODEX_MOBILE_JS = String.raw`
       needsInitialTask: needsInitialTask,
       requestedAdapter: requestedAdapter,
       requestedTask: requestedTask,
-      pageUrl: pageUrl
+      pageUrl: pageUrl,
+      restoredCache: shouldValidateCachedContent
     });
   }
 
@@ -3091,8 +3117,14 @@ export const CODEX_MOBILE_JS = String.raw`
       } else {
         await loadTasks(true);
       }
+      if (options.restoredCache && state.currentThreadId) {
+        await refreshMessagesIfChanged(false, true);
+      }
     } else {
-      await Promise.all([loadTasks(false), loadMessages(false, false)]);
+      await Promise.all([
+        loadTasks(false),
+        refreshMessagesIfChanged(false, Boolean(options.restoredCache))
+      ]);
     }
     if (!state.authenticated) return;
     syncComposerInset();
@@ -5908,6 +5940,9 @@ export const CODEX_MOBILE_JS = String.raw`
         payload.threadId !== requestedThreadId
       ) return;
       applyLatestMessagePage(payload, historyOnly);
+      if (!historyOnly && typeof payload.revision === "string" && payload.revision) {
+        state.contentRevision = payload.revision;
+      }
       var messages = state.serverMessages;
       reconcilePendingMessages(payload.messages || []);
       var taskIndex = state.tasks.findIndex(function (task) { return task.threadId === payload.threadId; });
@@ -5962,6 +5997,9 @@ export const CODEX_MOBILE_JS = String.raw`
       updateHeader();
       renderTasks();
       saveCurrentConversationSnapshot();
+      if (!historyOnly && (
+        state.cacheSyncState === "checking" || state.cacheSyncState === "updating"
+      )) setCacheSyncState("current");
       return payload;
     } catch (error) {
       if (
@@ -5974,6 +6012,43 @@ export const CODEX_MOBILE_JS = String.raw`
       return null;
     } finally {
       if (requestId === state.messageRequestId) state.loadingMessages = false;
+    }
+  }
+
+  async function refreshMessagesIfChanged(forceBottom, announceCheck) {
+    if (!state.authenticated || !state.currentThreadId) return null;
+    if (!state.contentRevision || isTemporaryTask(currentTask())) {
+      return await loadMessages(forceBottom, false, false);
+    }
+    var requestedThreadId = state.currentThreadId;
+    var knownRevision = state.contentRevision;
+    if (announceCheck) setCacheSyncState("checking");
+    try {
+      var payload = await api(adapterApiPath(
+        "/api/tasks/" + encodeURIComponent(requestedThreadId) +
+        "/sync-state?known=" + encodeURIComponent(knownRevision)
+      ));
+      if (
+        requestedThreadId !== state.currentThreadId ||
+        payload.threadId !== requestedThreadId
+      ) return null;
+      if (!payload.changed) {
+        if (typeof payload.revision === "string" && payload.revision) {
+          state.contentRevision = payload.revision;
+        }
+        if (announceCheck) setCacheSyncState("current");
+        else setCacheSyncState("idle");
+        saveCurrentConversationSnapshot();
+        return payload;
+      }
+      setCacheSyncState("updating");
+      var refreshed = await loadMessages(forceBottom, false, false);
+      if (!refreshed) setCacheSyncState("idle");
+      return refreshed;
+    } catch (error) {
+      setCacheSyncState("idle");
+      if (error.status === 401) return null;
+      return await loadMessages(forceBottom, false, false);
     }
   }
 
@@ -6167,7 +6242,7 @@ export const CODEX_MOBILE_JS = String.raw`
       closeSidebar();
       renderTasks();
       updateHeader();
-      if (!isTemporaryTask(currentTask())) void loadMessages(false, false, false);
+      if (!isTemporaryTask(currentTask())) void refreshMessagesIfChanged(false, true);
       return;
     }
     saveCurrentConversationSnapshot();
@@ -6209,6 +6284,7 @@ export const CODEX_MOBILE_JS = String.raw`
       state.approvalResults = [];
       state.stopRequestedThreadId = "";
       state.transcriptSignature = "";
+      state.contentRevision = "";
       state.queueSignature = "";
       renderQueuedMessages([]);
       var selectedTask = taskById(threadId);
@@ -6234,7 +6310,7 @@ export const CODEX_MOBILE_JS = String.raw`
     }
     void loadCurrentTaskModel(false);
     if (restored) {
-      void loadMessages(false, false, false);
+      void refreshMessagesIfChanged(false, true);
       return;
     }
     await loadMessages(true, true, false);
@@ -6248,6 +6324,35 @@ export const CODEX_MOBILE_JS = String.raw`
     toastEl.classList.add("is-visible");
     if (state.toastTimer) clearTimeout(state.toastTimer);
     state.toastTimer = setTimeout(function () { toastEl.classList.remove("is-visible"); }, 2200);
+  }
+
+  function setCacheSyncState(nextState) {
+    if (state.cacheSyncResetTimer) clearTimeout(state.cacheSyncResetTimer);
+    state.cacheSyncResetTimer = null;
+    state.cacheSyncState = nextState || "idle";
+    cacheSyncIndicator.className = "cache-sync-indicator" + (
+      state.cacheSyncState === "updating"
+        ? " is-updating"
+        : state.cacheSyncState === "current"
+          ? " is-current"
+          : ""
+    );
+    var labels = {
+      checking: "检查更新",
+      updating: "同步更新",
+      current: "已是最新"
+    };
+    var label = labels[state.cacheSyncState] || "";
+    cacheSyncIndicator.hidden = !label;
+    var text = cacheSyncIndicator.querySelector(".cache-sync-text");
+    if (text) text.textContent = label;
+    cacheSyncIndicator.setAttribute("aria-label", label);
+    if (state.cacheSyncState === "current") {
+      state.cacheSyncResetTimer = setTimeout(function () {
+        state.cacheSyncResetTimer = null;
+        setCacheSyncState("idle");
+      }, 1400);
+    }
   }
 
   function renderPendingImages() {
@@ -6877,7 +6982,7 @@ export const CODEX_MOBILE_JS = String.raw`
         ? Date.now() - state.boardLastLoadedAtMs >= TASK_REFRESH_INTERVAL_MS
           ? [loadTaskBoard(false)]
           : []
-        : [loadMessages(false, false), loadCurrentTaskModel(false)];
+        : [refreshMessagesIfChanged(false, false), loadCurrentTaskModel(false)];
       if (!state.boardOpen && Date.now() >= state.nextTaskRefreshAtMs) {
         refreshes.push(loadTasks(false));
       }
@@ -6904,7 +7009,7 @@ export const CODEX_MOBILE_JS = String.raw`
         if (state.boardOpen) await loadTaskBoard(true);
         else await Promise.all([
           loadTasks(false),
-          loadMessages(false, false),
+          refreshMessagesIfChanged(false, true),
           loadCurrentTaskModel(true)
         ]);
       })();
