@@ -629,6 +629,18 @@ function loadMobileConversationCacheHelpers(): {
     order: string[],
     key: string,
   ) => void;
+  moveConversationValue: <T>(
+    values: Record<string, T>,
+    order: string[],
+    fromKey: string,
+    toKey: string,
+    limit: number,
+  ) => void;
+  findReusableLocalTask: <T extends { localCreationState?: string }>(tasks: T[]) => T | null;
+  mergeTasksWithLocalDrafts: <T extends { threadId: string }>(
+    remoteTasks: T[],
+    localTasks: T[],
+  ) => T[];
 } {
   const start = CODEX_MOBILE_JS.indexOf("  function conversationStateKey");
   const end = CODEX_MOBILE_JS.indexOf("\n  function readSetupToken", start);
@@ -639,7 +651,10 @@ return {
   conversationStateKey,
   setBoundedConversationValue,
   getBoundedConversationValue,
-  deleteConversationValue
+  deleteConversationValue,
+  moveConversationValue,
+  findReusableLocalTask,
+  mergeTasksWithLocalDrafts
 };`)() as ReturnType<typeof loadMobileConversationCacheHelpers>;
 }
 
@@ -793,6 +808,19 @@ function loadMobileRunSummaryRenderKey(): (
   const source = CODEX_MOBILE_JS.slice(start, end);
   return new Function(`${source}\nreturn runSummaryRenderKey;`)() as ReturnType<
     typeof loadMobileRunSummaryRenderKey
+  >;
+}
+
+function loadMobileRunFailureText(): (summary: {
+  status?: string;
+  errorMessage?: string;
+} | null) => string {
+  const start = CODEX_MOBILE_JS.indexOf("  function runFailureText");
+  const end = CODEX_MOBILE_JS.indexOf("\n  function renderRunFailure", start);
+  if (start < 0 || end < 0) throw new Error("Mobile run-failure helper not found");
+  const source = CODEX_MOBILE_JS.slice(start, end);
+  return new Function(`${source}\nreturn runFailureText;`)() as ReturnType<
+    typeof loadMobileRunFailureText
   >;
 }
 
@@ -984,6 +1012,100 @@ describe("Codex mobile conversation cache", () => {
     expect(helpers.getBoundedConversationValue(drafts, order, a)).toBeNull();
     expect(helpers.getBoundedConversationValue(drafts, order, b)).toEqual({ text: "草稿 B" });
   });
+
+  test("moves an optimistic task draft to the real task id without losing content", () => {
+    const helpers = loadMobileConversationCacheHelpers();
+    const drafts: Record<string, { text: string }> = Object.create(null);
+    const order: string[] = [];
+    const temporary = helpers.conversationStateKey("grok", "local-new-1");
+    const created = helpers.conversationStateKey("grok", "real-thread-1");
+
+    helpers.setBoundedConversationValue(
+      drafts,
+      order,
+      temporary,
+      { text: "创建期间输入的内容" },
+      40,
+    );
+    helpers.moveConversationValue(drafts, order, temporary, created, 40);
+
+    expect(helpers.getBoundedConversationValue(drafts, order, temporary)).toBeNull();
+    expect(helpers.getBoundedConversationValue(drafts, order, created)).toEqual({
+      text: "创建期间输入的内容",
+    });
+  });
+
+  test("keeps a created but unsent task as the reusable local draft", () => {
+    const helpers = loadMobileConversationCacheHelpers();
+    const remote = [{ threadId: "real-1", title: "服务端标题", status: "idle" }];
+    const local = [{
+      threadId: "real-1",
+      title: "新 Codex 任务",
+      status: "idle",
+      localCreationState: "ready",
+      localSourceThreadId: "",
+    }];
+
+    const merged = helpers.mergeTasksWithLocalDrafts(remote, local);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({
+      threadId: "real-1",
+      title: "服务端标题",
+      localCreationState: "ready",
+    });
+    expect(helpers.findReusableLocalTask(merged)).toBe(merged[0]);
+  });
+
+  test("reuses the unfinished new task and only ends draft mode on first submit", () => {
+    const start = CODEX_MOBILE_JS.indexOf("  async function createTask(");
+    const end = CODEX_MOBILE_JS.indexOf("\n  async function selectTask(", start);
+    const block = CODEX_MOBILE_JS.slice(start, end);
+
+    expect(block).toContain("var reusableTask = currentLocalTaskDraft();");
+    expect(block).toContain("await selectTask(reusableTask.threadId, true);");
+    expect(block).toContain('localCreationState: "ready"');
+    expect(CODEX_MOBILE_JS).toContain("localTaskDrafts: Object.create(null)");
+    expect(CODEX_MOBILE_JS).toContain("rememberLocalTaskDraft(task);");
+    expect(CODEX_MOBILE_JS).toContain("forgetLocalTaskDraft(state.currentAdapter, threadId);");
+    expect(CODEX_MOBILE_JS).toContain(
+      'if (task && task.localCreationState === "ready") finishLocalTaskDraft(task.threadId);',
+    );
+    expect(CODEX_MOBILE_JS).toContain(
+      "if (!waiting.length) return;\n    finishLocalTaskDraft(threadId);",
+    );
+    expect(CODEX_MOBILE_JS).toContain(
+      "var waitingForTaskCreation = taskNeedsCreation(task);",
+    );
+  });
+
+  test("shows an optimistic task before waiting for desktop creation and preserves failed input", () => {
+    const start = CODEX_MOBILE_JS.indexOf("  async function createTask(");
+    const end = CODEX_MOBILE_JS.indexOf("\n  async function selectTask(", start);
+    const block = CODEX_MOBILE_JS.slice(start, end);
+    const insertIndex = block.indexOf("state.tasks.unshift(temporaryTask);");
+    const selectIndex = block.indexOf("await selectTask(temporaryTask.threadId, true);");
+    const requestIndex = block.indexOf("var payload = await api(createPath");
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(insertIndex).toBeGreaterThan(-1);
+    expect(selectIndex).toBeGreaterThan(insertIndex);
+    expect(requestIndex).toBeGreaterThan(selectIndex);
+    expect(block).toContain('temporaryTask.localCreationState = "failed";');
+    expect(
+      block.includes("创建失败，输入内容已保留") ||
+        block.includes("\\u521B\\u5EFA\\u5931\\u8D25\\uFF0C\\u8F93\\u5165\\u5185\\u5BB9\\u5DF2\\u4FDD\\u7559"),
+    ).toBe(true);
+    expect(block).not.toContain('composerInput.value = "";');
+    expect(CODEX_MOBILE_JS).toContain(
+      "task && task.localCreationState === \"creating\"",
+    );
+    expect(CODEX_MOBILE_JS).toContain(
+      "var localTasks = state.tasks.filter(isTemporaryTask);",
+    );
+  });
+
   test("restores cached messages and the task draft synchronously before live refresh", () => {
     const state: Record<string, any> = {
       currentThreadId: "task-a",
@@ -1050,6 +1172,192 @@ describe("Codex mobile conversation cache", () => {
   });
 });
 
+describe("Codex mobile persistent cache", () => {
+  test("restores the cached task list and selected conversation before live refresh", () => {
+    const storage = createMemoryStorage();
+    const nowMs = 1_800_000_000_000;
+    const state = createPersistentCacheTestState();
+    const runtime = loadMobilePersistentCacheRuntime({ state, storage, nowMs });
+    storage.setItem(runtime.storageKey, JSON.stringify({
+      schemaVersion: runtime.schemaVersion,
+      savedAtMs: nowMs - 2_000,
+      currentAdapter: "codex",
+      taskSnapshots: {
+        codex: {
+          currentThreadId: "task-a",
+          tasks: [
+            { threadId: "task-a", title: "缓存任务 A", status: "idle" },
+          ],
+        },
+      },
+      taskSnapshotOrder: ["codex"],
+      conversationSnapshots: {
+        [runtime.conversationStateKey("codex", "task-a")]: {
+          serverMessages: [{ role: "assistant", text: "缓存中的最近回复" }],
+          historyMessages: [],
+          latestMessages: [{ role: "assistant", text: "缓存中的最近回复" }],
+          oldestMessageCursor: null,
+          hasOlderMessages: false,
+          historySource: "native",
+          historyCaughtUp: true,
+          progressItems: [],
+          optimisticProgressTurnId: null,
+          pendingMessages: [],
+          transcriptSignature: "cached",
+          queueSignature: "",
+          queuedMessages: [],
+          editingQueuedMessageId: "",
+          editingQueuedImageCount: 0,
+          editingQueuedText: "",
+          pendingImages: [],
+          runSummary: null,
+          localRunSummary: null,
+          pendingApproval: null,
+          approvalResults: [],
+          stopRequestedThreadId: "",
+          scrollTop: 24,
+          nearBottom: false,
+        },
+      },
+      conversationSnapshotOrder: [runtime.conversationStateKey("codex", "task-a")],
+      composerDrafts: {
+        [runtime.conversationStateKey("codex", "task-a")]: { text: "跨刷新草稿" },
+      },
+      composerDraftOrder: [runtime.conversationStateKey("codex", "task-a")],
+    }));
+
+    expect(runtime.restorePersistentMobileCache("codex", "task-a")).toBe(true);
+    expect(state.tasks).toEqual([
+      { threadId: "task-a", title: "缓存任务 A", status: "idle" },
+    ]);
+    expect(state.currentThreadId).toBe("task-a");
+    expect(state.serverMessages).toEqual([
+      { role: "assistant", text: "缓存中的最近回复" },
+    ]);
+    expect(runtime.composerInput.value).toBe("跨刷新草稿");
+    expect(runtime.renderEvents).toContain("messages");
+  });
+
+  test("ignores expired or incompatible cache and removes it", () => {
+    const nowMs = 1_800_000_000_000;
+    const expiredStorage = createMemoryStorage();
+    const expiredRuntime = loadMobilePersistentCacheRuntime({
+      state: createPersistentCacheTestState(),
+      storage: expiredStorage,
+      nowMs,
+    });
+    expiredStorage.setItem(expiredRuntime.storageKey, JSON.stringify({
+      schemaVersion: expiredRuntime.schemaVersion,
+      savedAtMs: nowMs - expiredRuntime.ttlMs - 1,
+    }));
+    expect(expiredRuntime.restorePersistentMobileCache("codex", "task-a")).toBe(false);
+    expect(expiredStorage.getItem(expiredRuntime.storageKey)).toBeNull();
+
+    const incompatibleStorage = createMemoryStorage();
+    const incompatibleRuntime = loadMobilePersistentCacheRuntime({
+      state: createPersistentCacheTestState(),
+      storage: incompatibleStorage,
+      nowMs,
+    });
+    incompatibleStorage.setItem(incompatibleRuntime.storageKey, JSON.stringify({
+      schemaVersion: incompatibleRuntime.schemaVersion + 1,
+      savedAtMs: nowMs,
+    }));
+    expect(incompatibleRuntime.restorePersistentMobileCache("codex", "task-a")).toBe(false);
+    expect(incompatibleStorage.getItem(incompatibleRuntime.storageKey)).toBeNull();
+  });
+
+  test("persists bounded display data without images, approvals, tokens, or other adapters leaking", () => {
+    const storage = createMemoryStorage();
+    const nowMs = 1_800_000_000_000;
+    const state = createPersistentCacheTestState();
+    state.authenticated = true;
+    state.currentAdapter = "codex";
+    state.currentThreadId = "shared-id";
+    state.tasks = [{
+      threadId: "shared-id",
+      title: "Codex 任务",
+      status: "running",
+      projectName: "DeskRelay",
+      projectPath: "/Users/example/project",
+    }];
+    state.serverMessages = Array.from({ length: 90 }, (_, index) => ({
+      role: index % 2 ? "assistant" : "user",
+      text: `消息 ${index}`,
+    }));
+    state.historyMessages = [];
+    state.latestMessages = state.serverMessages.slice();
+    state.pendingImages = [{ dataBase64: "SECRET_IMAGE", fileName: "secret.png" }];
+    state.pendingApproval = { command: "cat /Users/example/secret" };
+    state.approvalResults = [{ summary: "secret approval" }];
+    state.queuedMessages = [{ text: "secret queued input" }];
+    state.composerDrafts[runtimeKey("codex", "shared-id")] = { text: "保留草稿" };
+    state.composerDraftOrder.push(runtimeKey("codex", "shared-id"));
+    const runtime = loadMobilePersistentCacheRuntime({ state, storage, nowMs });
+
+    expect(runtime.persistMobileCacheNow()).toBe(true);
+    const raw = storage.getItem(runtime.storageKey) || "";
+    const payload = JSON.parse(raw);
+    const snapshot = payload.conversationSnapshots[runtime.conversationStateKey("codex", "shared-id")];
+    expect(snapshot.serverMessages).toHaveLength(60);
+    expect(snapshot.serverMessages[0].text).toBe("消息 30");
+    expect(snapshot.pendingImages).toEqual([]);
+    expect(snapshot.pendingApproval).toBeNull();
+    expect(snapshot.approvalResults).toEqual([]);
+    expect(snapshot.queuedMessages).toEqual([]);
+    expect(raw).not.toContain("SECRET_IMAGE");
+    expect(raw).not.toContain("secret approval");
+    expect(raw).not.toContain("secret queued input");
+    expect(raw).not.toContain("/Users/example/project");
+
+    const otherState = createPersistentCacheTestState();
+    const otherRuntime = loadMobilePersistentCacheRuntime({
+      state: otherState,
+      storage,
+      nowMs,
+    });
+    expect(otherRuntime.restorePersistentMobileCache("grok", "shared-id")).toBe(false);
+    expect(otherState.serverMessages).toEqual([]);
+  });
+
+  test("falls back silently when browser storage is unavailable and clears cache on logout", () => {
+    const throwingStorage = {
+      getItem() { throw new Error("blocked"); },
+      setItem() { throw new Error("quota"); },
+      removeItem() { throw new Error("blocked"); },
+    };
+    const state = createPersistentCacheTestState();
+    state.authenticated = true;
+    const runtime = loadMobilePersistentCacheRuntime({
+      state,
+      storage: throwingStorage,
+      nowMs: 1_800_000_000_000,
+    });
+    expect(runtime.restorePersistentMobileCache("codex", "task-a")).toBe(false);
+    expect(runtime.persistMobileCacheNow()).toBe(false);
+    expect(() => runtime.clearPersistentMobileCache()).not.toThrow();
+
+    expect(CODEX_MOBILE_JS).toContain("clearPersistentMobileCache();");
+  });
+
+  test("shows authenticated cache first and refreshes adapters, tasks, and messages asynchronously", () => {
+    const start = CODEX_MOBILE_JS.indexOf("  function startAuthenticatedApp");
+    const end = CODEX_MOBILE_JS.indexOf("\n  function taskStatusLabel", start);
+    const block = CODEX_MOBILE_JS.slice(start, end);
+    const restoreIndex = block.indexOf("restorePersistentMobileCache(");
+    const appVisibleIndex = block.indexOf("app.hidden = false;");
+    const refreshIndex = block.indexOf("void refreshAuthenticatedApp(");
+
+    expect(start).toBeGreaterThan(-1);
+    expect(restoreIndex).toBeGreaterThan(-1);
+    expect(appVisibleIndex).toBeGreaterThan(restoreIndex);
+    expect(refreshIndex).toBeGreaterThan(appVisibleIndex);
+    expect(block).toContain("async function refreshAuthenticatedApp");
+    expect(block).toContain("await loadAdapters();");
+    expect(block).toContain("await loadTasks(true);");
+  });
+});
+
 describe("Codex mobile web rendering", () => {
   test("resolves full task ids and rejects ambiguous legacy prefixes", () => {
     const resolveTaskSelector = loadMobileTaskSelector();
@@ -1100,6 +1408,21 @@ describe("Codex mobile web rendering", () => {
     expect(runSummaryRenderKey({ ...base, status: "completed" })).not.toEqual(
       runSummaryRenderKey(base),
     );
+    expect(runSummaryRenderKey({ ...base, status: "failed", errorMessage: "账号不可用" }))
+      .not.toEqual(runSummaryRenderKey({ ...base, status: "failed" }));
+  });
+
+  test("shows a failed run reason instead of an empty completed result", () => {
+    const runFailureText = loadMobileRunFailureText();
+    expect(runFailureText({
+      status: "failed",
+      errorMessage: "当前模型 gpt-5.4 暂时没有可用账号，未生成回复。",
+    })).toBe("当前模型 gpt-5.4 暂时没有可用账号，未生成回复。");
+    expect(runFailureText({ status: "failed" })).toBe(
+      "任务执行失败，未生成 AI 回复。请重试。",
+    );
+    expect(runFailureText({ status: "completed", errorMessage: "不应显示" })).toBe("");
+    expect(CODEX_MOBILE_CSS).toContain(".run-failure");
   });
 
   test("navigates between user messages and hides directions at either boundary", () => {
@@ -1699,6 +2022,81 @@ describe("Codex mobile server", () => {
       );
       expect(response.status).toBe(409);
       expect(await response.json()).toEqual({ error: "TClaude 尚未连接。" });
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("reads and switches the selected task model through the mobile API", async () => {
+    const authStore = createAuthStore("a configured mobile password");
+    const sessionCookie = `codex_mobile_session=${authStore.createSessionToken()}`;
+    const writes: Array<{ threadId: string; model: string; adapter?: string }> = [];
+    const server = await startCodexMobileServer({
+      host: "127.0.0.1",
+      port: 0,
+      lanAddress: "127.0.0.1",
+      accessToken: "mobile-secret",
+      authStore,
+      listTasks: async () => [{
+        threadId: "thread-model",
+        title: "模型切换",
+        status: "idle",
+      }],
+      readTaskModel: async (threadId, adapter) => ({
+        currentModel: threadId === "thread-model" ? "gpt-5.6-sol" : undefined,
+        options: [{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol" }],
+        canChange: true,
+        adapter,
+      }),
+      setTaskModel: async (threadId, model, adapter) => {
+        writes.push({ threadId, model, adapter });
+        return {
+          currentModel: model,
+          options: [{ id: model }],
+          canChange: true,
+        };
+      },
+      readMessages: async (threadId) => ({
+        threadId,
+        messages: [],
+        queuedMessages: [],
+      }),
+      sendMessage: async () => ({ queued: false }),
+    });
+
+    try {
+      const root = `http://127.0.0.1:${server.port}`;
+      const readResponse = await fetch(
+        `${root}/api/tasks/thread-model/model?adapter=codex`,
+        { headers: { cookie: sessionCookie } },
+      );
+      expect(readResponse.status).toBe(200);
+      expect(await readResponse.json()).toMatchObject({
+        currentModel: "gpt-5.6-sol",
+        canChange: true,
+      });
+
+      const writeResponse = await fetch(
+        `${root}/api/tasks/thread-model/model?adapter=codex`,
+        {
+          method: "PUT",
+          headers: {
+            cookie: sessionCookie,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ model: "gpt-5.6-terra" }),
+        },
+      );
+      expect(writeResponse.status).toBe(200);
+      expect(await writeResponse.json()).toMatchObject({
+        currentModel: "gpt-5.6-terra",
+        canChange: true,
+      });
+      expect(writes).toEqual([{
+        threadId: "thread-model",
+        model: "gpt-5.6-terra",
+        adapter: "codex",
+      }]);
     } finally {
       await server.close();
     }
@@ -2368,6 +2766,8 @@ describe("Codex mobile server", () => {
       expect(html).toContain('<rect x="5" y="5" width="14" height="14" rx="2.2"/>');
       expect(html).not.toContain('<rect x="3.5" y="5" width="17" height="14" rx="2.5"/>');
       expect(html).toContain('id="composer-image-input"');
+      expect(html).toContain('id="composer-model-button"');
+      expect(html).toContain('id="composer-model-menu"');
       const composerStart = html.indexOf('<div class="composer">');
       const composerEnd = html.indexOf("</div>\n      </form>", composerStart);
       const composerMediaIndex = html.indexOf('id="composer-media"');
@@ -2499,8 +2899,10 @@ describe("Codex mobile server", () => {
       expect(js).toContain('requestedAdapter !== adapterPayload.activeAdapter');
       expect(js).toContain('if (!initial) canonicalUrl.searchParams.delete("task");');
       expect(js).toContain('if (requestedAdapter) state.currentAdapter = requestedAdapter;');
-      expect(js).toContain("state.loadingTasks = needsInitialTask;");
-      expect(js).toContain('messagesEl.innerHTML = \'<div class="loading-row">');
+      expect(js).toContain(
+        "state.loadingTasks = needsInitialTask && !restoredCache && !state.tasks.length;",
+      );
+      expect(js).toContain('<div class="loading-row">');
       expect(js).toContain("escapeHtml(currentAdapterName())");
       expect(js).toContain('updateDocumentTitle();\n  async function startMobileApplication()');
       expect(js).toContain('await waitForComputerConnection();\n    await initializeAuthentication();');
@@ -2513,7 +2915,8 @@ describe("Codex mobile server", () => {
       expect(js).not.toContain('"正在连接 " + switchingAdapterName()');
       expect(js).not.toContain('showToast("正在连接 " + adapterName(adapterId) + "…")');
       expect(js).toContain('status.className = "queued-followup-status"');
-      expect(js).toContain("renderQueuedMessages(state.queuedMessages);\n    renderMessages(true);\n    submitPendingMessage(pending);");
+      expect(js).toContain('if (!waitingForTaskCreation) {\n      submitPendingMessage(pending);');
+      expect(js).toContain('pending.status = "creating_task";');
       expect(js).toContain("initializeAuthentication");
       expect(js).toContain("attemptLanAcceleration");
       expect(js).toContain("deskrelayLanRedirectAttemptedAt");
@@ -2603,6 +3006,9 @@ describe("Codex mobile server", () => {
       expect(js).toContain("message.id === state.editingQueuedMessageId");
       expect(js).toContain("submitQueuedMessageEdit");
       expect(js).toContain("loadAdapters");
+      expect(js).toContain("loadCurrentTaskModel");
+      expect(js).toContain("selectCurrentTaskModel");
+      expect(js).toContain('adapterApiPath("/api/tasks/" + encodeURIComponent(state.currentThreadId) + "/model")');
       expect(js).toContain("loadTaskBoard");
       expect(js).toContain('api("/api/task-board")');
       expect(js).toContain("openTaskFromBoard");
@@ -3265,3 +3671,161 @@ describe("Codex mobile generated image messages", () => {
     expect(CODEX_MOBILE_CSS).toContain(".composer-media-preview");
   });
 });
+
+type MemoryStorage = {
+  getItem: (key: string) => string | null;
+  setItem: (key: string, value: string) => void;
+  removeItem: (key: string) => void;
+};
+
+function createMemoryStorage(): MemoryStorage {
+  const values = new Map<string, string>();
+  return {
+    getItem(key) {
+      return values.get(key) ?? null;
+    },
+    setItem(key, value) {
+      values.set(key, String(value));
+    },
+    removeItem(key) {
+      values.delete(key);
+    },
+  };
+}
+
+function runtimeKey(adapter: string, threadId: string): string {
+  return `${adapter}\u0000${threadId}`;
+}
+
+function createPersistentCacheTestState(): Record<string, any> {
+  return {
+    authenticated: false,
+    currentAdapter: "codex",
+    currentThreadId: "",
+    tasks: [],
+    taskSnapshots: Object.create(null),
+    taskSnapshotOrder: [],
+    conversationSnapshots: Object.create(null),
+    conversationSnapshotOrder: [],
+    composerDrafts: Object.create(null),
+    composerDraftOrder: [],
+    persistentCacheRestored: false,
+    persistentCacheWriteTimer: null,
+    serverMessages: [],
+    historyMessages: [],
+    latestMessages: [],
+    oldestMessageCursor: null,
+    hasOlderMessages: false,
+    historySource: "",
+    historyCaughtUp: true,
+    progressItems: [],
+    optimisticProgressTurnId: null,
+    pendingMessages: [],
+    transcriptSignature: "",
+    queueSignature: "",
+    queuedMessages: [],
+    editingQueuedMessageId: "",
+    editingQueuedImageCount: 0,
+    pendingImages: [],
+    runSummary: null,
+    localRunSummary: null,
+    pendingApproval: null,
+    approvalResults: [],
+    stopRequestedThreadId: "",
+    messageNodes: Object.create(null),
+  };
+}
+
+function loadMobilePersistentCacheRuntime(params: {
+  state: Record<string, any>;
+  storage: MemoryStorage | {
+    getItem: (key: string) => string | null;
+    setItem: (key: string, value: string) => void;
+    removeItem: (key: string) => void;
+  };
+  nowMs: number;
+}): {
+  storageKey: string;
+  schemaVersion: number;
+  ttlMs: number;
+  composerInput: { value: string; placeholder: string };
+  renderEvents: string[];
+  conversationStateKey: (adapter: string, threadId: string) => string;
+  restorePersistentMobileCache: (adapter: string, threadId: string) => boolean;
+  persistMobileCacheNow: () => boolean;
+  clearPersistentMobileCache: () => void;
+} {
+  const start = CODEX_MOBILE_JS.indexOf("  function conversationStateKey");
+  const end = CODEX_MOBILE_JS.indexOf("\n  function readSetupToken", start);
+  if (start < 0 || end < 0) throw new Error("Mobile persistent cache source not found");
+  const source = CODEX_MOBILE_JS.slice(start, end);
+  const composerInput = { value: "", placeholder: "" };
+  const renderEvents: string[] = [];
+  const runtime = new Function(
+    "state",
+    "localStorage",
+    "Date",
+    "composerInput",
+    "composerImageButton",
+    "messagesEl",
+    "renderPendingImages",
+    "renderQueuedMessages",
+    "resizeComposer",
+    "renderMessages",
+    "renderTasks",
+    "renderAdapterMenu",
+    "updateHeader",
+    "requestAnimationFrame",
+    "scrollToLatest",
+    "updateUserMessageNavigation",
+    "isNearBottom",
+    "setTimeout",
+    "clearTimeout",
+    "MAX_COMPOSER_DRAFTS",
+    "MAX_CONVERSATION_SNAPSHOTS",
+    `${source}
+return {
+  storageKey: PERSISTENT_MOBILE_CACHE_KEY,
+  schemaVersion: PERSISTENT_MOBILE_CACHE_SCHEMA_VERSION,
+  ttlMs: PERSISTENT_MOBILE_CACHE_TTL_MS,
+  conversationStateKey,
+  restorePersistentMobileCache,
+  persistMobileCacheNow,
+  clearPersistentMobileCache
+};`,
+  )(
+    params.state,
+    params.storage,
+    { now: () => params.nowMs },
+    composerInput,
+    { disabled: false },
+    { scrollTop: 0 },
+    () => renderEvents.push("images"),
+    () => renderEvents.push("queue"),
+    () => renderEvents.push("composer"),
+    () => renderEvents.push("messages"),
+    () => renderEvents.push("tasks"),
+    () => renderEvents.push("adapters"),
+    () => renderEvents.push("header"),
+    (callback: () => void) => callback(),
+    () => renderEvents.push("latest"),
+    () => renderEvents.push("navigation"),
+    () => true,
+    (callback: () => void) => {
+      callback();
+      return 1;
+    },
+    () => {},
+    40,
+    12,
+  ) as {
+    storageKey: string;
+    schemaVersion: number;
+    ttlMs: number;
+    conversationStateKey: (adapter: string, threadId: string) => string;
+    restorePersistentMobileCache: (adapter: string, threadId: string) => boolean;
+    persistMobileCacheNow: () => boolean;
+    clearPersistentMobileCache: () => void;
+  };
+  return { ...runtime, composerInput, renderEvents };
+}

@@ -15,6 +15,8 @@ export class LegacyAdapterRuntime implements RuntimeHost {
   readonly getSessionMessagePage: BridgeAdapter["getSessionMessagePage"];
   readonly getSessionProgress: BridgeAdapter["getSessionProgress"];
   readonly getSessionRunSummary: BridgeAdapter["getSessionRunSummary"];
+  readonly getSessionModelState: BridgeAdapter["getSessionModelState"];
+  readonly setSessionModel: BridgeAdapter["setSessionModel"];
   readonly getQueuedTaskInputs: BridgeAdapter["getQueuedTaskInputs"];
   readonly updateQueuedTaskInput: BridgeAdapter["updateQueuedTaskInput"];
   readonly deleteQueuedTaskInput: BridgeAdapter["deleteQueuedTaskInput"];
@@ -40,6 +42,8 @@ export class LegacyAdapterRuntime implements RuntimeHost {
     this.getSessionMessagePage = adapter.getSessionMessagePage?.bind(adapter);
     this.getSessionProgress = adapter.getSessionProgress?.bind(adapter);
     this.getSessionRunSummary = adapter.getSessionRunSummary?.bind(adapter);
+    this.getSessionModelState = adapter.getSessionModelState?.bind(adapter);
+    this.setSessionModel = adapter.setSessionModel?.bind(adapter);
     this.getQueuedTaskInputs = adapter.getQueuedTaskInputs?.bind(adapter);
     this.updateQueuedTaskInput = adapter.updateQueuedTaskInput?.bind(adapter);
     this.deleteQueuedTaskInput = adapter.deleteQueuedTaskInput?.bind(adapter);

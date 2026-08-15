@@ -113,6 +113,19 @@ export type BridgeSessionSendResult = {
   queuePosition?: number;
 };
 
+export type BridgeSessionModelOption = {
+  id: string;
+  label?: string;
+  description?: string;
+};
+
+export type BridgeSessionModelState = {
+  currentModel?: string;
+  options: BridgeSessionModelOption[];
+  canChange: boolean;
+  unavailableReason?: string;
+};
+
 export type BridgeTurnInputItem =
   | { type: "text"; text: string }
   | { type: "localImage"; path: string }
@@ -194,6 +207,7 @@ export type BridgeSessionRunSummary = {
   startedAtMs?: number;
   completedAtMs?: number;
   durationMs?: number;
+  errorMessage?: string;
 };
 
 export type BridgeState = {
@@ -385,6 +399,11 @@ export interface BridgeAdapter {
     sessionId: string,
     options?: BridgeSessionReadOptions,
   ): Promise<BridgeSessionRunSummary | null>;
+  getSessionModelState?(sessionId: string): Promise<BridgeSessionModelState>;
+  setSessionModel?(
+    sessionId: string,
+    model: string,
+  ): Promise<BridgeSessionModelState>;
   getQueuedTaskInputs?(sessionId: string): BridgeQueuedTaskInput[];
   updateQueuedTaskInput?(
     sessionId: string,

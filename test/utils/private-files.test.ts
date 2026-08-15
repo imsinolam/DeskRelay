@@ -80,6 +80,7 @@ describe("private runtime filesystem helpers", () => {
     fs.writeFileSync(attachmentFile, "image", { mode: 0o644 });
     fs.writeFileSync(launcherFile, "#!/bin/zsh\n", { mode: 0o755 });
     fs.writeFileSync(outside, "outside", { mode: 0o644 });
+    fs.chmodSync(outside, 0o644);
     fs.symlinkSync(outside, path.join(root, "outside-link"));
     fs.chmodSync(root, 0o755);
 

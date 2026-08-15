@@ -19,4 +19,14 @@ describe("package quality scripts", () => {
       "npm run typecheck:src && npm run build",
     );
   });
+
+  test("ships the DeepSeek Harness bridge entrypoints", () => {
+    expect(packageJson.scripts?.["bridge:deepseek"]).toBe(
+      "node --no-warnings --experimental-strip-types src/bridge/deskrelay-bridge.ts --adapter deepseek",
+    );
+    const bin = (packageJson as { bin?: Record<string, string> }).bin;
+    expect(bin?.["deskrelay-bridge-deepseek"]).toBe(
+      "bin/deskrelay-bridge-deepseek.mjs",
+    );
+  });
 });

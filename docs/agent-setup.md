@@ -66,11 +66,12 @@ Get-Command opencode
 | CodeBuddy | `codebuddy` | 按供应方方式安装并完成登录 | `deskrelay --adapter codebuddy` |
 | reasonix | `reasonix` | 按供应方方式安装并完成登录 | `deskrelay --adapter reasonix` |
 | WorkBuddy Desktop | `/Applications/WorkBuddy.app` | macOS 安装应用并至少创建一个任务 | `deskrelay --adapter workbuddy` |
+| DeepSeek Harness | `dsh web` | 配置模型后保持 Harness 网页进程运行 | `deskrelay --adapter deepseek` |
 | OpenCode | `opencode` | 安装后运行 `opencode` 完成模型配置 | `deskrelay --adapter opencode` |
 
-TClaude、Grok CLI、CodeBuddy、reasonix 和 WorkBuddy 可能来自组织内部或供应商渠道。DeskRelay 不提供这些工具的安装包，也不应在公开文档中猜测其安装命令；请使用工具自身的官方或组织内说明。
+TClaude、Grok CLI、CodeBuddy、reasonix、WorkBuddy 和 DeepSeek Harness 可能来自组织内部或供应商渠道。DeskRelay 不提供这些工具的安装包，也不应在公开文档中猜测其安装命令；请使用工具自身的官方或组织内说明。
 
-“可以列出任务”不自动等于“电脑端实时同步”。Codex 与 WorkBuddy 使用桌面原生 owner；Claude Code、TClaude 使用 DeskRelay 连接的可见 CLI owner；OpenCode、Grok、CodeBuddy 与 reasonix 使用电脑界面和远程入口共用的共享服务 owner。完整边界见 [README 的会话一致性矩阵](../README.md#支持的-agent-与会话一致性)。
+“可以列出任务”不自动等于“电脑端实时同步”。Codex 与 WorkBuddy 使用桌面原生 owner；DeepSeek Harness 复用当前 `dsh web` owner；Claude Code、TClaude 使用 DeskRelay 连接的可见 CLI owner；OpenCode、Grok、CodeBuddy 与 reasonix 使用电脑界面和远程入口共用的共享服务 owner。完整边界见 [README 的会话一致性矩阵](../README.md#支持的-agent-与会话一致性)。
 
 ## 三、各 Agent 的安装与启动
 
@@ -263,6 +264,25 @@ deskrelay-bridge-workbuddy
 ```
 
 DeskRelay 连接的是 WorkBuddy Desktop 的本机任务和 transcript。应用未安装、未启动或尚无任务时，会提示先在桌面端准备，而不是创建一条云端替代会话。
+
+### DeepSeek Harness
+
+DeskRelay 直接连接已经运行的 `dsh web`，不会再启动一条独立的 headless Harness 会话。先在 Harness 中完成 API 和默认模型配置，再保持网页进程运行：
+
+```bash
+dsh web
+deskrelay --adapter deepseek
+```
+
+微信中发送 `/deepseek` 或 `/dsh` 可切换到 Harness；发送“任务”可列出现有 Harness session。微信输入、审批、补充问题、停止和最终回复都会进入同一个 session，并同步显示在 Harness 网页中。
+
+默认只允许连接本机回环地址。若 Harness 使用了不同端口，可在启动 DeskRelay 的环境中设置：
+
+```bash
+export DESKRELAY_DEEPSEEK_HARNESS_URL=http://127.0.0.1:3080
+```
+
+该地址不能使用公网主机、账号密码、查询参数或 URL 片段。Harness 的 `reasoning` 内容属于内部思考，DeskRelay 只把可见正文发送到移动网页和微信。
 
 ### OpenCode
 

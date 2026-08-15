@@ -78,7 +78,7 @@ function completePage(overrides: Record<string, unknown> = {}) {
 }
 
 describe("OpenAgentLog history provider", () => {
-  test("maps every interactive daemon adapter to an OpenAgentLog source", () => {
+  test("maps OpenAgentLog-backed adapters while DeepSeek keeps native Harness history", () => {
     expect(OPENAGENTLOG_HISTORY_SOURCE_BY_ADAPTER).toEqual({
       codex: "codex",
       claude: "claude",
@@ -89,6 +89,7 @@ describe("OpenAgentLog history provider", () => {
       workbuddy: "workbuddy",
       opencode: "opencode",
     });
+    expect(OPENAGENTLOG_HISTORY_SOURCE_BY_ADAPTER.deepseek).toBeUndefined();
   });
 
   test("reads a secure local runtime descriptor and returns a prefixed cursor", async () => {

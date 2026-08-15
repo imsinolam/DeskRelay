@@ -197,6 +197,11 @@ const CODEX_DESKTOP_SUMMARY_STATE_KEYS = new Set([
   "updatedAt",
   "threadRuntimeStatus",
   "requests",
+  "modelProvider",
+  "latestModel",
+  "latestReasoningEffort",
+  "previousTurnModel",
+  "latestThreadSettings",
 ]);
 
 export function compactCodexDesktopConversationState(
@@ -438,6 +443,7 @@ export class CodexDesktopIpcClient {
   async startTurn(
     threadId: string,
     input: string | BridgeTurnInputItem[],
+    options: { model?: string } = {},
   ): Promise<Record<string, unknown>> {
     const normalizedThreadId = threadId.trim();
     const items = typeof input === "string"
@@ -474,6 +480,7 @@ export class CodexDesktopIpcClient {
         conversationId: normalizedThreadId,
         turnStartParams: {
           input: items,
+          ...(options.model?.trim() ? { model: options.model.trim() } : {}),
         },
       },
     ).then(

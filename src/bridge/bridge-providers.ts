@@ -6,6 +6,7 @@ export const BRIDGE_PROVIDER_IDS = [
   "codebuddy",
   "reasonix",
   "workbuddy",
+  "deepseek",
   "opencode",
   "shell",
 ] as const;
@@ -20,6 +21,7 @@ export const IMPLEMENTED_BRIDGE_ADAPTER_IDS = [
   "codebuddy",
   "reasonix",
   "workbuddy",
+  "deepseek",
   "opencode",
   "shell",
 ] as const satisfies readonly BridgeProviderId[];
@@ -32,6 +34,7 @@ export type BridgeProviderTransport =
   | "claude_cli"
   | "shared_service"
   | "desktop_app"
+  | "harness_host"
   | "opencode_server"
   | "shell";
 
@@ -184,6 +187,27 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       approvals: true,
       stop: true,
       nativeCommands: false,
+    },
+    sessionIntegration: {
+      owner: "desktop_owner",
+      continuity: "same_owner",
+      localVisibility: "live",
+    },
+  },
+  deepseek: {
+    id: "deepseek",
+    label: "DeepSeek Harness",
+    command: "dsh",
+    transport: "harness_host",
+    daemon: true,
+    capabilities: {
+      sessions: true,
+      messages: true,
+      images: true,
+      queue: true,
+      approvals: true,
+      stop: true,
+      nativeCommands: true,
     },
     sessionIntegration: {
       owner: "desktop_owner",

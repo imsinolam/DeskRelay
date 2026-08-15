@@ -13,7 +13,7 @@ export const messages: Record<string, string> = {
 
   // === Daemon 欢迎 & 控制 ===
   "daemon.welcome": "DeskRelay 已就绪，当前：{adapter}",
-  "daemon.noActiveAdapter": "未选择活跃终端。发送 /codex、/claude 或 /opencode 启动一个。",
+  "daemon.noActiveAdapter": "未选择活跃终端。发送 /codex、/claude、/deepseek 或 /opencode 启动一个。",
   "daemon.switchResult.new": "已启动桌面端。",
   "daemon.switchResult.reused": "已连接现有桌面端。",
 

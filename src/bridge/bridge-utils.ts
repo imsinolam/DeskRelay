@@ -179,6 +179,17 @@ function isCodexInternalUserMessage(value: string): boolean {
     /^##\s+user confirmation protocol\b/i.test(trimmed);
 }
 
+export function sanitizeCodexVisibleAssistantMessageForDisplay(
+  value: string,
+): string | null {
+  const sanitized = normalizeOutput(value)
+    .replace(/<thinking\b[^>]*>[\s\S]*?<\/thinking>/gi, "")
+    .replace(/<thinking\b[^>]*>[\s\S]*$/gi, "")
+    .replace(/<\/?thinking\b[^>]*>/gi, "")
+    .trim();
+  return sanitized || null;
+}
+
 export function sanitizeCodexVisibleUserMessageForDisplay(
   value: string,
 ): string | null {

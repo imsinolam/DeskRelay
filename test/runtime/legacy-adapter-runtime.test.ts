@@ -37,6 +37,8 @@ describe("LegacyAdapterRuntime optional capabilities", () => {
     expect(runtime.sendInputToSession).toBeUndefined();
     expect(runtime.getQueuedTaskInputs).toBeUndefined();
     expect(runtime.createSessionInProject).toBeUndefined();
+    expect(runtime.getSessionModelState).toBeUndefined();
+    expect(runtime.setSessionModel).toBeUndefined();
     expect(runtime.resolveApprovalRequest).toBeUndefined();
   });
 
@@ -59,6 +61,24 @@ describe("LegacyAdapterRuntime optional capabilities", () => {
       },
       getQueuedTaskInputs(sessionId) {
         return [{ id: "queued-1", text: sessionId, imageCount: 0 }];
+      },
+      async getSessionModelState(sessionId) {
+        expect(this).toBe(adapter);
+        return {
+          currentModel: sessionId === "session-1" ? "gpt-5.6-sol" : undefined,
+          options: [{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol" }],
+          canChange: true,
+        };
+      },
+      async setSessionModel(sessionId, model) {
+        expect(this).toBe(adapter);
+        expect(sessionId).toBe("session-1");
+        expect(model).toBe("gpt-5.6-terra");
+        return {
+          currentModel: model,
+          options: [{ id: model }],
+          canChange: true,
+        };
       },
       async createSessionInProject(sourceSessionId) {
         expect(this).toBe(adapter);
@@ -93,6 +113,16 @@ describe("LegacyAdapterRuntime optional capabilities", () => {
     expect(runtime.getQueuedTaskInputs?.("session-1")).toEqual([
       { id: "queued-1", text: "session-1", imageCount: 0 },
     ]);
+    expect(await runtime.getSessionModelState?.("session-1")).toEqual({
+      currentModel: "gpt-5.6-sol",
+      options: [{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol" }],
+      canChange: true,
+    });
+    expect(await runtime.setSessionModel?.("session-1", "gpt-5.6-terra")).toEqual({
+      currentModel: "gpt-5.6-terra",
+      options: [{ id: "gpt-5.6-terra" }],
+      canChange: true,
+    });
     expect(runtime.createSessionInProject).toBeFunction();
     await runtime.createSessionInProject?.("source-session");
     await expect(runtime.resolveApprovalRequest?.("approval-1", "deny")).resolves.toBe(true);

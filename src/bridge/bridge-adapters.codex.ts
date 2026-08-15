@@ -13,6 +13,8 @@ import type {
   BridgeSessionMessage,
   BridgeSessionMessagePage,
   BridgeSessionMessagePageOptions,
+  BridgeSessionModelOption,
+  BridgeSessionModelState,
   BridgeSessionProgressItem,
   BridgeSessionReadOptions,
   BridgeSessionRunSummary,
@@ -26,6 +28,7 @@ import {
   detectCliApproval,
   normalizeOutput,
   nowIso,
+  sanitizeCodexVisibleAssistantMessageForDisplay,
   sanitizeCodexVisibleUserMessageForDisplay,
   truncatePreview,
 } from "./bridge-utils.ts";
@@ -420,12 +423,13 @@ function extractCodexVisibleAgentMessageText(item: unknown): string | null {
   }
 
   const phase = typeof item.phase === "string" ? item.phase : "";
-  if (phase !== "final_answer" && phase !== "commentary") {
+  if (phase && phase !== "final_answer" && phase !== "commentary") {
     return null;
   }
 
-  const text = typeof item.text === "string" ? normalizeOutput(item.text).trim() : "";
-  return text || null;
+  return typeof item.text === "string"
+    ? sanitizeCodexVisibleAssistantMessageForDisplay(item.text)
+    : null;
 }
 
 function normalizeCodexSessionMessagePageLimit(limit: number | undefined): number {
@@ -459,6 +463,37 @@ function extractCodexTurnModel(value: Record<string, unknown>): string | undefin
   return normalizeCodexModelName(value.model) ??
     normalizeCodexModelName(value.modelId) ??
     normalizeCodexModelName(value.model_id);
+}
+
+function extractCodexDesktopSessionModel(state: unknown): string | undefined {
+  if (!isRecord(state)) return undefined;
+  const settings = isRecord(state.latestThreadSettings)
+    ? state.latestThreadSettings
+    : null;
+  return normalizeCodexModelName(settings?.model) ??
+    normalizeCodexModelName(state.latestModel) ??
+    normalizeCodexModelName(state.previousTurnModel);
+}
+
+function mapCodexModelListResponse(value: unknown): BridgeSessionModelOption[] {
+  if (!isRecord(value) || !Array.isArray(value.data)) return [];
+  const seen = new Set<string>();
+  const options: BridgeSessionModelOption[] = [];
+  for (const candidate of value.data) {
+    if (!isRecord(candidate) || candidate.hidden === true) continue;
+    const id = normalizeCodexModelName(candidate.model) ??
+      normalizeCodexModelName(candidate.id);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const label = normalizeCodexModelName(candidate.displayName);
+    const description = normalizeCodexModelName(candidate.description);
+    options.push({
+      id,
+      ...(label ? { label } : {}),
+      ...(description ? { description } : {}),
+    });
+  }
+  return options;
 }
 
 function extractCodexRolloutTurnModel(
@@ -573,6 +608,35 @@ function materializeCodexInputImage(
   }
 }
 
+function extractCodexCompletedTurnEvidence(
+  line: Buffer,
+): { turnId: string; finalText?: string } | null {
+  try {
+    const parsed = JSON.parse(line.toString("utf8")) as unknown;
+    if (!isRecord(parsed) || parsed.type !== "event_msg" || !isRecord(parsed.payload)) {
+      return null;
+    }
+    if (
+      parsed.payload.type !== "task_complete" ||
+      typeof parsed.payload.turn_id !== "string" ||
+      !parsed.payload.turn_id.trim()
+    ) {
+      return null;
+    }
+    const finalText = typeof parsed.payload.last_agent_message === "string"
+      ? sanitizeCodexVisibleAssistantMessageForDisplay(
+        parsed.payload.last_agent_message,
+      ) ?? undefined
+      : undefined;
+    return {
+      turnId: parsed.payload.turn_id.trim(),
+      ...(finalText ? { finalText } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function extractCodexRolloutVisibleMessage(
   line: Buffer,
   imageCacheDir?: string,
@@ -633,7 +697,7 @@ function extractCodexRolloutVisibleMessage(
     const rawText = normalizeOutput(textParts.join("\n")).trim();
     const text = role === "user"
       ? sanitizeCodexVisibleUserMessageForDisplay(rawText)
-      : rawText;
+      : sanitizeCodexVisibleAssistantMessageForDisplay(rawText);
     if (!text) {
       return null;
     }
@@ -642,9 +706,6 @@ function extractCodexRolloutVisibleMessage(
         (payload.phase === "commentary" || payload.phase === "final_answer")
       ? payload.phase
       : undefined;
-    if (role === "assistant" && !phase) {
-      return null;
-    }
     const id = typeof payload.id === "string" && payload.id.trim()
       ? payload.id.trim()
       : undefined;
@@ -702,6 +763,7 @@ export function readCodexSessionMessagePageFromRollout(
   }
 
   const found: Array<{ message: BridgeSessionMessage; lineStart: number }> = [];
+  const completedTurnFinalTextById = new Map<string, string>();
   const modelCache = options.lightweight === true
     ? null
     : codexRolloutModelCacheEntry(filePath, stats);
@@ -753,16 +815,33 @@ export function readCodexSessionMessagePageFromRollout(
           continue;
         }
         const line = data.subarray(segmentStart, segmentEnd);
+        const completedTurn = extractCodexCompletedTurnEvidence(line);
+        if (completedTurn?.finalText) {
+          completedTurnFinalTextById.set(
+            completedTurn.turnId,
+            completedTurn.finalText,
+          );
+        }
         const turnModel = modelCache ? extractCodexRolloutTurnModel(line) : null;
         if (turnModel && modelCache && !modelCache.modelsByTurnId.has(turnModel.turnId)) {
           modelCache.modelsByTurnId.set(turnModel.turnId, turnModel.model);
           modelCache.missingTurnIds.delete(turnModel.turnId);
         }
         if (found.length > limit) continue;
-        const message = extractCodexRolloutVisibleMessage(line, options.imageCacheDir);
-        if (!message) {
+        const extractedMessage = extractCodexRolloutVisibleMessage(
+          line,
+          options.imageCacheDir,
+        );
+        if (!extractedMessage) {
           continue;
         }
+        const message = extractedMessage.role === "assistant" &&
+            !extractedMessage.phase &&
+            extractedMessage.turnId &&
+            completedTurnFinalTextById.get(extractedMessage.turnId) ===
+              extractedMessage.text
+          ? { ...extractedMessage, phase: "final_answer" as const }
+          : extractedMessage;
         found.push({
           message,
           lineStart: startOffset + segmentStart,
@@ -937,6 +1016,24 @@ function codexDurationToMs(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
     : undefined;
+}
+
+function formatCodexRunErrorMessage(value: unknown): string | undefined {
+  if (!isRecord(value) || typeof value.message !== "string") {
+    return undefined;
+  }
+  const message = normalizeOutput(value.message).trim();
+  if (!message) return undefined;
+  const model = message.match(/\bmodel:\s*([^;,\s]+)/i)?.[1];
+  if (/auth_unavailable|no auth available/i.test(message)) {
+    return model
+      ? `当前模型 ${model} 暂时没有可用账号，未生成回复。请在 CC Switch 中恢复该模型账号，或切换模型后重试。`
+      : "当前模型暂时没有可用账号，未生成回复。请在 CC Switch 中恢复账号，或切换模型后重试。";
+  }
+  if (/\b503\b|service unavailable|upstream_status:\s*HTTP 503/i.test(message)) {
+    return "模型服务暂时不可用，未生成回复。请稍后重试。";
+  }
+  return `Codex 未能完成请求：${truncatePreview(message, 220)}`;
 }
 
 function normalizeCodexRunStatus(
@@ -1133,8 +1230,10 @@ export function extractCodexDesktopThreadRunSummary(
         persisted.status !== "running" && persisted.status !== "unknown"
       ? persisted.status
       : undefined;
-    const status = entityStatus !== "running" && entityStatus !== "unknown"
-      ? entityStatus
+    const status = persistedTerminalStatus === "failed" || persistedTerminalStatus === "interrupted"
+      ? persistedTerminalStatus
+      : entityStatus !== "running" && entityStatus !== "unknown"
+        ? entityStatus
       : hasFinalAnswer
         ? "completed"
         : persistedTerminalStatus ?? "unknown";
@@ -1153,6 +1252,9 @@ export function extractCodexDesktopThreadRunSummary(
       ...(startedAtMs !== undefined ? { startedAtMs } : {}),
       ...(completedAtMs !== undefined ? { completedAtMs } : {}),
       durationMs,
+      ...(turnId && persisted?.turnId === turnId && persisted.errorMessage
+        ? { errorMessage: persisted.errorMessage }
+        : {}),
     };
   }
   return {
@@ -1996,16 +2098,20 @@ function parseCodexSessionRunSummary(
         : payload.type === "task_started" && startedAtMs !== undefined
           ? Math.max(0, nowMs - startedAtMs)
           : undefined);
+    const errorMessage = formatCodexRunErrorMessage(payload.error);
     return {
       ...(turnId ? { turnId } : {}),
       status: payload.type === "task_started"
         ? "running"
         : payload.type === "turn_aborted"
           ? "interrupted"
-          : "completed",
+          : errorMessage
+            ? "failed"
+            : "completed",
       ...(startedAtMs !== undefined ? { startedAtMs } : {}),
       ...(completedAtMs !== undefined ? { completedAtMs } : {}),
       ...(durationMs !== undefined ? { durationMs } : {}),
+      ...(errorMessage ? { errorMessage } : {}),
     };
   } catch {
     return null;
@@ -2470,6 +2576,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
   private pendingTurnThreadId: string | null = null;
   private pendingDesktopTurnThreadIds = new Set<string>();
   private pendingDesktopTurnTextByThreadId = new Map<string, string>();
+  private selectedDesktopModelByThreadId = new Map<string, string>();
   private desktopQueuedFollowUpCleanupKeys = new Set<string>();
   private desktopBootstrapThreadIds = new Set<string>();
   private recentDesktopTurnTextByThreadId = new Map<
@@ -3456,6 +3563,10 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     if (!normalizedThreadId) {
       return null;
     }
+    const rolloutFilePath = this.resolveDesktopSessionFilePath(normalizedThreadId);
+    const rolloutSummary = rolloutFilePath
+      ? readCodexSessionRunSummaryFromRolloutTail(rolloutFilePath)
+      : null;
     const client = this.desktopIpcClient;
     let liveState: CodexDesktopConversationState | null = null;
     if (client) {
@@ -3466,7 +3577,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
         const nowMs = Date.now();
         const liveWithoutObservedStart = extractCodexDesktopThreadRunSummary(
           liveState,
-          null,
+          rolloutSummary,
           nowMs,
         );
         if (liveWithoutObservedStart) {
@@ -3475,21 +3586,15 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
             : undefined;
           return extractCodexDesktopThreadRunSummary(
             liveState,
-            null,
+            rolloutSummary,
             nowMs,
             observedStartedAtMs,
           );
         }
       }
     }
-    const rolloutFilePath = this.resolveDesktopSessionFilePath(normalizedThreadId);
-    if (rolloutFilePath) {
-      const rolloutSummary = readCodexSessionRunSummaryFromRolloutTail(
-        rolloutFilePath,
-      );
-      if (rolloutSummary) {
-        return rolloutSummary;
-      }
+    if (rolloutSummary) {
+      return rolloutSummary;
     }
     if (options.lightweight) {
       return null;
@@ -3697,6 +3802,86 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
           extractCodexDesktopThreadMessages(liveState, trackedTurn?.turnId),
         )
       : persisted;
+  }
+
+  async getSessionModelState(threadId: string): Promise<BridgeSessionModelState> {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) {
+      throw new Error("请选择一个 Codex 任务。");
+    }
+    if (!this.usesDesktopTransport()) {
+      const latestMessage = await this.getLatestSessionMessage(normalizedThreadId);
+      const currentModel = latestMessage?.model;
+      return {
+        ...(currentModel ? { currentModel } : {}),
+        options: currentModel ? [{ id: currentModel }] : [],
+        canChange: false,
+        unavailableReason: "当前 Codex 连接暂不支持从网页版切换模型。",
+      };
+    }
+
+    const liveState = this.getDesktopThreadStateView(normalizedThreadId) ??
+      await this.getDesktopThreadStateViewWithRefresh(normalizedThreadId);
+    const selectedModel = this.selectedDesktopModelByThreadId.get(normalizedThreadId);
+    const liveModel = extractCodexDesktopSessionModel(liveState);
+    const latestMessageModel = selectedModel || liveModel
+      ? undefined
+      : (await this.getLatestSessionMessage(normalizedThreadId))?.model;
+    const currentModel = selectedModel ?? liveModel ?? latestMessageModel;
+    let options: BridgeSessionModelOption[] = [];
+    let modelListError = false;
+    try {
+      options = mapCodexModelListResponse(
+        await this.sendRpcRequest("model/list", {
+          limit: 100,
+          includeHidden: false,
+        }),
+      );
+    } catch {
+      modelListError = true;
+    }
+    if (currentModel && !options.some((option) => option.id === currentModel)) {
+      options.unshift({ id: currentModel });
+    }
+    const listedRuntimeStatus = this.desktopListedRuntimeStatusByThreadId.get(
+      normalizedThreadId,
+    );
+    const taskRunning = codexDesktopRuntimeType(liveState) === "active" ||
+      listedRuntimeStatus?.type === "active" ||
+      this.pendingDesktopTurnThreadIds.has(normalizedThreadId) ||
+      this.activeTurn?.threadId === normalizedThreadId ||
+      Array.from(this.backgroundTurns.values()).some(
+        (turn) => turn.threadId === normalizedThreadId,
+      );
+    return {
+      ...(currentModel ? { currentModel } : {}),
+      options,
+      canChange: !taskRunning && !modelListError && options.length > 0,
+      ...(taskRunning
+        ? { unavailableReason: "任务正在处理，完成或停止后再切换模型。" }
+        : modelListError || options.length === 0
+          ? { unavailableReason: "暂时无法读取 Codex 可用模型。" }
+          : {}),
+    };
+  }
+
+  async setSessionModel(
+    threadId: string,
+    model: string,
+  ): Promise<BridgeSessionModelState> {
+    const normalizedThreadId = threadId.trim();
+    const normalizedModel = model.trim();
+    if (!normalizedThreadId) throw new Error("请选择一个 Codex 任务。");
+    if (!normalizedModel) throw new Error("请选择一个模型。");
+    const state = await this.getSessionModelState(normalizedThreadId);
+    if (!state.canChange) {
+      throw new Error(state.unavailableReason || "当前任务暂时不能切换模型。");
+    }
+    if (!state.options.some((option) => option.id === normalizedModel)) {
+      throw new Error("这个模型当前不可用，请重新选择。");
+    }
+    this.selectedDesktopModelByThreadId.set(normalizedThreadId, normalizedModel);
+    return { ...state, currentModel: normalizedModel };
   }
 
   async interruptSession(threadId: string): Promise<boolean> {
@@ -4961,8 +5146,13 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
         if (finalText) {
           this.getTurnFinalMessageMap(turnId).set("session-final", finalText);
         }
+        const completedError = isRecord(payload.error) ? payload.error : null;
         this.handleTurnCompleted(trackedTurn, {
-          turn: { id: turnId, status: "completed" },
+          turn: {
+            id: turnId,
+            status: completedError ? "failed" : "completed",
+            ...(completedError ? { error: completedError } : {}),
+          },
         });
         return;
       }
@@ -5314,7 +5504,12 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       const startInput = imageCount === 0 && items.length === 1 && items[0]?.type === "text"
         ? items[0].text
         : items;
-      const turn = await client.startTurn(threadId, startInput);
+      const selectedModel = this.selectedDesktopModelByThreadId.get(threadId);
+      const turn = await client.startTurn(
+        threadId,
+        startInput,
+        selectedModel ? { model: selectedModel } : {},
+      );
       const turnId = typeof turn.id === "string" ? turn.id : null;
       if (!turnId) {
         throw new Error("Codex 桌面端没有返回任务编号。");
@@ -6684,6 +6879,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       method !== "thread/list" &&
       method !== "thread/read" &&
       method !== "thread/name/set" &&
+      method !== "model/list" &&
       !allowedDesktopBootstrapWrite
     ) {
       throw new Error(`桌面映射模式禁止通过独立 app-server 执行写操作：${method}`);

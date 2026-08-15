@@ -1,5 +1,6 @@
 import { listClaudeStoredSessions } from "../bridge/bridge-adapters.claude.ts";
 import { listCodeBuddySessions } from "../bridge/bridge-adapters.codebuddy.ts";
+import { listDeepSeekHarnessSessions } from "../bridge/bridge-adapters.deepseek.ts";
 import { listGrokStoredSessions } from "../bridge/bridge-adapters.grok.ts";
 import { listOpenCodeStoredSessions } from "../bridge/bridge-adapters.opencode.ts";
 import { listReasonixSessions } from "../bridge/bridge-adapters.reasonix.ts";
@@ -35,6 +36,8 @@ export async function listLightweightAdapterSessions(
       return markNotLoaded(await listReasonixSessions(cwd, limit));
     case "workbuddy":
       return await listWorkBuddyDesktopSessionCandidates(limit);
+    case "deepseek":
+      return await listDeepSeekHarnessSessions(limit);
     case "opencode":
       return markNotLoaded(listOpenCodeStoredSessions(limit).map((session) => ({
         sessionId: session.id,

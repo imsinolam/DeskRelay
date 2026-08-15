@@ -130,11 +130,20 @@ Before a real npm release:
 
 Do not claim publication until the live registry confirms it. `EOTP`, `E401`, or `E404` remains an auth/registry blocker until verified.
 
+## Multi-Agent Git And Release Ownership
+DeskRelay may be edited by multiple Agents at the same time. Every ordinary development Agent must work in its own branch and worktree, preserve existing dirty state, stage only explicitly owned files, and finish with one or more local commits. Development Agents must not push, merge to `main`, create tags, bump the public version, publish npm, deploy production, or perform any GitHub write operation.
+
+A release Agent is the only role allowed to integrate completed commits, create release metadata commits, bump versions, prepare release notes, and run the formal release. The current Agent must not assume that role unless the user explicitly assigns it as the release Agent. Only one release Agent may own a version at a time.
+
+The release Agent must inventory every worktree, branch, dirty file, and candidate commit; integrate by explicit SHA in an isolated release worktree; rerun validation after conflicts; and never publish an uncommitted shared working tree. GitHub fetch, public commit, push, tag, and remote verification must still run on the configured publishing server. There is no local-push fallback.
+
+Chinese release notes are the user-facing source of truth. Write them in plain, non-technical Chinese: describe what users can now do, what visible problem was fixed, whether any action is required, and what limitations remain. Keep class names, fields, file paths, commit SHAs, test commands, and implementation details in the release Agent's technical report or commit body, not in the public change record. Follow `docs/agent-release-workflow.md`, `docs/publishing.md`, and `docs/releases/TEMPLATE_CN.md`.
+
 ## Release Process
 - Keep README focused on product relationships and the shortest successful setup; move command matrices and advanced configuration into `docs/`.
 - Add one release note for the current public baseline instead of rewriting historical release notes to pretend they used the new name.
 - For the public repository, export a privacy-checked snapshot and create a clean Git history; do not push this private development history directly.
-- GitHub fetch, commit, push, and remote verification for the maintained public repository must run on the configured publishing server. The developer Mac may validate and upload a privacy-reviewed snapshot to that server over SSH, but must never fall back to a direct GitHub push. Follow `docs/publishing.md` and keep server addresses, identity paths, deploy keys, and credentials outside the repository.
+- GitHub fetch, commit, push, tag, and remote verification for the maintained public repository must run on the configured publishing server. The developer Mac may validate and upload a privacy-reviewed snapshot to that server over SSH, but must never fall back to a direct GitHub push.
 - The publishing server must use an isolated DeskRelay directory, reject non-fast-forward updates, verify the final remote SHA, and avoid touching unrelated server projects.
 - Only update `log.md` and `git-log.md` when the user explicitly requests the double log.
 
@@ -163,21 +172,15 @@ Missing WeChat replies usually reduce to one of these questions: did the active 
 Prefer surgical fixes backed by focused tests. Avoid broad rewrites of adapter flow, transport state, or release docs unless the user explicitly asks for a larger redesign.
 
 ## Agent Experience Records
-- **任务看板入口右侧的数字必须只统计真正仍在进行中的任务，不能统计所有未归入“最近完成”的历史任务。** `running`、`approval`、`input` 都表示任务尚未结束，应计入；`idle`、待继续、异常和已完成不应计入，否则大量历史任务会把角标错误推到 `99+`，让用户无法判断当前真实负载。
-- **移动网页必须把消息、进展、审批请求和审批结果视为同一条任务时间线，但审批结果只能在其所属轮次消息已经加载后显示。** Codex 原生 rollout 中网页发出的可见消息同样有 turnId；真正可能缺少 turnId 的是 OpenAgentLog 等归一化加速历史，或当前分页尚未覆盖该轮次。若把任务累计保存的全部审批塞进最近 40 条消息，会出现只有免审卡片、看不到同轮 AI 回复；应优先用已加载 turnId 归属，缺少 turnId 时用保留下来的消息 ID 与时间戳排序，向上加载到完整轮次后再一起显示，才能保证审批与用户消息、AI 回复不割裂。
-- **移动网页切换任务或终端时必须先按 adapter + task ID 保存已加载会话快照与未发送草稿，返回缓存任务应先同步恢复内容再后台增量刷新。** 每次切换都清空消息和输入框会让用户重复等待、丢失正在组织的内容；跨终端只按 task ID 缓存还会串会话，因此缓存身份必须包含 adapter，消息快照只保留在当前页面内存并设置上限，草稿在真实提交后只清除当前任务。
-- **移动网页新建任务不能把“新任务尚未进入桌面任务索引”当成创建失败；新的 adapter + session/thread ID 才是创建成功的权威信号。** Codex 等桌面 Agent 的空任务可能要等首条消息或异步索引完成后才出现在任务列表，如果服务端继续强依赖立即枚举，就会实际创建成功却向网页返回“请到电脑端确认”；应先返回带真实 ID 的临时任务信息，让用户立即进入并发送首条消息，再由后续任务列表刷新补齐标题和项目元数据。
-- **ClawBot 的“今日内本任务免审”必须按 Agent 与任务 thread 持久化，不能绑定 turn，也不能在单轮 `task_complete` / `task_failed` 时清理。** 同一任务后续轮次和守护进程重启都应继续自动接受；新任务因 thread 不同自然恢复逐项审批，这能避免把一次回复结束误判成整个任务结束。 部署操作本身经常需要停止并重启守护进程；如果免审只保存在内存里，用户刚选择免审就会在同一任务的下一步再次收到审批，直接违背该选项的核心承诺。
-- **ClawBot 任务列表的执行中状态应显示为 `🟢`，不要再写“运行中”。** 列表需要快速扫读且任务标题已经占据主要空间，用单一状态 emoji 能减少文字噪声，并与网页任务列表的绿色运行指示保持一致。
-- **具备多客户端后端的 CLI Agent 应直接共享一个长期 owner，不能让远程端和电脑 TUI 各自启动独立 ACP。** Grok 已验证可用工作区级 `agent leader` 同时承载 ACP 客户端和可见 TUI；共享 socket、稳定 sessionId 和关闭时清理 owner，才能让手机消息实时出现在电脑终端并避免会话分叉。固定 leader socket 连接失败时不能在一次 250 ms 探测后直接 unlink，必须先重试，再用 `lsof` 精确确认持有该 socket 的进程确实是 `grok agent leader`，只回收不可连接的 orphan owner；否则会留下持锁但无法再通过路径连接的长期进程，让此后每次启动都固定超时。
+- **具备多客户端后端的 CLI Agent 应直接共享一个长期 owner，不能让远程端和电脑 TUI 各自启动独立 ACP。** Grok 已验证可用工作区级 `agent leader` 同时承载 ACP 客户端和可见 TUI；共享 socket、稳定 sessionId 和关闭时清理 owner，才能让手机消息实时出现在电脑终端并避免会话分叉。
 - **对外说明“支持某个 Agent”时必须分别标明原任务继续、电脑端可见和已打开界面实时同步，不能把能读取历史、启动命令或加载 ACP 会话统称为完整支持。** 这些能力对应不同的数据 owner 和同步强度；混写会让用户误以为手机消息一定进入当前桌面窗口，掩盖真实 owner 边界，并重新制造对话分叉风险。
-- **恢复用户明确选择的持久任务时，必须保留原任务身份；新启动 companion 若只是 socket 已连接但 worker 尚未 ready，应对同一 session 做有界重试，只有超时或真实恢复错误才报告不可用，不能自动新建任务或切换到“最近任务”。** socket 连通早于内部 Adapter 就绪，若立即恢复会把正常冷启动误报成任务损坏；而静默换成另一个 session 又会制造不可见分叉，因此 Claude、OpenCode、Grok 和 CodeBuddy 等适配器都要先等待原任务恢复，再由用户决定失败后的处理。
+- **恢复用户明确选择的持久任务失败时必须直接报告不可用，不能自动新建任务或切换到“最近任务”。** 相同界面里静默换成另一个 session 会让用户以为仍在原上下文中继续，实际却已产生不可见分叉；Claude、OpenCode、Grok 和 CodeBuddy 等适配器都要保留原任务身份并让用户决定如何恢复。
 - **对外品牌迁移必须同时统一 npm 包、公开命令、活动数据目录和环境变量，不能只改界面文案后继续保留旧产品入口。** 半迁移会让 README、安装体验、日志、部署脚本和用户认知长期割裂；破坏性更名应通过主版本升级和一次性旧数据迁移完成，而不是永久保留两套公开名称。
 - **开源前不能只检查当前源码，还必须排除所有未经审查的位图、官网草稿和真实聊天截图，并从已审计快照创建干净的公开 Git 历史。** 未跟踪的营销目录同样可能带账号名、任务内容和局域网地址，而旧提交仍会保留已经删除的二进制图片；让当前快照扫描所有位图、让历史扫描检查敏感文件名，并用无历史快照首次发布，才能阻止这些内容永久公开。
 - **无分隔符的“任务关键词”必须先确认能匹配真实任务，再当作控制命令。** 这样既支持“任务canvas”快速筛选，又不会把“任务做完后告诉我”这类正常对话误判为任务切换；有空格或冒号时则视为用户明确发出的搜索命令。
 - **可变条数翻页必须从当前已展示范围的末尾继续，而不能用新条数重新计算页码起点。** 例如首屏 10 条后发送“下一页20”应展示第 11–30 条；保存起点、条数和历史位置才能避免跳过任务，并让“上一页”准确返回原范围。
 - **对运行于 `dist/` 的 LaunchAgent 做完整构建前，要先卸载服务，构建后再加载并验活。** `npm run quality` 会先删除再重建 `dist/`；仅在构建后执行 `kickstart` 仍可能撞上 LaunchAgent 的自动重启窗口，实测会因依赖文件暂时不存在而退出。先 `bootout`、构建完成后 `bootstrap`，再等待健康检查成功，能避免把公网移动端留在离线状态。
-- **移动网页 title 应优先使用当前任务名，并在任务切换、深链接恢复、异步列表加载和重命名后立即同步；只有没有选中任务时才回退到 DeskRelay 与当前终端。** 这让手机浏览器标签、历史记录和多标签页能直接区分任务，也避免页面正文已经切换而浏览器标题仍停留在旧任务。
+- **移动网页 title 固定使用“DeskRelay · 当前终端”，不要混入任务标题或反转品牌顺序。** 浏览器标签需要稳定、短且可预测；任务标题过长会导致标签难以辨认，也会让同一终端的页面标题不断跳动。
 - **后台解析 CLI 命令和启动子进程必须共用同一套用户 PATH。** 只给子进程补 PATH 还不够，因为命令可能在 `resolveSpawnTarget` 阶段就退回裸命令并触发 ENOENT；把 `~/.hermes/node/bin` 等目录同时用于命令解析与运行环境，才能让 CodeBuddy、TClaude 这类由用户级工具链安装的 CLI 在 LaunchAgent 中稳定启动。
 - **CodeBuddy 必须由同一个 `codebuddy --serve` 进程同时承载可见界面与 HTTP ACP，不能再启动独立 `codebuddy --acp`。** 实测独立 ACP 即使复用相同 sessionId，仍会形成第二个 live owner，让手机消息无法实时出现在电脑界面；共享一个 serve 进程才能让输入、回复、审批和停止保持同源。
 - **移动端深链接可以先乐观显示请求的 adapter，但是否需要切换必须与服务端真实 activeAdapter 比较。** 乐观标签能让首屏立即显示目标终端，同时用 `requestedAdapter !== adapterPayload.activeAdapter` 决定真实切换，可避免把 `?adapter=tclaude` 误判为已经切换；首次切换还要保留 `task` 参数，才能从完成通知直接进入指定终端的指定任务。
@@ -195,7 +198,7 @@ Prefer surgical fixes backed by focused tests. Avoid broad rewrites of adapter f
 - **同一维护窗口内的守护进程重启通知必须持久化去重，并且只有实际发送成功后才记录时间。** LaunchAgent 在部署、超时恢复或连续拉起期间可能短时间重启多次；每次启动都通知会让用户误以为连接反复故障，而仅做内存去重又无法跨进程生效，因此要把最近成功通知时间写入工作区状态，失败通知则保留到微信上下文恢复后只补发一次。
 - **CLI 退出码 0 必须按正常关闭处理，微信端错误要翻译成中文并附上恢复动作。** `code 0` 表示进程正常结束，不应包装成 `worker exited unexpectedly` 或 `fatal_error`；非零退出也不能直接暴露英文内部术语，提示必须说明发生了什么、是否需要担心，以及用户可发送哪个命令重新打开。
 - **ClawBot 的当前 Codex 任务必须与桌面端当前任务分开持久化。** 桌面端本地切换频率很高，若共用一个 threadId 会让微信消息悄悄发往错误任务；只有用户在 ClawBot 手动选择任务，或某项完成通知已成功发到微信时，才允许改变 ClawBot 当前任务。
-- **ClawBot 的任务列表、稳定编号、数字冒号直发和切换后自动列任务必须作为所有会话型 adapter 的通用能力实现，不能写成 Codex 特例。** 重复调用桌面端列表接口、为进入任务而打开桌面任务会造成数秒到十几秒延迟，而按 Codex 硬编码又会让 Claude、TClaude、Grok、CodeBuddy、reasonix、WorkBuddy、OpenCode 的微信体验缺失；所有提供任务列表和 `sendInputToSession` 的 adapter 都应复用短时缓存、稳定编号快照、翻页和“数字：内容”入口，才能兼顾速度、一致性与后续扩展。切换到依赖可见 companion 的 Agent 后，socket connected 不代表内部 adapter 已 ready；切换后的自动任务列表必须只对明确的 `connected but not ready` / `not connected yet` 启动状态做有限重试，真实业务错误仍应立即返回，否则 Grok 等冷启动时会显示切换成功却不再补发列表。
+- **ClawBot 的任务列表、稳定编号、数字冒号直发和切换后自动列任务必须作为所有会话型 adapter 的通用能力实现，不能写成 Codex 特例。** 重复调用桌面端列表接口、为进入任务而打开桌面任务会造成数秒到十几秒延迟，而按 Codex 硬编码又会让 Claude、TClaude、Grok、CodeBuddy、reasonix、WorkBuddy、OpenCode 的微信体验缺失；所有提供任务列表和 `sendInputToSession` 的 adapter 都应复用短时缓存、稳定编号快照、翻页和“数字：内容”入口，才能兼顾速度、一致性与后续扩展。
 - **守护进程清理只能识别由 Node 或 Bun 直接执行的真实 daemon 入口，不能按整条命令行是否包含文件名判断。** 部署 shell 会把项目路径和 `deskrelay-daemon` 文本写进自身命令行，宽泛正则会误杀正在部署的 shell；解析实际运行时与入口脚本并用回归测试覆盖，才能安全接管旧守护进程。
 - **macOS LaunchAgent 打开可见终端应让 `/usr/bin/open` 打开自删除的可执行 `.command` 文件，但真实 GUI 验证禁止裸用 `launchctl submit`，普通测试只能验证纯函数或注入假的启动器。** AppleScript 由后台 LaunchAgent 发起时会阻塞，而 `launchctl submit` 又可能把快速退出的 `open` 推断成 keepalive；本次残留任务自动运行 284 次并产生 289 个测试窗口。真实验证必须用 `trap` 无条件移除临时任务、前后核对窗口数，才能既绕开自动化权限又不干扰用户桌面。
 - **编译后的 Node 命令行入口不能只依赖 `import.meta.main` 判断是否直接运行，还要比较 `process.argv[1]` 与当前模块路径。** Node 23 中 `import.meta.main` 不可用会让脚本以退出码 0 静默结束，表面上像终端启动成功但永远不会连接；兼容判断已用真实编译产物验证，今后新增入口必须覆盖目标 Node 版本。
@@ -207,28 +210,20 @@ Prefer surgical fixes backed by focused tests. Avoid broad rewrites of adapter f
 - **移动端轮询超长 Codex 任务时必须只读 rollout 文件尾部和已缓存的桌面状态，历史专用请求还必须完全跳过桌面实时状态合并，不能为了补消息主动调用 `followThread()` 或完整 `thread/read`。** 实测 47 MB 会话中，完整桌面订阅会让守护进程瞬时占用约 95% CPU、3.2 GB 内存；而尾部读取实时消息、运行时长和进展分别只需约 118 ms、5 ms 和 10 ms，历史专用请求跳过实时合并后可直接复用约 150 ms 的原生 40 条尾读结果，这直接决定移动网页在有无 OpenAgentLog 时都能快速显示正文且不拖慢电脑端。
 - **reasonix 必须使用官方 `serve -resume <原 transcript>` 直接继续原任务，不能复制 transcript 到 DeskRelay 状态目录。** 复制历史会产生第二份可写记录，即使初始内容一致也会在后续消息中分叉；直接恢复原文件并让官方 Web UI 与远程入口连接同一个 serve owner，才能保证电脑和手机看到同一任务。
 - **Codex 后台审批监控必须对所有 `active` 任务保持 `summary` 订阅，不能等任务列表先出现 `waitingOnApproval` 才订阅。** `waitingOnApproval` 和待审批请求本身来自 Desktop summary；如果先依赖这个标记再决定订阅，就会形成循环依赖，真实审批在桌面端可见但 ClawBot 永远收不到。`summary` 只保留状态与请求，不等于移动正文读取时的完整 follow，因此既能发现审批，又不会重新引入超长会话的大内存问题。
-- **WorkBuddy 的远程消息必须进入桌面主进程实际持有的 app-server，并通过 `session:load`、`session:sendMessage`、`session:cancel`、`session:resolvePermission`、`session:rejectPermission` 操作，禁止回退到独立 ACP；普通方式启动且缺少 hook 时应由 DeskRelay 自动正常重启接入，并清理失去父进程的旧 app-server，不能要求用户手动退出。** 即使独立 ACP 复用了同一个 sessionId 和数据库，它仍是另一个 live owner，消息能运行却不会出现在 WorkBuddy 桌面界面，最终造成上下文与聊天记录隐藏分叉；而 Electron 单实例也无法把后加的 `NODE_OPTIONS` 注入既有主进程，只有自动重启并确保只保留一个 app-server owner，才能让用户消息、运行状态、审批和回复同步到桌面、网页和 ClawBot。自动接入的整体 `connectTimeout` 必须同时约束 `launch/restart` 本身，`osascript` 也要设置进程超时；否则 WorkBuddy 阻止退出时网页只会永久显示“正在连接”，既没有成功也没有可操作错误。
+- **WorkBuddy 的远程消息必须进入桌面主进程实际持有的 app-server，并通过 `session:load`、`session:sendMessage`、`session:cancel`、`session:resolvePermission`、`session:rejectPermission` 操作，禁止回退到独立 ACP；普通方式启动且缺少 hook 时应由 DeskRelay 自动正常重启接入，并清理失去父进程的旧 app-server，不能要求用户手动退出。** 即使独立 ACP 复用了同一个 sessionId 和数据库，它仍是另一个 live owner，消息能运行却不会出现在 WorkBuddy 桌面界面，最终造成上下文与聊天记录隐藏分叉；而 Electron 单实例也无法把后加的 `NODE_OPTIONS` 注入既有主进程，只有自动重启并确保只保留一个 app-server owner，才能让用户消息、运行状态、审批和回复同步到桌面、网页和 ClawBot。
 - **macOS 上供 WorkBuddy 与 DeskRelay 共用的 Unix socket 必须使用稳定的 `/tmp/deskrelay-workbuddy-<uid>.sock`，不能分别依赖各进程的 `os.tmpdir()`。** GUI 应用与 LaunchAgent 可能解析出不同的 `/var/folders/...` 临时目录，导致 socket 明明存在却被误判为“桌面尚未接入”；固定本机私有 socket 路径并设置 `0600` 权限，才能让重启后的守护进程可靠重连且不开放网络端口。
 - **新增 `BridgeAdapter` 可选能力时必须同步检查并转发所有 RuntimeHost 包装层，不能只改 adapter 和调用方。** Daemon 实际持有的是 `LegacyAdapterRuntime`；如果包装层漏绑新方法，源码类型仍可通过且 adapter 单测也会成功，但运行时能力会悄悄变成 `undefined`，导致加速历史无法补图片等只在真实部署出现的问题，因此要为“缺失时保持 undefined、存在时保持 this 绑定并正确转发”各写回归断言。
 - **网页中的用户输入图片必须和 AI 输出图片共用同一套可点击预览，并在乐观消息被真实历史替换后继续可见。** 只让上传缩略图短暂显示会导致发送成功、刷新页面或重启服务后图片消失，用户无法回看自己给 Agent 的关键上下文；移动端输入图片应持久记录到对应 adapter、任务和 turn，历史读取时恢复为受鉴权的公共消息媒体，同时输入框缩略图也应直接打开全屏预览。
-- **命中移动端输入图片记录后必须以网页保存的原图替换 Agent 原生记录里的输入图片，不能把两路图片直接合并。** Codex 等 Agent 可能把同一次上传压缩或转码后再次写入历史，路径与字节都不同但视觉内容相同；若按路径合并，用户只上传一张却会看到两张，因此移动端记录匹配成功时应成为该条用户消息的权威媒体。
-- **移动网页轮询更新运行进展或审批状态时必须复用未变化的消息与图片 DOM 节点，不能清空消息容器后整段重建。** 全量重建会让历史图片每隔几秒重新请求、解码并闪动，即使图片本身没有变化；按稳定消息身份缓存节点、仅在该消息内容变化时重建，才能保持阅读位置和图片加载状态稳定。
-- **移动网页合并加速历史与原生实时消息时必须保留加速源提供的消息 ID 和时间戳，并按跨来源稳定序列对齐，不能直接追加或只匹配连续重叠。** OpenAgentLog 可能没有原生 turnId、phase，还会插入来源特有记录，但其 messageId 与 timestamp 仍可用于稳定节点和审批时间线；若在映射时丢掉这些字段，再只按文本或数组位置合并，乐观消息会跳位、重复，审批也会与 AI 回复割裂。应忽略缺失元数据但尊重明确冲突，并以原生页替换已对齐区间。
-- **Codex 桌面实时消息必须只合并当前被跟踪 turn 的 tail，不能把 `turnHistory` 中所有残留 tail 都追加到移动网页历史。** Codex 桌面状态会暂存多个旧 turn，甚至继续把旧实体标成 `inProgress`；若全部合并，最新用户消息后面会突然出现几条久远用户消息，并在任务结束后再次消失。以 adapter 已跟踪的当前或后台 `turnId` 为权威，当前 turn 尚未出现在桌面快照时宁可暂不合并，也不能回退到旧 tail，才能保证消息顺序稳定且不串轮次。
-- **微信审批选项 4 的用户文案统一使用“今日内本任务免审”，不要再显示“本任务结束前免审”。** 这是用户明确指定的短文案；审批列表需要在手机上快速扫读，保持固定措辞才能避免用户反复确认数字 4 的含义。
-- **ClawBot 同时出现多项审批时必须按审批推送顺序维护全局队列，不能依赖微信引用的“最新消息”来判断归属。** 用户连续回复单个数字时，每个数字依次处理最早未审批项；一条消息中的多个 `1–4` 可用空格或标点分隔并按顺序执行，且必须逐项回执序号与结果。有待审批时裸数字优先属于审批，切换任务应使用“任务 2”，这样才能避免任务编号、用户输入和跨 Agent 审批互相抢占。
+- **移动网页合并加速历史与原生实时消息时必须按跨来源的稳定消息序列对齐，不能直接追加、只依赖消息 ID，或只匹配“旧页结尾＝新页开头”的连续重叠。** OpenAgentLog 可能没有原生 `id`、`turnId`、`phase`，还会插入 `[tool_use]` 等来源特有记录；原生实时页也可能从更早的位置开始。若按数组追加或窄重叠匹配，乐观消息被真实消息替换后就会跳位、重复并与旧消息串在一起；使用忽略缺失元数据但尊重明确冲突的序列对齐，并以原生页替换已对齐区间，才能让消息顺序在轮询和异步刷新后保持稳定。
 - **官网演示截图必须省略项目名、避免任务列表产生孤字换行，并保留完整手机状态栏；电脑端与移动端配图还要使用同一批任务和逐字一致的续派消息。** 这些细节直接决定用户能否一眼理解“移动端接力原任务”，也能避免营销图暴露无关工作区信息或显得像拼接假数据。
 - **微信审批推送失败时必须区分“没有检测到审批”和“iLink context token 已失效”，并在下一条微信消息刷新 token 后先补发仍有效的审批，再处理新消息。** 长任务经常超过微信主动回复窗口；如果先执行用户的新输入或静默丢弃，审批可能继续卡住，用户也会误以为 DeskRelay 没监控到任务。
-- **给运行中的 LaunchAgent 部署本地 npm 包时必须安装 `npm pack` 产出的 tarball，并在文件完全落盘后彻底重启进程、核对运行中的 `/app-version` 与磁盘模块计算值一致，不能直接 `npm install -g <仓库目录>` 或只看端口健康。** 直接安装目录会把全局包变成指向工作区的软链接；安装尚在替换文件时过早启动又可能让新进程把旧模块留在内存里，出现代码已更新但手机因版本号未变而继续运行旧 JS。先卸载服务、打包安装、确认文件完成，再等待端口释放后重新加载，同时比对版本，才能保证开发目录、运行副本和移动端缓存真正一致。
+- **给运行中的 LaunchAgent 部署本地 npm 包时必须安装 `npm pack` 产出的 tarball，不能直接 `npm install -g <仓库目录>`。** 直接安装目录会把全局包变成指向工作区的软链接，后续 `npm run build` 删除并重建 `dist/` 时就可能让正在运行的服务短暂失去入口；先卸载服务、打包并安装 tarball、再恢复服务和验活，才能让开发目录与线上运行副本保持隔离。
 - **网页审批结果必须按 Agent、任务和 turn 持久化并重新合并进消息流，不能在清空待审批卡片后只保留短暂 Toast。** 审批卡片消失并不代表用户不再需要确认自己的选择；记录允许、拒绝、任务级允许或免审结果，并在刷新后恢复到对应轮次附近，才能避免用户误以为操作未生效，也能防止结果串到其他任务。
 - **DeskRelay 的敏感运行时写入必须统一经过私有目录与原子私有文件 helper，并在启动时递归修复旧数据权限。** 只在个别调用点传 `mode` 会遗漏已存在文件、原子临时文件和迁移复制内容；POSIX 上统一目录 `0700`、普通敏感文件 `0600`，并跳过符号链接，才能避免凭据、上下文令牌、日志和附件因 umask 或历史版本遗留而被同机其他用户读取。
 - **Codex 完成通知必须把待发送正文、分段进度和成功去重键持久化，发送前只能标记 in-flight，不能提前标记 delivered 或清理 final reply。** 微信 context token 可能在长任务结束时失效，且多段消息可能只成功一部分；只有全部文本送达后再清缓存，并从未送达分段继续补发，才能同时避免通知永久丢失和重复发送，daemon 重启后也能恢复。
-- **任何来源产生的审批都必须先持久化再尝试推送微信，并在微信 context token 刷新后补发；审批已解决时必须取消待补发记录。** 桌面端或移动网页发起的任务同样可能卡在审批，而微信 token 会因长时间无消息失效；只把审批保存在 slot 内存中会在发送失败或 daemon 重启后永久丢失，持久化 pending/delivered 状态才能保证手机仍是可靠的审批入口，同时避免旧审批晚到。
-- **审批命令进入网页、微信、日志或 daemon state 前必须统一脱敏密码、Bearer、token 与 API key。** 审批往往展示完整命令，若命令含 `sshpass` 或鉴权参数，原样记录会把凭据扩散到截图、日志和持久化文件；先脱敏再生成通知键和可见记录，才能同时保证重启匹配与最小暴露。
 - **用某个 nvm 目录下的 `npm` 绝对路径执行安装时，仍必须把同目录的 Node 放到 `PATH` 最前面。** `npm` 的入口使用 `#!/usr/bin/env node`，只指定 `.../bin/npm` 仍可能由另一套 Node 运行并安装到错误的全局前缀；先固定 `PATH`、再核对 `npm prefix -g` 和最终命令解析，才能确保 LaunchAgent 使用的是真正验收过的副本。
 - **macOS 打包给 Linux 使用的公开快照时必须设置 `COPYFILE_DISABLE=1`。** 否则 BSD tar 会把扩展属性编码成 `._*` AppleDouble 文件，Linux 解包后这些文件会进入 Git 候选列表并触发隐私审计；禁用 copyfile 元数据并在服务器检查不存在 `._*`，才能保证上传内容和本机审计快照一致。
-- **移动网页启动必须区分 Relay 服务在线与电脑在线，公网电脑离线时显示“正在等待你的电脑主动连接服务器…”并自动重试，电脑上线后再提示读取任务；局域网直连则直接提示读取电脑任务，不能统一写成“正在连接电脑”。** 这能准确解释应用层主动中继的真实连接阶段，避免用户把 Relay 可访问误解成电脑已经在线，也不需要手动刷新等待页面。
-- **移动网页的后台轮询遇到浏览器级网络失败时应对幂等 GET 只重试一次并保留现有内容，不能把 `Failed to fetch` 直接弹给用户；非幂等 POST 不得自动重放，只能标记结果未确认并回读真实状态。** 微信 WebView 前后台切换、手机切网、电脑短暂离线或 Relay 重连都会让单次 fetch 在收到 HTTP 响应前失败，这类抖动通常会在下一轮自愈；静默后台失败能避免噪声和假离线，中文化最终错误并把发送、审批等写操作视为未确认，则能防止用户重试制造重复任务或重复操作。
-- **Claude 适配器必须统一显示为 Claude Code；对支持原生命令的 Agent，除 DeskRelay 明确保留的控制命令外，斜杠命令必须从微信和移动网页原样透传。** 这能避免把 Claude 品牌与 Claude Code 工具混淆，也能确保 `/login`、`/model`、`/compact` 等桌面终端能力不会在手机入口失效。
-- **TClaude 0.0.9 不执行通过 `--settings` 注入的 Claude Hook，必须用真实 TUI 就绪信号和 `~/.tclaude/projects` transcript 作为兼容路径，并在 TUI 就绪后停止 Hook 健康检查。** 否则远程消息可能在输入界面尚未准备好时丢失，完成回复无法回传，甚至任务已经成功后仍误报“消息通道失败”。
-- **移动任务看板不能把桌面横向 Kanban 直接缩到手机上；手机端必须改为无横向溢出的单列纵向泳道、隐藏空泳道，并让任务卡使用带 adapter 与 task 的真实深链接。** 横向卡片会挤压状态、项目和时间并让触摸滚动抢占点击；真实链接既扩大整卡点击范围，也能在脚本异常或打开新标签时可靠进入原任务。
+- **Codex 桌面会话的模型状态必须从真实 owner 的 `latestThreadSettings.model` / `latestModel` 读取，切换则通过 `thread-follower-start-turn` 的 `turnStartParams.model` 作用于当前任务后续轮次。** 独立 app-server 只适合读取模型目录，不能写桌面任务设置；这样既能让网页模型选择与 Codex 会话一致，也不会制造独立 owner 或聊天分叉。
+- **移动网页新建任务必须把“桌面 thread 已创建”和“用户已发送第一条消息”分成两个生命周期。** 第一条消息发出前，要按 Agent 复用同一个未完成草稿，并让任务列表轮询在暂时找不到真实 thread 时仍保留当前草稿，不能回退到运行中任务；否则会自动跳转、重复创建空任务，并丢失用户输入到一半的文字和图片。
+- **移动网页的跨刷新秒开缓存必须在服务端确认已认证后同步恢复，并把实时接口刷新放到后台执行。** 在认证前显示会泄露上次会话，等任务和消息接口全部返回又会造成白屏；用同源 `localStorage` 保存带版本、24 小时 TTL 和 LRU 上限的任务摘要、最近可见消息与纯文本草稿，按 adapter + threadId 隔离，退出时清除，并排除图片 Base64、审批内容和令牌，才能同时获得即时首屏、隐私边界和稳定降级。
+- **DeepSeek Harness 网页 Host 的 `/api/events.mux` 必须按 WebSocket 下行连接，不能当作普通 HTTP SSE 读取。** 真实 `dsh web` 对 HTTP 请求会返回 426，导致消息仍可由历史轮询恢复但审批永远收不到；使用 `ws://127.0.0.1:<port>/api/events.mux` 并保留历史补偿，才能同时覆盖实时审批和断线完成恢复。

@@ -866,6 +866,124 @@ describe("Codex desktop live conversation messages", () => {
     }
   });
 
+  test("recovers a completed phase-less assistant reply and removes internal thinking text", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-rollout-phase-less-final-"));
+    const filePath = path.join(directory, "rollout-phase-less-final.jsonl");
+    try {
+      fs.writeFileSync(filePath, [
+        JSON.stringify({
+          timestamp: "2026-08-14T12:47:28.575Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            id: "user-phase-less",
+            role: "user",
+            content: [{ type: "input_text", text: "找出参数链接" }],
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-phase-less" },
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-08-14T12:47:53.013Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            id: "assistant-phase-less",
+            role: "assistant",
+            content: [{
+              type: "output_text",
+              text: "<thinking>internal reasoning must stay private</thinking>\n参数链接：https://example.com/?insight=abc",
+            }],
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-phase-less" },
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-08-14T12:47:53.655Z",
+          type: "event_msg",
+          payload: {
+            type: "task_complete",
+            turn_id: "turn-phase-less",
+            last_agent_message: "<thinking>private</thinking>\n参数链接：https://example.com/?insight=abc",
+            started_at: 1_786_711_648,
+            completed_at: 1_786_711_673,
+            duration_ms: 25_097,
+          },
+        }),
+      ].join("\n") + "\n", "utf8");
+
+      expect(readCodexSessionMessagePageFromRollout(filePath, { limit: 1 })).toEqual({
+        messages: [{
+          role: "assistant",
+          text: "参数链接：https://example.com/?insight=abc",
+          id: "assistant-phase-less",
+          turnId: "turn-phase-less",
+          phase: "final_answer",
+          createdAtMs: Date.parse("2026-08-14T12:47:53.013Z"),
+        }],
+        hasMore: true,
+        nextBefore: expect.stringMatching(/^byte:\d+$/),
+      });
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps recent assistant output when newer Codex rollouts omit the phase field", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-rollout-unphased-"));
+    const filePath = path.join(directory, "rollout-thread-unphased.jsonl");
+    try {
+      fs.writeFileSync(filePath, [
+        JSON.stringify({ type: "session_meta", payload: { id: "thread-unphased" } }),
+        JSON.stringify({
+          timestamp: "2026-08-13T03:42:00.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            id: "user-unphased",
+            role: "user",
+            content: [{ type: "input_text", text: "完成了吗" }],
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-unphased" },
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-08-13T03:42:17.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            id: "assistant-unphased",
+            role: "assistant",
+            content: [{ type: "output_text", text: "已经完成，这是最近回复。" }],
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-unphased" },
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2026-08-13T03:42:18.000Z",
+          type: "event_msg",
+          payload: { type: "task_complete", turn_id: "turn-unphased" },
+        }),
+      ].join("\n") + "\n", "utf8");
+
+      expect(readCodexSessionMessagePageFromRollout(filePath, { limit: 10 })).toMatchObject({
+        messages: [
+          {
+            role: "user",
+            text: "完成了吗",
+            id: "user-unphased",
+            turnId: "turn-unphased",
+          },
+          {
+            role: "assistant",
+            text: "已经完成，这是最近回复。",
+            id: "assistant-unphased",
+            turnId: "turn-unphased",
+          },
+        ],
+        hasMore: false,
+      });
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("materializes historical input images into a private local cache for mobile previews", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-rollout-input-image-"));
     const filePath = path.join(directory, "rollout-input-image.jsonl");
@@ -1500,6 +1618,38 @@ describe("Codex desktop live conversation messages", () => {
         durationMs: 30_000,
       });
       expect(rpcReads).toBe(0);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("treats task_complete with an error as failed and keeps a concise reason", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-rollout-failed-summary-"));
+    const filePath = path.join(directory, "rollout-thread-failed.jsonl");
+    fs.writeFileSync(filePath, JSON.stringify({
+      timestamp: "2026-08-13T13:17:30.949Z",
+      type: "event_msg",
+      payload: {
+        type: "task_complete",
+        turn_id: "turn-failed",
+        error: {
+          message: "unexpected status 503 Service Unavailable: CC Switch local proxy failed while handling Codex endpoint /responses. Provider: codexpro; model: gpt-5.4; upstream_status: HTTP 503; cause: auth_unavailable: no auth available (providers=xai, model=gpt-5.4)",
+        },
+        started_at: 1_786_627_000,
+        completed_at: 1_786_627_050,
+        duration_ms: 50_000,
+      },
+    }) + "\n", "utf8");
+
+    try {
+      expect(readCodexSessionRunSummaryFromRolloutTail(filePath)).toEqual({
+        turnId: "turn-failed",
+        status: "failed",
+        startedAtMs: 1_786_627_000_000,
+        completedAtMs: 1_786_627_050_000,
+        durationMs: 50_000,
+        errorMessage: "当前模型 gpt-5.4 暂时没有可用账号，未生成回复。请在 CC Switch 中恢复该模型账号，或切换模型后重试。",
+      });
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }
@@ -2263,6 +2413,114 @@ describe("Codex desktop IPC transport", () => {
         input: [{ type: "text", text: "不能分叉" }],
       }),
     ).rejects.toThrow("禁止通过独立 app-server 执行写操作");
+  });
+
+  test("reads the current desktop model, validates options, and applies the selected model to the next turn", async () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    const starts: Array<{ threadId: string; text: string; model?: string }> = [];
+    adapter.sendRpcRequest = async (method: string) => {
+      if (method !== "model/list") throw new Error(`Unexpected RPC method: ${method}`);
+      return {
+        data: [
+          {
+            id: "model-sol",
+            model: "gpt-5.6-sol",
+            displayName: "GPT-5.6 Sol",
+            description: "均衡模型",
+            hidden: false,
+          },
+          {
+            id: "model-terra",
+            model: "gpt-5.6-terra",
+            displayName: "GPT-5.6 Terra",
+            description: "深度推理",
+            hidden: false,
+          },
+        ],
+        nextCursor: null,
+      };
+    };
+    adapter.desktopIpcClient = {
+      getThreadStateView: () => ({
+        latestModel: "gpt-5.6-sol",
+        latestThreadSettings: { model: "gpt-5.6-sol" },
+        threadRuntimeStatus: { type: "idle" },
+      }),
+      startTurn: async (threadId: string, text: string, options?: { model?: string }) => {
+        starts.push({ threadId, text, model: options?.model });
+        return { id: "turn-model", status: "inProgress" };
+      },
+    };
+    adapter.getQueuedTaskInputs = () => [];
+    adapter.getSessionMessagePage = async () => ({
+      messages: [{ role: "assistant", text: "上一轮已完成" }],
+      hasMore: false,
+      nextBefore: null,
+    });
+
+    expect(await adapter.getSessionModelState("thread-model")).toEqual({
+      currentModel: "gpt-5.6-sol",
+      options: [
+        {
+          id: "gpt-5.6-sol",
+          label: "GPT-5.6 Sol",
+          description: "均衡模型",
+        },
+        {
+          id: "gpt-5.6-terra",
+          label: "GPT-5.6 Terra",
+          description: "深度推理",
+        },
+      ],
+      canChange: true,
+    });
+    await expect(
+      adapter.setSessionModel("thread-model", "not-a-real-model"),
+    ).rejects.toThrow("这个模型当前不可用");
+    expect(await adapter.setSessionModel("thread-model", "gpt-5.6-terra"))
+      .toMatchObject({ currentModel: "gpt-5.6-terra", canChange: true });
+
+    await adapter.sendInputToSession("thread-model", "使用新模型继续");
+    expect(starts).toEqual([{
+      threadId: "thread-model",
+      text: "使用新模型继续",
+      model: "gpt-5.6-terra",
+    }]);
+  });
+
+  test("does not allow changing a Codex model while that task is running", async () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    adapter.sendRpcRequest = async () => ({
+      data: [{ id: "model-sol", model: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", hidden: false }],
+      nextCursor: null,
+    });
+    adapter.desktopIpcClient = {
+      getThreadStateView: () => ({
+        latestModel: "gpt-5.6-sol",
+        threadRuntimeStatus: { type: "active", activeFlags: [] },
+      }),
+    };
+
+    expect(await adapter.getSessionModelState("thread-running")).toMatchObject({
+      currentModel: "gpt-5.6-sol",
+      canChange: false,
+      unavailableReason: "任务正在处理，完成或停止后再切换模型。",
+    });
+    await expect(
+      adapter.setSessionModel("thread-running", "gpt-5.6-sol"),
+    ).rejects.toThrow("任务正在处理，完成或停止后再切换模型");
   });
 
   test("creates a canonical task and hands it to the desktop owner", async () => {

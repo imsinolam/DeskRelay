@@ -121,6 +121,20 @@ npm run opencode:start
 - `bin/*.mjs` 必须保持 LF 行尾，因为它们是 npm 安装后的可执行入口。
 - 不要提交本地凭据、运行状态、`dist/`、`node_modules/`、日志或本地 artifact 目录。
 
+## Agent Collaboration Workflow
+
+维护者工作区可能同时由多个 Agent 修改。自动化 Agent 与普通 GitHub 贡献者使用不同规则：人类贡献者仍可向自己的 fork 推送并创建 PR；在维护者本机工作的 Agent 只能创建本地提交，不能自行推送或发布。
+
+开发 Agent 必须：
+
+- 使用独立分支和 worktree；
+- 开始前检查并保留现有未提交修改；
+- 只暂存自己负责的文件，不使用 `git add -A`；
+- 完成后提交本地 commit，并报告分支、SHA、改动文件和验证结果；
+- 不推送、不合并 `main`、不改正式版本号、不创建 tag、不发布 npm、不部署正式环境。
+
+只有被用户明确指定的发布 Agent 可以汇总这些 commit、准备版本号和版本说明，并执行正式发版。完整规范见 [docs/agent-release-workflow.md](docs/agent-release-workflow.md)。
+
 ## Commit Messages
 
 Commit 第一行使用 Conventional Commit 格式：
@@ -235,6 +249,8 @@ npm run privacy:check:history
 
 ## Release Notes and Publishing
 
-发布由维护者处理。PR 可以修改源码、测试和文档，但不要在 PR 中执行 `npm publish`。项目只发布一个 npm 包：`deskrelay`。
+发布由唯一的发布 Agent 处理。普通开发 Agent 和 PR 可以修改源码、测试和文档，但不能改正式版本号、创建 tag、执行 `npm publish`、部署正式环境或推送维护者仓库。
 
-如需更新发布说明，请在 `docs/releases/` 下更新当前版本说明，并确保内容来自真实 diff 和实际验证结果。破坏性命名变更必须在主版本号、README 和迁移文档中明确说明。
+发布 Agent 必须从实际 Git diff、候选 commit 和验证结果整理说明。中文版本记录是面向用户的主说明，应使用普通、清晰的中文描述用户能感知的变化，不写类名、字段名、文件路径、提交 SHA 和测试命令。技术证据保留在 commit body 和发布验收报告中。模板见 [docs/releases/TEMPLATE_CN.md](docs/releases/TEMPLATE_CN.md)。
+
+GitHub 的公开 commit、push、tag 和远端验真只能在专用发布服务器完成，不能从维护者 Mac 直接推送，也不能在服务器失败后自动回退为本机直推。完整流程见 [docs/agent-release-workflow.md](docs/agent-release-workflow.md) 和 [docs/publishing.md](docs/publishing.md)。

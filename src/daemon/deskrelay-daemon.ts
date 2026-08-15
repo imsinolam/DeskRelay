@@ -56,6 +56,7 @@ import type {
   BridgeMessageImage,
   BridgeSessionMessage,
   BridgeSessionMessagePageOptions,
+  BridgeSessionModelState,
   BridgeSessionProgressItem,
   BridgeSessionRunSummary,
   BridgeSessionSendResult,
@@ -98,6 +99,7 @@ import {
   resolveCodexTaskListPageNavigation,
   resolveResumeSessionCandidate,
   searchResumeSessionCandidates,
+  sanitizeCodexVisibleAssistantMessageForDisplay,
   sanitizeCodexVisibleUserMessageForDisplay,
   sanitizeWechatInboundPromptForDisplay,
   shouldNotifyTaskInterrupted,
@@ -709,10 +711,10 @@ export function parseDaemonCliArgs(argv: string[]): DaemonCliOptions {
     if (arg === "--help" || arg === "-h") {
       process.stdout.write(
         [
-          "Usage: deskrelay [--cwd <path>] [--adapter <codex|claude|tclaude|grok|codebuddy|reasonix|workbuddy|opencode>] [--profile <name-or-path>] [--no-open]",
+          "Usage: deskrelay [--cwd <path>] [--adapter <codex|claude|tclaude|grok|codebuddy|reasonix|workbuddy|deepseek|opencode>] [--profile <name-or-path>] [--no-open]",
           "",
           "Keeps one WeChat connection alive and switches between supported agents from WeChat.",
-          "Send /codex, /claude, /tclaude, /grok, /codebuddy, /reasonix, /workbuddy, or /opencode in WeChat to switch the active agent.",
+          "Send /codex, /claude, /tclaude, /grok, /codebuddy, /reasonix, /workbuddy, /deepseek, or /opencode in WeChat to switch the active agent.",
           "",
         ].join("\n"),
       );
@@ -778,6 +780,10 @@ export function parseDaemonSwitchCommand(text: string): DaemonAdapterKind | null
     case "/workbuddy":
     case "/workbuddy desktop":
       return "workbuddy";
+    case "/deepseek":
+    case "/deepseek harness":
+    case "/dsh":
+      return "deepseek";
     case "/opencode":
       return "opencode";
     default:
@@ -853,7 +859,7 @@ export function resolveDaemonSessionStartMode(params: {
   if (params.adapter === "codex") {
     return "restore";
   }
-  if (params.adapter === "workbuddy") {
+  if (params.adapter === "workbuddy" || params.adapter === "deepseek") {
     return "restore";
   }
   if (params.slotCreated) {
@@ -1345,7 +1351,7 @@ function formatInboundMessagePreview(message: InboundWechatMessage): string {
 function formatNoActiveAdapterMessage(): string {
   return [
     "尚未选择终端。",
-    "发送 /codex、/claude、/tclaude、/grok、/codebuddy、/reasonix、/workbuddy 或 /opencode。",
+    "发送 /codex、/claude、/tclaude、/grok、/codebuddy、/reasonix、/workbuddy、/deepseek 或 /opencode。",
   ].join("\n");
 }
 
@@ -1428,6 +1434,9 @@ export function detectOpenMobileAdaptersFromProcessList(
     }
     if (processLineHasCommand(line, "reasonix") || /--adapter\s+reasonix(?:\s|$)/i.test(line)) {
       open.add("reasonix");
+    }
+    if (/(?:^|[\s/\\])dsh(?:\.exe)?\s+web(?:\s|$)/i.test(line) || /--adapter\s+deepseek(?:\s|$)/i.test(line)) {
+      open.add("deepseek");
     }
     if (processLineHasCommand(line, "opencode") || /--adapter\s+opencode(?:\s|$)/i.test(line)) {
       open.add("opencode");
@@ -1827,8 +1836,11 @@ export function sanitizeDaemonVisibleSessionMessage(
   adapter: DaemonAdapterKind,
   message: BridgeSessionMessage,
 ): BridgeSessionMessage | null {
-  if (message.role !== "user") {
-    return message;
+  if (message.role === "assistant") {
+    const text = adapter === "codex"
+      ? sanitizeCodexVisibleAssistantMessageForDisplay(message.text)
+      : message.text.trim();
+    return text ? { ...message, text } : null;
   }
   const text = adapter === "codex"
     ? sanitizeCodexVisibleUserMessageForDisplay(message.text)
@@ -2221,16 +2233,30 @@ export function shouldSendCodexCompletionNotification(params: {
   if (params.runSummary?.status === "running") {
     return false;
   }
-  if (
-    params.latestMessage?.role !== "assistant" ||
-    params.latestMessage.phase !== "final_answer"
-  ) {
+  if (params.latestMessage?.role !== "assistant") {
     return false;
   }
-  return !(
+  const visibleText = sanitizeCodexVisibleAssistantMessageForDisplay(
+    params.latestMessage.text,
+  );
+  if (!visibleText || params.latestMessage.phase === "commentary") {
+    return false;
+  }
+  const turnMismatch = Boolean(
     params.runSummary?.turnId &&
     params.latestMessage.turnId &&
     params.runSummary.turnId !== params.latestMessage.turnId
+  );
+  if (turnMismatch) {
+    return false;
+  }
+  if (params.latestMessage.phase === "final_answer") {
+    return true;
+  }
+  return Boolean(
+    params.runSummary?.turnId &&
+    params.latestMessage.turnId === params.runSummary.turnId &&
+    params.runSummary.status !== "unknown"
   );
 }
 
@@ -2552,6 +2578,10 @@ class DeskRelayDaemon {
           this.createMobileTask(adapter, options?.sourceThreadId),
         renameTask: (threadId, title, adapter) =>
           this.renameMobileTask(threadId, title, adapter),
+        readTaskModel: (threadId, adapter) =>
+          this.readMobileTaskModel(threadId, adapter),
+        setTaskModel: (threadId, model, adapter) =>
+          this.setMobileTaskModel(threadId, model, adapter),
         readMessages: (threadId, options, adapter) =>
           this.readMobileMessages(threadId, options, adapter),
         sendMessage: (threadId, input, adapter) =>
@@ -2621,7 +2651,7 @@ class DeskRelayDaemon {
     let consecutivePollFailures = 0;
     log("DeskRelay daemon is ready.");
     log(`Working directory: ${this.cwd}`);
-    log("Switch from WeChat with /codex, /claude, /tclaude, /grok, /codebuddy, /reasonix, /workbuddy, or /opencode.");
+    log("Switch from WeChat with /codex, /claude, /tclaude, /grok, /codebuddy, /reasonix, /workbuddy, /deepseek, or /opencode.");
     appendDaemonLog(`started: cwd=${this.cwd}`);
 
     const activeSlot = this.getActiveSlot();
@@ -5475,6 +5505,50 @@ class DeskRelayDaemon {
       `mobile_task_created: adapter=${slot.adapter} thread=${created.threadId}`,
     );
     return created;
+  }
+
+  private async readMobileTaskModel(
+    threadId: string,
+    adapter?: string,
+  ): Promise<BridgeSessionModelState> {
+    const slot = this.getMobileSlot(adapter);
+    const task = (await this.listMobileTasks(slot.adapter)).find(
+      (candidate) => candidate.threadId === threadId,
+    );
+    if (!task) {
+      throw new Error(`没有找到这个 ${formatDaemonAdapterLabel(slot.adapter)} 任务。`);
+    }
+    if (slot.runtime.getSessionModelState) {
+      return await slot.runtime.getSessionModelState(threadId);
+    }
+    const latest = slot.runtime.getLatestSessionMessage
+      ? await slot.runtime.getLatestSessionMessage(threadId)
+      : null;
+    const currentModel = latest?.model;
+    return {
+      ...(currentModel ? { currentModel } : {}),
+      options: currentModel ? [{ id: currentModel }] : [],
+      canChange: false,
+      unavailableReason: `${formatDaemonAdapterLabel(slot.adapter)} 暂不支持从网页版切换模型。`,
+    };
+  }
+
+  private async setMobileTaskModel(
+    threadId: string,
+    model: string,
+    adapter?: string,
+  ): Promise<BridgeSessionModelState> {
+    const slot = this.getMobileSlot(adapter);
+    if (!slot.runtime.setSessionModel) {
+      throw new Error(`${formatDaemonAdapterLabel(slot.adapter)} 暂不支持从网页版切换模型。`);
+    }
+    const task = (await this.listMobileTasks(slot.adapter)).find(
+      (candidate) => candidate.threadId === threadId,
+    );
+    if (!task) {
+      throw new Error(`没有找到这个 ${formatDaemonAdapterLabel(slot.adapter)} 任务。`);
+    }
+    return await slot.runtime.setSessionModel(threadId, model);
   }
 
   private async readMobileMessages(
