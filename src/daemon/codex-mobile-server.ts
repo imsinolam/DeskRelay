@@ -30,6 +30,134 @@ export const CODEX_MOBILE_ASSET_VERSION = crypto.createHash("sha256")
   .update(CODEX_MOBILE_JS)
   .digest("hex")
   .slice(0, 12);
+
+const CODEX_MOBILE_SHORT_ADAPTER_CODES: Record<string, string> = {
+  codex: "c",
+  workbuddy: "w",
+  claude: "h",
+  tclaude: "t",
+  grok: "g",
+  codebuddy: "b",
+  reasonix: "r",
+  opencode: "o",
+  deepseek: "d",
+};
+const CODEX_MOBILE_SHORT_CODE_ADAPTERS = Object.fromEntries(
+  Object.entries(CODEX_MOBILE_SHORT_ADAPTER_CODES).map(([adapter, code]) => [code, adapter]),
+) as Record<string, string>;
+const CODEX_MOBILE_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type CodexMobileTaskShortTarget = {
+  adapter: string;
+  threadId: string;
+};
+
+function encodeCodexMobileShortAdapter(adapter: string): string {
+  const normalized = adapter.trim().toLowerCase() || "codex";
+  const known = CODEX_MOBILE_SHORT_ADAPTER_CODES[normalized];
+  if (known) {
+    return known;
+  }
+  return `x${Buffer.from(normalized, "utf8").toString("base64url")}.`;
+}
+
+function decodeCodexMobileShortAdapter(
+  code: string,
+): { adapter: string; payloadOffset: number } | null {
+  if (code.startsWith("x")) {
+    const separator = code.indexOf(".", 1);
+    if (separator < 2) return null;
+    try {
+      const adapter = Buffer.from(code.slice(1, separator), "base64url")
+        .toString("utf8")
+        .trim()
+        .toLowerCase();
+      if (!adapter || adapter.length > 64) return null;
+      return { adapter, payloadOffset: separator + 1 };
+    } catch {
+      return null;
+    }
+  }
+  const adapter = CODEX_MOBILE_SHORT_CODE_ADAPTERS[code.slice(0, 1)];
+  return adapter ? { adapter, payloadOffset: 1 } : null;
+}
+
+function decodeCodexMobileUuidPayload(payload: string): string | null {
+  try {
+    const bytes = Buffer.from(payload, "base64url");
+    if (bytes.length !== 16) return null;
+    const hex = bytes.toString("hex");
+    return [
+      hex.slice(0, 8),
+      hex.slice(8, 12),
+      hex.slice(12, 16),
+      hex.slice(16, 20),
+      hex.slice(20),
+    ].join("-");
+  } catch {
+    return null;
+  }
+}
+
+export function encodeCodexMobileTaskShortCode(
+  adapter: string | undefined,
+  threadId: string,
+): string {
+  const normalizedThreadId = threadId.trim();
+  if (!normalizedThreadId) {
+    throw new Error("任务 ID 不能为空。");
+  }
+  const adapterPrefix = encodeCodexMobileShortAdapter(adapter ?? "codex");
+  if (CODEX_MOBILE_UUID_PATTERN.test(normalizedThreadId)) {
+    const bytes = Buffer.from(normalizedThreadId.replaceAll("-", ""), "hex");
+    return `${adapterPrefix}u${bytes.toString("base64url")}`;
+  }
+  return `${adapterPrefix}s${Buffer.from(normalizedThreadId, "utf8").toString("base64url")}`;
+}
+
+export function decodeCodexMobileTaskShortCode(
+  code: string,
+): CodexMobileTaskShortTarget | null {
+  const normalized = code.trim();
+  if (!normalized || normalized.length > 768) return null;
+  const adapterTarget = decodeCodexMobileShortAdapter(normalized);
+  if (!adapterTarget) return null;
+  const kind = normalized.slice(adapterTarget.payloadOffset, adapterTarget.payloadOffset + 1);
+  const payload = normalized.slice(adapterTarget.payloadOffset + 1);
+  if (!payload) return null;
+  let threadId: string | null = null;
+  if (kind === "u") {
+    threadId = decodeCodexMobileUuidPayload(payload);
+  } else if (kind === "s") {
+    try {
+      threadId = Buffer.from(payload, "base64url").toString("utf8").trim();
+    } catch {
+      threadId = null;
+    }
+  }
+  if (!threadId || threadId.length > 512) return null;
+  return { adapter: adapterTarget.adapter, threadId };
+}
+
+export function resolveCodexMobileTaskShortRedirect(
+  pathname: string,
+  searchParams?: URLSearchParams,
+): string | null {
+  const match = pathname.match(/^\/t\/([A-Za-z0-9_.~-]+)$/);
+  if (!match) return null;
+  const target = decodeCodexMobileTaskShortCode(match[1] ?? "");
+  if (!target) return null;
+  const redirect = new URLSearchParams();
+  redirect.set("task", target.threadId);
+  redirect.set("adapter", target.adapter);
+  redirect.set("appv", CODEX_MOBILE_ASSET_VERSION);
+  for (const key of ["setup", "key"] as const) {
+    const value = searchParams?.get(key)?.trim();
+    if (value) redirect.set(key, value);
+  }
+  return `/?${redirect.toString()}`;
+}
 const CODEX_MOBILE_HTML_RESPONSE = CODEX_MOBILE_HTML.replaceAll(
   CODEX_MOBILE_ASSET_VERSION_PLACEHOLDER,
   CODEX_MOBILE_ASSET_VERSION,
@@ -978,6 +1106,21 @@ function createRequestHandler(
         sendJson(response, 200, { ok: true });
         return;
       }
+      if (method === "GET" && url.pathname.startsWith("/t/")) {
+        const target = resolveCodexMobileTaskShortRedirect(url.pathname, url.searchParams);
+        if (!target) {
+          sendText(response, 404, "text/plain; charset=utf-8", "短链接不存在或已失效。");
+          return;
+        }
+        response.writeHead(302, {
+          location: target,
+          "cache-control": "no-store",
+          "x-content-type-options": "nosniff",
+          "referrer-policy": "no-referrer",
+        });
+        response.end();
+        return;
+      }
       if (method === "GET" && url.pathname === "/lan-entry") {
         const authStore = options.authStore;
         if (!authStore?.isConfigured()) {
@@ -1608,17 +1751,14 @@ export async function startCodexMobileServer(
     buildTaskUrl: (threadId, adapter) => {
       const selector = threadId.trim();
       const baseUrl = publicBaseUrl ?? `http://${lanAddress}:${port}`;
-      const adapterQuery = adapter?.trim()
-        ? `&adapter=${encodeURIComponent(adapter.trim())}`
-        : "";
-      const versionQuery = `&appv=${encodeURIComponent(CODEX_MOBILE_ASSET_VERSION)}`;
+      const shortCode = encodeCodexMobileTaskShortCode(adapter ?? "codex", selector);
       if (!options.authStore) {
-        return `${baseUrl}/?task=${encodeURIComponent(selector)}${adapterQuery}${versionQuery}&key=${encodeURIComponent(options.accessToken)}`;
+        return `${baseUrl}/t/${shortCode}?key=${encodeURIComponent(options.accessToken)}`;
       }
       const setupQuery = options.authStore.isConfigured()
         ? ""
-        : `&setup=${encodeURIComponent(options.accessToken)}`;
-      return `${baseUrl}/?task=${encodeURIComponent(selector)}${adapterQuery}${versionQuery}${setupQuery}`;
+        : `?setup=${encodeURIComponent(options.accessToken)}`;
+      return `${baseUrl}/t/${shortCode}${setupQuery}`;
     },
     close: async () => {
       await new Promise<void>((resolve) => {

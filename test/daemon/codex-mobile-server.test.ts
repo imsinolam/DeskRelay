@@ -12,12 +12,40 @@ import {
 import { DaemonWorkspaceStateStore } from "../../src/daemon/daemon-state.ts";
 import {
   CODEX_MOBILE_ASSET_VERSION,
+  decodeCodexMobileTaskShortCode,
+  encodeCodexMobileTaskShortCode,
   MobileAdapterUnavailableError,
   paginateCodexMobileMessages,
   resolveCodexMobileListenHost,
   resolvePreferredLanAddress,
   startCodexMobileServer,
 } from "../../src/daemon/codex-mobile-server.ts";
+
+describe("mobile task short links", () => {
+  test("round-trips UUID and opaque session ids without cross-adapter collisions", () => {
+    const uuid = "0000000a-0000-7000-8000-00000000000a";
+    const codexCode = encodeCodexMobileTaskShortCode("codex", uuid);
+    const workbuddyCode = encodeCodexMobileTaskShortCode("workbuddy", uuid);
+
+    expect(codexCode.length).toBeLessThan(uuid.length);
+    expect(workbuddyCode).not.toBe(codexCode);
+    expect(decodeCodexMobileTaskShortCode(codexCode)).toEqual({
+      adapter: "codex",
+      threadId: uuid,
+    });
+    expect(decodeCodexMobileTaskShortCode(workbuddyCode)).toEqual({
+      adapter: "workbuddy",
+      threadId: uuid,
+    });
+
+    const opaqueCode = encodeCodexMobileTaskShortCode("custom-agent", "session/中文-42");
+    expect(decodeCodexMobileTaskShortCode(opaqueCode)).toEqual({
+      adapter: "custom-agent",
+      threadId: "session/中文-42",
+    });
+    expect(decodeCodexMobileTaskShortCode("invalid")).toBeNull();
+  });
+});
 
 describe("mobile document title", () => {
   test("tracks task selection, async task loading, rename, and stable fallback", () => {
@@ -66,11 +94,13 @@ describe("mobile boot connection states", () => {
     });
   });
 
-  test("waits for the computer before starting authentication", () => {
+  test("restores trusted cache before waiting for the computer and authenticates in background", () => {
     expect(CODEX_MOBILE_HTML).toContain("正在检查电脑连接状态…");
     expect(CODEX_MOBILE_JS).toContain("async function waitForComputerConnection");
-    expect(CODEX_MOBILE_JS).toContain("await waitForComputerConnection();");
+    expect(CODEX_MOBILE_JS).toContain("restoreTrustedPersistentMobileCachePreview");
+    expect(CODEX_MOBILE_JS).toContain("void waitForComputerConnection();");
     expect(CODEX_MOBILE_JS).toContain("await initializeAuthentication();");
+    expect(CODEX_MOBILE_JS).not.toContain("await waitForComputerConnection();");
   });
 });
 
@@ -1182,6 +1212,10 @@ describe("Codex mobile persistent cache", () => {
       schemaVersion: runtime.schemaVersion,
       savedAtMs: nowMs - 2_000,
       currentAdapter: "codex",
+      adapters: [
+        { id: "codex", label: "Codex" },
+        { id: "deepseek", label: "DeepSeek Harness" },
+      ],
       taskSnapshots: {
         codex: {
           currentThreadId: "task-a",
@@ -1224,6 +1258,11 @@ describe("Codex mobile persistent cache", () => {
         [runtime.conversationStateKey("codex", "task-a")]: { text: "跨刷新草稿" },
       },
       composerDraftOrder: [runtime.conversationStateKey("codex", "task-a")],
+      taskBoard: {
+        tasks: [{ adapter: "codex", threadId: "task-a", title: "缓存看板任务" }],
+        recentCompleted: [{ adapter: "grok", threadId: "done-a", title: "缓存已完成任务" }],
+        lastLoadedAtMs: nowMs - 2_000,
+      },
     }));
 
     expect(runtime.restorePersistentMobileCache("codex", "task-a")).toBe(true);
@@ -1231,10 +1270,21 @@ describe("Codex mobile persistent cache", () => {
       { threadId: "task-a", title: "缓存任务 A", status: "idle" },
     ]);
     expect(state.currentThreadId).toBe("task-a");
+    expect(state.adapters).toEqual([
+      { id: "codex", label: "Codex", status: "" },
+      { id: "deepseek", label: "DeepSeek Harness", status: "" },
+    ]);
     expect(state.serverMessages).toEqual([
       { role: "assistant", text: "缓存中的最近回复" },
     ]);
     expect(runtime.composerInput.value).toBe("跨刷新草稿");
+    expect(state.boardTasks).toEqual([
+      { adapter: "codex", threadId: "task-a", title: "缓存看板任务" },
+    ]);
+    expect(state.boardRecentCompleted).toEqual([
+      { adapter: "grok", threadId: "done-a", title: "缓存已完成任务" },
+    ]);
+    expect(state.boardLastLoadedAtMs).toBe(nowMs - 2_000);
     expect(runtime.renderEvents).toContain("messages");
   });
 
@@ -1272,6 +1322,10 @@ describe("Codex mobile persistent cache", () => {
     const nowMs = 1_800_000_000_000;
     const state = createPersistentCacheTestState();
     state.authenticated = true;
+    state.adapters = [
+      { id: "codex", label: "Codex", status: "running", secret: "no-cache" },
+      { id: "deepseek", label: "DeepSeek Harness", status: "idle" },
+    ];
     state.currentAdapter = "codex";
     state.currentThreadId = "shared-id";
     state.tasks = [{
@@ -1305,6 +1359,10 @@ describe("Codex mobile persistent cache", () => {
     expect(snapshot.pendingApproval).toBeNull();
     expect(snapshot.approvalResults).toEqual([]);
     expect(snapshot.queuedMessages).toEqual([]);
+    expect(payload.adapters).toEqual([
+      { id: "codex", label: "Codex", status: "" },
+      { id: "deepseek", label: "DeepSeek Harness", status: "" },
+    ]);
     expect(raw).not.toContain("SECRET_IMAGE");
     expect(raw).not.toContain("secret approval");
     expect(raw).not.toContain("secret queued input");
@@ -1355,6 +1413,32 @@ describe("Codex mobile persistent cache", () => {
     expect(block).toContain("async function refreshAuthenticatedApp");
     expect(block).toContain("await loadAdapters();");
     expect(block).toContain("await loadTasks(true);");
+  });
+
+  test("opens the cached task board immediately and refreshes it silently", () => {
+    const loadStart = CODEX_MOBILE_JS.indexOf("  async function loadTaskBoard");
+    const loadEnd = CODEX_MOBILE_JS.indexOf("\n  function setTaskBoardView", loadStart);
+    const loadBlock = CODEX_MOBILE_JS.slice(loadStart, loadEnd);
+    const openStart = CODEX_MOBILE_JS.indexOf("  function setTaskBoardOpen");
+    const openEnd = CODEX_MOBILE_JS.indexOf("\n  function taskBoardSearch", openStart);
+    const openBlock = CODEX_MOBILE_JS.slice(openStart, openEnd);
+
+    expect(loadBlock).toContain("state.boardTasks.length");
+    expect(loadBlock).toContain("if (error.network && hasCachedBoard) return;");
+    expect(openBlock.indexOf("renderTaskBoard();")).toBeLessThan(
+      openBlock.indexOf("void loadTaskBoard(false);")
+    );
+  });
+
+  test("shows the target adapter cache before waiting for the desktop switch", () => {
+    const start = CODEX_MOBILE_JS.indexOf("  async function switchAdapter");
+    const end = CODEX_MOBILE_JS.indexOf("\n  function showAuthentication", start);
+    const block = CODEX_MOBILE_JS.slice(start, end);
+    const restoreIndex = block.indexOf('restoreCachedAdapterState(adapterId, "");');
+    const requestIndex = block.indexOf('await api(\n        "/api/adapters/"');
+
+    expect(restoreIndex).toBeGreaterThan(-1);
+    expect(requestIndex).toBeGreaterThan(restoreIndex);
   });
 });
 
@@ -2408,8 +2492,21 @@ describe("Codex mobile server", () => {
     });
 
     try {
-      expect(server.buildTaskUrl("0000000a-0000-7000-8000-00000000000a")).toBe(
-        `http://198.51.100.10/?task=0000000a-0000-7000-8000-00000000000a&appv=${CODEX_MOBILE_ASSET_VERSION}&setup=mobile-secret`,
+      const taskUrl = new URL(server.buildTaskUrl(
+        "0000000a-0000-7000-8000-00000000000a",
+        "codex",
+      ));
+      expect(taskUrl.origin).toBe("http://198.51.100.10");
+      expect(taskUrl.pathname).toMatch(/^\/t\/[A-Za-z0-9_.~-]+$/);
+      expect(taskUrl.searchParams.get("setup")).toBe("mobile-secret");
+
+      const redirect = await fetch(
+        `http://127.0.0.1:${server.port}${taskUrl.pathname}${taskUrl.search}`,
+        { redirect: "manual" },
+      );
+      expect(redirect.status).toBe(302);
+      expect(redirect.headers.get("location")).toBe(
+        `/?task=0000000a-0000-7000-8000-00000000000a&adapter=codex&appv=${CODEX_MOBILE_ASSET_VERSION}&setup=mobile-secret`,
       );
     } finally {
       await server.close();
@@ -2905,7 +3002,8 @@ describe("Codex mobile server", () => {
       expect(js).toContain('<div class="loading-row">');
       expect(js).toContain("escapeHtml(currentAdapterName())");
       expect(js).toContain('updateDocumentTitle();\n  async function startMobileApplication()');
-      expect(js).toContain('await waitForComputerConnection();\n    await initializeAuthentication();');
+      expect(js).toContain('restoreTrustedPersistentMobileCachePreview');
+      expect(js).toContain('void waitForComputerConnection();\n    await initializeAuthentication();');
       expect(js).toContain("mergeQueuedMessagesForDisplay");
       expect(js).toContain("switchingAdapterId");
       expect(js).toContain("switchProgressLabel");
@@ -3052,8 +3150,25 @@ describe("Codex mobile server", () => {
       expect(js).toContain('window.addEventListener("pageshow"');
       expect(() => new Function(js)).not.toThrow();
 
-      expect(server.buildTaskUrl("0000000a-0000-7000-8000-00000000000a")).toBe(
-        `http://192.168.50.10:${server.port}/?task=0000000a-0000-7000-8000-00000000000a&appv=${CODEX_MOBILE_ASSET_VERSION}`,
+      const taskUrl = new URL(server.buildTaskUrl(
+        "0000000a-0000-7000-8000-00000000000a",
+        "codex",
+      ));
+      expect(taskUrl.origin).toBe(`http://192.168.50.10:${server.port}`);
+      expect(taskUrl.pathname).toMatch(/^\/t\/[A-Za-z0-9_.~-]+$/);
+      expect(taskUrl.search).toBe("");
+      const sameSessionOtherAdapter = new URL(server.buildTaskUrl(
+        "0000000a-0000-7000-8000-00000000000a",
+        "workbuddy",
+      ));
+      expect(sameSessionOtherAdapter.pathname).not.toBe(taskUrl.pathname);
+
+      const shortRedirect = await fetch(`${root}${taskUrl.pathname}`, {
+        redirect: "manual",
+      });
+      expect(shortRedirect.status).toBe(302);
+      expect(shortRedirect.headers.get("location")).toBe(
+        `/?task=0000000a-0000-7000-8000-00000000000a&adapter=codex&appv=${CODEX_MOBILE_ASSET_VERSION}`,
       );
 
       const unauthorized = await fetch(`${root}/api/tasks`);
@@ -3700,6 +3815,9 @@ function runtimeKey(adapter: string, threadId: string): string {
 function createPersistentCacheTestState(): Record<string, any> {
   return {
     authenticated: false,
+    cachePreviewMode: false,
+    persistentCacheAuthenticatedAtMs: 0,
+    adapters: [],
     currentAdapter: "codex",
     currentThreadId: "",
     tasks: [],
@@ -3711,6 +3829,9 @@ function createPersistentCacheTestState(): Record<string, any> {
     composerDraftOrder: [],
     persistentCacheRestored: false,
     persistentCacheWriteTimer: null,
+    boardTasks: [],
+    boardRecentCompleted: [],
+    boardLastLoadedAtMs: 0,
     serverMessages: [],
     historyMessages: [],
     latestMessages: [],

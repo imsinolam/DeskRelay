@@ -1269,6 +1269,9 @@ export const CODEX_MOBILE_JS = String.raw`
     setupToken: "",
     authMode: "login",
     authenticated: false,
+    cachePreviewMode: false,
+    authenticationRetryTimer: null,
+    persistentCacheAuthenticatedAtMs: 0,
     appStarted: false,
     adapters: [],
     currentAdapter: "codex",
@@ -1593,6 +1596,36 @@ export const CODEX_MOBILE_JS = String.raw`
     return sanitized;
   }
 
+  function sanitizePersistentTaskBoardItem(item) {
+    if (
+      !item ||
+      typeof item !== "object" ||
+      typeof item.adapter !== "string" ||
+      typeof item.threadId !== "string" ||
+      !item.adapter ||
+      !item.threadId
+    ) return null;
+    var sanitized = {};
+    [
+      "adapter", "adapterLabel", "threadId", "title", "status", "lastUpdatedAt",
+      "startedAtMs", "completedAt", "completedAtMs", "durationMs", "activeTurnId"
+    ].forEach(function (key) {
+      if (item[key] !== undefined) sanitized[key] = item[key];
+    });
+    return sanitized;
+  }
+
+  function sanitizePersistentAdapter(adapter) {
+    if (!adapter || typeof adapter.id !== "string" || !adapter.id) return null;
+    return {
+      id: adapter.id,
+      label: typeof adapter.label === "string" && adapter.label
+        ? adapter.label
+        : adapter.id,
+      status: ""
+    };
+  }
+
   function sanitizePersistentImage(image) {
     if (!image || typeof image !== "object") return null;
     var previewUrl = typeof image.previewUrl === "string" &&
@@ -1737,7 +1770,13 @@ export const CODEX_MOBILE_JS = String.raw`
     return {
       schemaVersion: PERSISTENT_MOBILE_CACHE_SCHEMA_VERSION,
       savedAtMs: Date.now(),
+      authenticatedAtMs: state.cachePreviewMode
+        ? state.persistentCacheAuthenticatedAtMs
+        : Date.now(),
       currentAdapter: state.currentAdapter || "codex",
+      adapters: (Array.isArray(state.adapters) ? state.adapters : [])
+        .map(sanitizePersistentAdapter)
+        .filter(Boolean),
       taskSnapshots: taskSnapshots,
       taskSnapshotOrder: Object.keys(taskSnapshots).filter(function (adapterId) {
         return state.taskSnapshotOrder.includes(adapterId);
@@ -1745,7 +1784,18 @@ export const CODEX_MOBILE_JS = String.raw`
       conversationSnapshots: conversationSnapshots,
       conversationSnapshotOrder: conversationOrder,
       composerDrafts: composerDrafts,
-      composerDraftOrder: composerOrder
+      composerDraftOrder: composerOrder,
+      taskBoard: {
+        tasks: (Array.isArray(state.boardTasks) ? state.boardTasks : [])
+          .map(sanitizePersistentTaskBoardItem)
+          .filter(Boolean),
+        recentCompleted: (Array.isArray(state.boardRecentCompleted)
+          ? state.boardRecentCompleted
+          : [])
+          .map(sanitizePersistentTaskBoardItem)
+          .filter(Boolean),
+        lastLoadedAtMs: Math.max(0, Number(state.boardLastLoadedAtMs) || 0)
+      }
     };
   }
 
@@ -1800,6 +1850,13 @@ export const CODEX_MOBILE_JS = String.raw`
     state.persistentCacheRestored = true;
     var payload = readPersistentMobileCache();
     if (!payload) return false;
+    state.persistentCacheAuthenticatedAtMs = Math.max(
+      0,
+      Number(payload.authenticatedAtMs) || 0
+    );
+    state.adapters = Array.isArray(payload.adapters)
+      ? payload.adapters.map(sanitizePersistentAdapter).filter(Boolean)
+      : [];
     var taskSnapshotSource = payload.taskSnapshots && typeof payload.taskSnapshots === "object"
       ? payload.taskSnapshots
       : Object.create(null);
@@ -1858,8 +1915,64 @@ export const CODEX_MOBILE_JS = String.raw`
       state.composerDraftOrder.push(key);
     });
 
+    var taskBoard = payload.taskBoard && typeof payload.taskBoard === "object"
+      ? payload.taskBoard
+      : null;
+    state.boardTasks = taskBoard && Array.isArray(taskBoard.tasks)
+      ? taskBoard.tasks.map(sanitizePersistentTaskBoardItem).filter(Boolean)
+      : [];
+    state.boardRecentCompleted = taskBoard && Array.isArray(taskBoard.recentCompleted)
+      ? taskBoard.recentCompleted.map(sanitizePersistentTaskBoardItem).filter(Boolean)
+      : [];
+    state.boardLastLoadedAtMs = taskBoard
+      ? Math.max(0, Number(taskBoard.lastLoadedAtMs) || 0)
+      : 0;
+
     var adapterId = String(requestedAdapter || payload.currentAdapter || state.currentAdapter || "codex");
-    return restoreCachedAdapterState(adapterId, requestedThreadId);
+    return Boolean(
+      restoreCachedAdapterState(adapterId, requestedThreadId) ||
+      state.boardTasks.length ||
+      state.boardRecentCompleted.length
+    );
+  }
+
+  function restoreTrustedPersistentMobileCachePreview() {
+    state.setupToken = readSetupToken();
+    if (state.setupToken) return false;
+    var payload = readPersistentMobileCache();
+    var authenticatedAtMs = Number(payload && payload.authenticatedAtMs);
+    if (
+      !payload ||
+      !Number.isFinite(authenticatedAtMs) ||
+      authenticatedAtMs <= 0 ||
+      Date.now() - authenticatedAtMs > PERSISTENT_MOBILE_CACHE_TTL_MS
+    ) return false;
+    var pageUrl = new URL(window.location.href);
+    var requestedAdapter = pageUrl.searchParams.get("adapter") || payload.currentAdapter || "codex";
+    var requestedTask = pageUrl.searchParams.get("task") || "";
+    state.authenticated = true;
+    state.cachePreviewMode = true;
+    state.persistentCacheAuthenticatedAtMs = authenticatedAtMs;
+    if (!restorePersistentMobileCache(requestedAdapter, requestedTask)) {
+      state.authenticated = false;
+      state.cachePreviewMode = false;
+      return false;
+    }
+    state.appStarted = true;
+    state.boardView = pageUrl.searchParams.get("board") === "completed"
+      ? "completed"
+      : "active";
+    if (!state.runClockTimer) {
+      state.runClockTimer = setInterval(updateRunHeaderClock, 1000);
+    }
+    state.loadingTasks = false;
+    bootScreen.hidden = true;
+    authScreen.hidden = true;
+    app.hidden = false;
+    setTaskBoardOpen(pageUrl.searchParams.get("view") === "board", false);
+    syncComposerInset();
+    updateUserMessageNavigation();
+    return true;
   }
 
   function isTemporaryTask(task) {
@@ -2326,9 +2439,11 @@ export const CODEX_MOBILE_JS = String.raw`
   }
 
   async function waitForComputerConnection() {
-    app.hidden = true;
-    authScreen.hidden = true;
-    bootScreen.hidden = false;
+    if (!state.cachePreviewMode) {
+      app.hidden = true;
+      authScreen.hidden = true;
+      bootScreen.hidden = false;
+    }
     bootStatus.textContent = "正在检查电脑连接状态…";
     while (true) {
       try {
@@ -2758,9 +2873,17 @@ export const CODEX_MOBILE_JS = String.raw`
       return true;
     }
     saveCurrentConversationSnapshot();
+    rememberCurrentTaskSnapshot();
     state.switchingAdapter = true;
     state.switchingAdapterId = adapterId;
     state.switchStartedAtMs = Date.now();
+    state.currentAdapter = adapterId;
+    resetTaskStateForAdapterSwitch();
+    restoreCachedAdapterState(adapterId, "");
+    var canonicalUrl = new URL(window.location.href);
+    canonicalUrl.searchParams.set("adapter", adapterId);
+    if (!initial) canonicalUrl.searchParams.delete("task");
+    history.replaceState(null, "", canonicalUrl.pathname + canonicalUrl.search + canonicalUrl.hash);
     renderAdapterMenu();
     renderTasks();
     renderMessages(false);
@@ -2772,12 +2895,12 @@ export const CODEX_MOBILE_JS = String.raw`
         { method: "POST" }
       );
       state.currentAdapter = result.activeAdapter || adapterId;
-      resetTaskStateForAdapterSwitch();
-      restoreCachedAdapterState(state.currentAdapter, "");
-      var canonicalUrl = new URL(window.location.href);
-      canonicalUrl.searchParams.set("adapter", state.currentAdapter);
-      if (!initial) canonicalUrl.searchParams.delete("task");
-      history.replaceState(null, "", canonicalUrl.pathname + canonicalUrl.search + canonicalUrl.hash);
+      if (state.currentAdapter !== adapterId) {
+        resetTaskStateForAdapterSwitch();
+        restoreCachedAdapterState(state.currentAdapter, "");
+        canonicalUrl.searchParams.set("adapter", state.currentAdapter);
+        history.replaceState(null, "", canonicalUrl.pathname + canonicalUrl.search + canonicalUrl.hash);
+      }
       await loadAdapters();
       if (!initial) await loadTasks(true);
       if (!initial) showToast("已切换到 " + currentAdapterName());
@@ -2801,6 +2924,7 @@ export const CODEX_MOBILE_JS = String.raw`
 
   function showAuthentication(mode, message, disabled) {
     state.authenticated = false;
+    state.cachePreviewMode = false;
     state.taskRequestId += 1;
     state.messageRequestId += 1;
     state.composerRevision += 1;
@@ -2836,6 +2960,8 @@ export const CODEX_MOBILE_JS = String.raw`
     try {
       var status = await authApi("/api/auth/status");
       if (status.authenticated) {
+        if (state.authenticationRetryTimer) clearTimeout(state.authenticationRetryTimer);
+        state.authenticationRetryTimer = null;
         void startAuthenticatedApp();
         return;
       }
@@ -2849,12 +2975,30 @@ export const CODEX_MOBILE_JS = String.raw`
       }
       showAuthentication("login", "", false);
     } catch (error) {
+      var waitingForComputer = error.network || error.status === 503 || error.status === 504;
+      if (waitingForComputer) {
+        if (!state.cachePreviewMode) {
+          state.authenticated = false;
+          app.hidden = true;
+          authScreen.hidden = true;
+          bootScreen.hidden = false;
+        }
+        if (!state.authenticationRetryTimer) {
+          state.authenticationRetryTimer = setTimeout(function () {
+            state.authenticationRetryTimer = null;
+            void initializeAuthentication();
+          }, document.hidden ? 5000 : DEVICE_CONNECTION_RETRY_MS);
+        }
+        return;
+      }
       showAuthentication("login", error.message || "暂时无法连接电脑端。", true);
     }
   }
 
   function startAuthenticatedApp() {
     state.authenticated = true;
+    state.cachePreviewMode = false;
+    state.persistentCacheAuthenticatedAtMs = Date.now();
     authScreen.hidden = true;
     var firstStart = !state.appStarted;
     var pageUrl = new URL(window.location.href);
@@ -3943,6 +4087,11 @@ export const CODEX_MOBILE_JS = String.raw`
   async function loadTaskBoard(force) {
     if (!state.authenticated || state.boardLoading) return;
     var requestId = ++state.boardRequestId;
+    var hasCachedBoard = Boolean(
+      state.boardLastLoadedAtMs ||
+      state.boardTasks.length ||
+      state.boardRecentCompleted.length
+    );
     state.boardLoading = true;
     state.boardError = "";
     renderTaskBoard();
@@ -3954,9 +4103,10 @@ export const CODEX_MOBILE_JS = String.raw`
         ? payload.recentCompleted
         : [];
       state.boardLastLoadedAtMs = Date.now();
+      schedulePersistentMobileCacheWrite();
     } catch (error) {
       if (requestId !== state.boardRequestId || error.status === 401) return;
-      if (error.network && state.boardLastLoadedAtMs) return;
+      if (error.network && hasCachedBoard) return;
       state.boardError = error.message || "任务看板读取失败";
     } finally {
       if (requestId === state.boardRequestId) {
@@ -6589,6 +6739,10 @@ export const CODEX_MOBILE_JS = String.raw`
     state.taskSnapshots = Object.create(null);
     state.taskSnapshotOrder = [];
     state.persistentCacheRestored = false;
+    state.cachePreviewMode = false;
+    state.persistentCacheAuthenticatedAtMs = 0;
+    if (state.authenticationRetryTimer) clearTimeout(state.authenticationRetryTimer);
+    state.authenticationRetryTimer = null;
     composerInput.value = "";
     composerInput.placeholder = "有问题，尽管问";
     composerImageButton.disabled = false;
@@ -6760,7 +6914,8 @@ export const CODEX_MOBILE_JS = String.raw`
 
   updateDocumentTitle();
   async function startMobileApplication() {
-    await waitForComputerConnection();
+    restoreTrustedPersistentMobileCachePreview();
+    void waitForComputerConnection();
     await initializeAuthentication();
   }
   void startMobileApplication();
