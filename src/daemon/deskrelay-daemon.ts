@@ -4091,7 +4091,7 @@ class DeskRelayDaemon {
             title,
             taskNumber: activeSlot.taskNumberByThreadId.get(threadId),
             text: latestMessage.text,
-            url: this.codexMobileServer?.buildTaskUrl(threadId),
+            url: this.codexMobileServer?.buildTaskUrl(threadId, activeSlot.adapter),
           });
           const sentCount = await this.queueWechatMessages(
             message.senderId,
@@ -5973,7 +5973,7 @@ class DeskRelayDaemon {
       inputPreview?: string;
     },
   ): Promise<void> {
-    const url = this.codexMobileServer?.buildTaskUrl(params.threadId);
+    const url = this.codexMobileServer?.buildTaskUrl(params.threadId, slot.adapter);
 
     let candidate: BridgeResumeSessionCandidate | undefined;
     try {

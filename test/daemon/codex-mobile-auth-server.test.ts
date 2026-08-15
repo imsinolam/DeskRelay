@@ -57,8 +57,21 @@ describe("Codex mobile server password gate", () => {
 
     try {
       const root = `http://127.0.0.1:${server.port}`;
-      expect(server.buildTaskUrl("0000000a-0000-7000-8000-00000000000a")).toBe(
-        `http://198.51.100.10/?task=0000000a-0000-7000-8000-00000000000a&appv=${CODEX_MOBILE_ASSET_VERSION}&setup=one-time-setup-secret`,
+      const setupTaskUrl = new URL(server.buildTaskUrl(
+        "0000000a-0000-7000-8000-00000000000a",
+        "codex",
+      ));
+      expect(setupTaskUrl.origin).toBe("http://198.51.100.10");
+      expect(setupTaskUrl.pathname).toMatch(/^\/t\/[A-Za-z0-9_.~-]+$/);
+      expect(setupTaskUrl.searchParams.get("setup")).toBe("one-time-setup-secret");
+
+      const setupRedirect = await fetch(
+        `${root}${setupTaskUrl.pathname}${setupTaskUrl.search}`,
+        { redirect: "manual" },
+      );
+      expect(setupRedirect.status).toBe(302);
+      expect(setupRedirect.headers.get("location")).toBe(
+        `/?task=0000000a-0000-7000-8000-00000000000a&adapter=codex&appv=${CODEX_MOBILE_ASSET_VERSION}&setup=one-time-setup-secret`,
       );
 
       const statusBefore = await fetch(`${root}/api/auth/status`, {
@@ -85,9 +98,12 @@ describe("Codex mobile server password gate", () => {
       expect(sessionCookie).toStartWith("codex_mobile_session=");
       expect(authStore.verifyPassword("my first secure password")).toBe(true);
 
-      expect(server.buildTaskUrl("0000000a-0000-7000-8000-00000000000a")).toBe(
-        `http://198.51.100.10/?task=0000000a-0000-7000-8000-00000000000a&appv=${CODEX_MOBILE_ASSET_VERSION}`,
-      );
+      const configuredTaskUrl = new URL(server.buildTaskUrl(
+        "0000000a-0000-7000-8000-00000000000a",
+        "codex",
+      ));
+      expect(configuredTaskUrl.pathname).toBe(setupTaskUrl.pathname);
+      expect(configuredTaskUrl.search).toBe("");
 
       const tasksResponse = await fetch(`${root}/api/tasks`, {
         headers: { cookie: sessionCookie },

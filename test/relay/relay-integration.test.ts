@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import http from "node:http";
 
+import { encodeCodexMobileTaskShortCode } from "../../src/daemon/codex-mobile-server.ts";
 import {
   startDeskRelayRelayClient,
   type DeskRelayRelayClientHandle,
@@ -172,5 +173,29 @@ describe("DeskRelay application relay", () => {
     expect(await tasks.json()).toEqual({
       error: "电脑当前离线，请确认 DeskRelay 正在运行。",
     });
+  });
+
+  test("resolves task short links while the Mac is offline", async () => {
+    const relay = await startDeskRelayRelayServer({
+      host: "127.0.0.1",
+      port: 0,
+      deviceId: "example-device",
+      deviceToken: "test-device-token",
+      pollTimeoutMs: 50,
+      deviceOfflineMs: 50,
+    });
+    closers.push(() => relay.close());
+
+    const code = encodeCodexMobileTaskShortCode(
+      "workbuddy",
+      "0000000a-0000-7000-8000-00000000000a",
+    );
+    const response = await fetch(`${relay.baseUrl}/t/${code}`, {
+      redirect: "manual",
+    });
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toContain(
+      "/?task=0000000a-0000-7000-8000-00000000000a&adapter=workbuddy&appv=",
+    );
   });
 });

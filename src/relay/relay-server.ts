@@ -7,6 +7,7 @@ import { isIP } from "node:net";
 
 import {
   CODEX_MOBILE_ASSET_VERSION,
+  resolveCodexMobileTaskShortRedirect,
 } from "../daemon/codex-mobile-server.ts";
 import {
   CODEX_MOBILE_CSS,
@@ -440,6 +441,21 @@ export async function startDeskRelayRelayServer(
             lastDeviceSeenAtMs && now() - lastDeviceSeenAtMs <= deviceOfflineMs,
           ),
         });
+        return;
+      }
+      if (method === "GET" && url.pathname.startsWith("/t/")) {
+        const target = resolveCodexMobileTaskShortRedirect(url.pathname, url.searchParams);
+        if (!target) {
+          sendJson(response, 404, { error: "短链接不存在或已失效。" });
+          return;
+        }
+        response.writeHead(302, {
+          location: target,
+          "cache-control": "no-store",
+          "x-content-type-options": "nosniff",
+          "referrer-policy": "no-referrer",
+        });
+        response.end();
         return;
       }
 

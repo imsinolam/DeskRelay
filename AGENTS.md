@@ -180,7 +180,7 @@ Prefer surgical fixes backed by focused tests. Avoid broad rewrites of adapter f
 - **无分隔符的“任务关键词”必须先确认能匹配真实任务，再当作控制命令。** 这样既支持“任务canvas”快速筛选，又不会把“任务做完后告诉我”这类正常对话误判为任务切换；有空格或冒号时则视为用户明确发出的搜索命令。
 - **可变条数翻页必须从当前已展示范围的末尾继续，而不能用新条数重新计算页码起点。** 例如首屏 10 条后发送“下一页20”应展示第 11–30 条；保存起点、条数和历史位置才能避免跳过任务，并让“上一页”准确返回原范围。
 - **对运行于 `dist/` 的 LaunchAgent 做完整构建前，要先卸载服务，构建后再加载并验活。** `npm run quality` 会先删除再重建 `dist/`；仅在构建后执行 `kickstart` 仍可能撞上 LaunchAgent 的自动重启窗口，实测会因依赖文件暂时不存在而退出。先 `bootout`、构建完成后 `bootstrap`，再等待健康检查成功，能避免把公网移动端留在离线状态。
-- **移动网页 title 固定使用“DeskRelay · 当前终端”，不要混入任务标题或反转品牌顺序。** 浏览器标签需要稳定、短且可预测；任务标题过长会导致标签难以辨认，也会让同一终端的页面标题不断跳动。
+- **移动网页选中任务后，浏览器 title 必须跟随当前任务名；只有未选中任务时才回退到 DeskRelay 与终端名。** 用户会依靠浏览器标签识别多个任务，固定终端标题会让不同会话无法区分；深链接、异步任务加载、切换和重命名后都要立即同步。
 - **后台解析 CLI 命令和启动子进程必须共用同一套用户 PATH。** 只给子进程补 PATH 还不够，因为命令可能在 `resolveSpawnTarget` 阶段就退回裸命令并触发 ENOENT；把 `~/.hermes/node/bin` 等目录同时用于命令解析与运行环境，才能让 CodeBuddy、TClaude 这类由用户级工具链安装的 CLI 在 LaunchAgent 中稳定启动。
 - **CodeBuddy 必须由同一个 `codebuddy --serve` 进程同时承载可见界面与 HTTP ACP，不能再启动独立 `codebuddy --acp`。** 实测独立 ACP 即使复用相同 sessionId，仍会形成第二个 live owner，让手机消息无法实时出现在电脑界面；共享一个 serve 进程才能让输入、回复、审批和停止保持同源。
 - **移动端深链接可以先乐观显示请求的 adapter，但是否需要切换必须与服务端真实 activeAdapter 比较。** 乐观标签能让首屏立即显示目标终端，同时用 `requestedAdapter !== adapterPayload.activeAdapter` 决定真实切换，可避免把 `?adapter=tclaude` 误判为已经切换；首次切换还要保留 `task` 参数，才能从完成通知直接进入指定终端的指定任务。
@@ -225,5 +225,6 @@ Prefer surgical fixes backed by focused tests. Avoid broad rewrites of adapter f
 - **macOS 打包给 Linux 使用的公开快照时必须设置 `COPYFILE_DISABLE=1`。** 否则 BSD tar 会把扩展属性编码成 `._*` AppleDouble 文件，Linux 解包后这些文件会进入 Git 候选列表并触发隐私审计；禁用 copyfile 元数据并在服务器检查不存在 `._*`，才能保证上传内容和本机审计快照一致。
 - **Codex 桌面会话的模型状态必须从真实 owner 的 `latestThreadSettings.model` / `latestModel` 读取，切换则通过 `thread-follower-start-turn` 的 `turnStartParams.model` 作用于当前任务后续轮次。** 独立 app-server 只适合读取模型目录，不能写桌面任务设置；这样既能让网页模型选择与 Codex 会话一致，也不会制造独立 owner 或聊天分叉。
 - **移动网页新建任务必须把“桌面 thread 已创建”和“用户已发送第一条消息”分成两个生命周期。** 第一条消息发出前，要按 Agent 复用同一个未完成草稿，并让任务列表轮询在暂时找不到真实 thread 时仍保留当前草稿，不能回退到运行中任务；否则会自动跳转、重复创建空任务，并丢失用户输入到一半的文字和图片。
-- **移动网页的跨刷新秒开缓存必须在服务端确认已认证后同步恢复，并把实时接口刷新放到后台执行。** 在认证前显示会泄露上次会话，等任务和消息接口全部返回又会造成白屏；用同源 `localStorage` 保存带版本、24 小时 TTL 和 LRU 上限的任务摘要、最近可见消息与纯文本草稿，按 adapter + threadId 隔离，退出时清除，并排除图片 Base64、审批内容和令牌，才能同时获得即时首屏、隐私边界和稳定降级。
+- **移动网页的跨刷新秒开缓存不能等待电脑在线检测或实时任务接口；同源浏览器曾成功认证且可信标记仍有效时，应先同步展示缓存，再在后台确认认证和刷新数据。** 公网 Relay 在电脑离线时仍能返回静态页面但无法转发实时 API，若把缓存恢复放在 `/health` 或 `/api/auth/status` 之后，用户仍会停在等待页；缓存必须带 24 小时 TTL、adapter + threadId 隔离、退出清除，并排除图片 Base64、审批内容和令牌，认证明确失效时再隐藏缓存。
+- **ClawBot 任务链接应使用 DeskRelay 自身可逆短码，而不是第三方短链或需要电脑在线查询的随机映射。** 把 adapter 与 UUID/sessionId 编码进短路径，能让内网和公网使用同一身份、避免跨终端冲突，并让公网 Relay 在电脑离线时仍可解析后先展示浏览器缓存；首次设置密码所需的一次性参数仍应保留且只用于认证。
 - **DeepSeek Harness 网页 Host 的 `/api/events.mux` 必须按 WebSocket 下行连接，不能当作普通 HTTP SSE 读取。** 真实 `dsh web` 对 HTTP 请求会返回 426，导致消息仍可由历史轮询恢复但审批永远收不到；使用 `ws://127.0.0.1:<port>/api/events.mux` 并保留历史补偿，才能同时覆盖实时审批和断线完成恢复。
