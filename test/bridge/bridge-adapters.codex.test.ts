@@ -3598,6 +3598,58 @@ describe("Codex desktop IPC transport", () => {
     }]);
   });
 
+  test("reconstructs an actionable desktop approval when a summary snapshot omits turn metadata", async () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    const decisions: unknown[] = [];
+    adapter.desktopIpcClient = {
+      replyToCommandApproval: async (
+        threadId: string,
+        requestId: number,
+        decision: unknown,
+      ) => decisions.push({ threadId, requestId, decision }),
+    };
+    adapter.sharedThreadId = "thread_summary";
+    adapter.state.sharedSessionId = "thread_summary";
+    adapter.state.sharedThreadId = "thread_summary";
+    adapter.state.status = "busy";
+
+    adapter.handleDesktopThreadStateChanged("thread_summary", {
+      requests: [{
+        id: 11,
+        method: "item/commandExecution/requestApproval",
+        params: {
+          threadId: "thread_summary",
+          reason: "需要执行发布检查",
+          command: "/bin/zsh -lc 'rm -rf /tmp/deskrelay-summary-approval'",
+          cwd: process.cwd(),
+          availableDecisions: ["accept", "cancel"],
+        },
+      }],
+      threadRuntimeStatus: {
+        type: "active",
+        activeFlags: ["waitingOnApproval"],
+      },
+    }, null);
+
+    expect(adapter.getPendingTaskApprovals("thread_summary")).toMatchObject([{
+      threadId: "thread_summary",
+      summary: "需要执行发布检查",
+      requestId: "11",
+    }]);
+    expect(await adapter.resolveTaskApprovals("thread_summary", "confirm")).toBe(1);
+    expect(decisions).toEqual([{
+      threadId: "thread_summary",
+      requestId: 11,
+      decision: "accept",
+    }]);
+  });
+
   test("drops a desktop approval after the owner resolves it", () => {
     const adapter = new CodexPtyAdapter({
       kind: "codex",

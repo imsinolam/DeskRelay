@@ -5,7 +5,7 @@
 ```mermaid
 flowchart TB
     subgraph Mac["用户电脑"]
-        Agent["真实 Agent\nCodex / WorkBuddy / Grok / Claude Code / …"]
+        Agent["真实 Agent\nCodex / WorkBuddy / Grok / Claude Code / DeepSeek Harness / …"]
         Runtime["DeskRelay Runtime\n任务映射 · 状态 · 队列 · 审批"]
         Agent <--> Runtime
     end
@@ -72,7 +72,7 @@ ClawBot 是轻量远程控制与通知入口。Mac 主动长轮询微信服务�
 
 1. **桌面原生 owner**：Codex、WorkBuddy 直接连接桌面端真实任务，手机消息能在已打开的桌面任务中实时出现；
 2. **可见 CLI owner**：Claude Code、TClaude 由 DeskRelay 连接的同一个可见终端持有任务，手机输入、审批、停止和回复都写入该终端；
-3. **共享服务 owner**：电脑界面与远程入口共同连接一个长期服务。OpenCode 使用 server + attach，Grok 使用 agent leader，CodeBuddy 使用同一个 `codebuddy --serve` 进程及其 HTTP ACP，reasonix 使用 `serve -resume <原 transcript>` 及官方 Web UI。
+3. **共享服务 owner**：电脑界面与远程入口共同连接一个长期服务。OpenCode 使用 server + attach，Grok 使用 agent leader，CodeBuddy 使用同一个 `codebuddy --serve` 进程及其 HTTP ACP，reasonix 使用 `serve -resume <原 transcript>` 及官方 Web UI，DeepSeek Harness 复用正在运行的 `dsh web` 及其本机 Host API。
 
 适配器只有在能够证明消息、回复、审批和停止都由同一个 live owner 处理时，才能标记为“继续原任务”。相同 sessionId、只读 transcript、复制历史到另一个状态目录，或另启一个 ACP 进程都不足以证明同一任务。CodeBuddy 不再启动独立 `--acp`；reasonix 不再创建历史镜像，原 transcript 无法读取时必须直接报任务不可用。
 

@@ -8,7 +8,7 @@ DeskRelay 是本地 AI Agent 的跨屏任务延伸层：它把电脑上的真实
 
 ### 1. 电脑 Agent 是唯一 owner
 
-Codex、WorkBuddy、Grok、Claude Code 等 Agent 继续持有：
+Codex、WorkBuddy、Grok、Claude Code、DeepSeek Harness 等 Agent 继续持有：
 
 - 任务历史与上下文；
 - 项目目录和本地文件；

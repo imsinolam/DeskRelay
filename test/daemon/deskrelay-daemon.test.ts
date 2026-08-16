@@ -42,6 +42,7 @@ import {
   resolveDaemonSessionStartMode,
   resolveDaemonApprovalShortcut,
   resolveDaemonTaskListScope,
+  resolveDaemonBareNumericReply,
   resolveDaemonWechatCommand,
   resolveMobileAdapterDisplayStatus,
   resolveCodexMobileTaskStatusFromSignals,
@@ -1095,6 +1096,35 @@ describe("deskrelay-daemon helpers", () => {
       hasPendingConfirmation: true,
       hasPendingUserInput: false,
     })).toEqual({ type: "resume", target: "震荡止损" });
+  });
+
+  test("never forwards a bare number to the model when it can select a recent task or needs clarification", () => {
+    const adapterSnapshot = resolveDaemonTaskListSnapshot({
+      latestCandidates: [
+        { sessionId: "thread-1", title: "任务一", lastUpdatedAt: "2026-08-16T01:00:00.000Z" },
+        { sessionId: "thread-2", title: "任务二", lastUpdatedAt: "2026-08-16T02:00:00.000Z" },
+      ],
+      refresh: true,
+    });
+
+    expect(resolveDaemonBareNumericReply({
+      text: "2",
+      taskListScope: "adapter",
+      adapterSnapshot,
+      globalSnapshot: null,
+    })).toEqual({ type: "resume", target: "2" });
+    expect(resolveDaemonBareNumericReply({
+      text: "9",
+      taskListScope: "adapter",
+      adapterSnapshot,
+      globalSnapshot: null,
+    })).toEqual({ type: "clarify", number: "9" });
+    expect(resolveDaemonBareNumericReply({
+      text: "继续处理",
+      taskListScope: "adapter",
+      adapterSnapshot,
+      globalSnapshot: null,
+    })).toBeNull();
   });
 
   test("sends a mobile link for every settled Codex task with a thread", () => {

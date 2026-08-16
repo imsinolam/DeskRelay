@@ -1113,6 +1113,7 @@ body.task-rename-open { overflow: hidden; }
   .sidebar { position: fixed; inset: 0 auto 0 0; width: min(86vw, 300px); transform: translateX(-102%); transition: transform .2s ease, visibility 0s linear .2s; box-shadow: var(--shadow); }
   .app-shell:not(.sidebar-open) .sidebar { visibility: hidden; pointer-events: none; }
   .app-shell.sidebar-open .sidebar { visibility: visible; pointer-events: auto; transform: translateX(0); transition-delay: 0s; }
+  .app-shell.sidebar-open .main-panel { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
   .sidebar-overlay { position: fixed; inset: 0; display: block; background: rgba(0,0,0,.28); opacity: 0; pointer-events: none; transition: opacity .2s ease; z-index: 15; }
   .app-shell.sidebar-open .sidebar-overlay { opacity: 1; pointer-events: auto; }
   .sidebar-close, .menu-button { display: grid; }
@@ -3511,11 +3512,11 @@ export const CODEX_MOBILE_JS = String.raw`
       selectTask(threadId, true);
     });
     button.addEventListener("contextmenu", function (event) {
+      event.preventDefault();
       if (!isTaskContextMenuTriggerAllowed(button, event.clientX, event.clientY)) {
         cancelLongPress();
         return;
       }
-      event.preventDefault();
       cancelLongPress();
       state.suppressTaskClickThreadId = threadId;
       state.suppressTaskClickUntil = Date.now() + 700;

@@ -8,7 +8,7 @@
 
 # 离开电脑，继续同一条 AI 编程任务
 
-很多 Agent 接上手机后，只是多了一个下指令的新窗口：看不到电脑上的任务列表，也回不到原任务。DeskRelay 把微信 ClawBot、局域网网页和公网网页接入电脑上真实运行的 Codex、WorkBuddy、Grok、Claude Code 等 Agent，让你从手机找到原任务，继续验收、审查和派活——不另开会话，不复制上下文。
+很多 Agent 接上手机后，只是多了一个下指令的新窗口：看不到电脑上的任务列表，也回不到原任务。DeskRelay 把微信 ClawBot、局域网网页和公网网页接入电脑上真实运行的 Codex、WorkBuddy、Grok、Claude Code、DeepSeek Harness 等 Agent，让你从手机找到原任务，继续验收、审查和派活——不另开会话，不复制上下文。
 
 主行动：**安装 DeskRelay**
 
@@ -57,7 +57,7 @@ Agent、任务上下文、项目文件、模型和工具权限始终由电脑端
 
 | 对象 | 首页应如何解释 |
 | --- | --- |
-| Codex / WorkBuddy / Grok 等电脑 Agent | 真实任务、上下文和工具的 owner |
+| Codex / WorkBuddy / Grok / DeepSeek Harness 等电脑 Agent | 真实任务、上下文和工具的 owner |
 | DeskRelay | 负责映射真实任务与可靠传输，不是新的 Agent |
 | 微信 ClawBot | 轻量远程入口和完成通知入口 |
 | 局域网网页 | 同网时直接访问电脑，速度更快 |

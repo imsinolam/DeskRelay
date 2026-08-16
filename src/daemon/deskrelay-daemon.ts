@@ -820,6 +820,28 @@ export function resolveDaemonWechatCommand(params: {
   });
 }
 
+export function resolveDaemonBareNumericReply(params: {
+  text: string;
+  taskListScope: "global" | "adapter";
+  globalSnapshot: GlobalTaskSnapshot | null;
+  adapterSnapshot: DaemonTaskListSnapshot | null;
+}): { type: "resume"; target: string } | { type: "clarify"; number: string } | null {
+  const number = params.text.trim();
+  if (!/^[1-9]\d*$/.test(number)) {
+    return null;
+  }
+  const candidate = params.taskListScope === "global"
+    ? params.globalSnapshot
+      ? resolveGlobalTaskCandidate(params.globalSnapshot, number)
+      : null
+    : params.adapterSnapshot
+      ? resolveResumeSessionCandidate(params.adapterSnapshot.candidates, number)
+      : null;
+  return candidate
+    ? { type: "resume", target: number }
+    : { type: "clarify", number };
+}
+
 export function isExplicitGlobalTaskListRequest(text: string): boolean {
   const normalized = text.trim();
   if (normalized.startsWith("任务")) {
@@ -3900,6 +3922,26 @@ class DeskRelayDaemon {
         appendDaemonLog(
           `compact_task_search_error: error=${truncatePreview(error instanceof Error ? error.message : String(error), 400)}`,
         );
+      }
+    }
+    if (!command) {
+      const numericReply = resolveDaemonBareNumericReply({
+        text: message.text,
+        taskListScope,
+        globalSnapshot: this.globalTaskListSnapshot,
+        adapterSnapshot: slot.taskListSnapshot,
+      });
+      if (numericReply?.type === "resume") {
+        command = numericReply;
+      } else if (numericReply?.type === "clarify") {
+        slot.awaitingBareTaskSelection = false;
+        await this.queueWechatMessage(
+          message.senderId,
+          `我不确定数字“${numericReply.number}”对应哪个选项，没有把它发给模型。\n` +
+            "选择任务：先发送“任务”，再回复序号。\n" +
+            "处理审批：打开待审批任务后，按提示回复 1、2 或 3。",
+        );
+        return;
       }
     }
     if (command) {

@@ -4597,12 +4597,13 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     const turnId = getNotificationTurnId(params) ??
       (this.activeTurn?.threadId === threadId ? this.activeTurn.turnId : null) ??
       this.getBackgroundTurnForThread(threadId)?.turnId ?? null;
-    if (!turnId) {
-      return;
+    const requestTurnId = turnId ?? `desktop-request:${String(requestId)}`;
+    const origin: BridgeTurnOrigin = turnId && this.bridgeOwnedTurnIds.has(turnId)
+      ? "wechat"
+      : "local";
+    if (turnId) {
+      this.handleTrackedTurnStarted({ threadId, turnId, origin });
     }
-    const origin: BridgeTurnOrigin = this.bridgeOwnedTurnIds.has(turnId) ? "wechat" : "local";
-    const trackedTurn = { threadId, turnId, origin } satisfies CodexActiveTurn;
-    this.handleTrackedTurnStarted(trackedTurn);
 
     if (method === "item/tool/requestUserInput") {
       const request = buildCodexUserInputRequest(params);
@@ -4612,14 +4613,14 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       const contextualRequest = {
         ...request,
         threadId,
-        turnId,
+        ...(turnId ? { turnId } : {}),
         origin,
       };
       this.pendingUserInputRequests.push({
         requestId,
         method,
         threadId,
-        turnId,
+        turnId: requestTurnId,
         origin,
         request: contextualRequest,
       });
@@ -4631,7 +4632,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
         request: contextualRequest,
         timestamp: nowIso(),
         threadId,
-        turnId,
+        ...(turnId ? { turnId } : {}),
         origin,
       });
       return;
@@ -4642,7 +4643,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       requestId,
       method: approvalMethod,
       threadId,
-      turnId,
+      turnId: requestTurnId,
       origin,
       params,
       request: {
@@ -4672,7 +4673,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       requestId: String(requestId),
       createdAt: timestamp,
       threadId,
-      turnId,
+      ...(turnId ? { turnId } : {}),
       origin,
     };
     pendingRequest.request = contextualRequest;
@@ -4685,7 +4686,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       request: contextualRequest,
       timestamp,
       threadId,
-      turnId,
+      ...(turnId ? { turnId } : {}),
       origin,
     });
   }

@@ -8,7 +8,7 @@
 
 - [Node.js](https://nodejs.org/en/download) `>= 24.0.0`
 - [Bun](https://bun.sh/docs/installation) `>= 1.0.0`
-- 至少一个受支持 Agent；公开开发环境通常使用 Codex、Claude Code 或 OpenCode
+- 至少一个受支持 Agent；公开开发环境通常使用 Codex、Claude Code、DeepSeek Harness 或 OpenCode
 
 克隆并安装依赖：
 
@@ -78,7 +78,7 @@ deskrelay-bridge-shell
 deskrelay-bridge-shell --cmd pwsh.exe
 ```
 
-默认会使用持久 `powershell.exe` 会话；需要执行高风险命令时，bridge 会走审批流程。相关能力更适合用来排查 bridge 管线，而不是替代 Codex、Claude Code 或 OpenCode 的日常适配器。
+默认会使用持久 `powershell.exe` 会话；需要执行高风险命令时，bridge 会走审批流程。相关能力更适合用来排查 bridge 管线，而不是替代 Codex、Claude Code、DeepSeek Harness 或 OpenCode 的日常适配器。
 
 ## Windows 启动器说明
 
