@@ -58,7 +58,7 @@ curl -fsS http://127.0.0.1:4396/health
   ↑ HTTPS 长轮询（电脑主动发起）
 电脑上的 DeskRelay daemon
   ↓ 本机 Agent 协议
-Codex / Claude / WorkBuddy / 更多 Agent
+Codex / Claude / WorkBuddy / DeepSeek Harness / 更多 Agent
 ```
 
 公网服务器不连接电脑的本地端口。电脑像 ClawBot 一样主动取回任务级请求，再主动提交结果。因此不需要 `cloudflared`、SSH `-R`、frp、ngrok 或其他通用端口穿透。

@@ -3167,6 +3167,10 @@ describe("Codex mobile server", () => {
       expect(css).toContain(".message-model { margin-top: 10px;");
       expect(css).toContain(".app-shell:not(.sidebar-open) .sidebar");
       expect(css).toContain("pointer-events: none;");
+      expect(css).toContain(".app-shell.sidebar-open .main-panel {");
+      expect(css).toContain("-webkit-user-select: none;");
+      expect(css).toContain("user-select: none;");
+      expect(css).toContain("-webkit-touch-callout: none;");
       expect(css).toContain(".response-pending {");
       expect(css).toContain("@keyframes response-pending-dot");
       expect(css).toContain(".run-progress-item {");
