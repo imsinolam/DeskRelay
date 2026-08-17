@@ -95,6 +95,30 @@ type PendingRpcRequest = {
 
 const ACP_REQUEST_TIMEOUT_MS = 30_000;
 const ACP_PROMPT_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
+const ACP_PROCESS_STOP_TIMEOUT_MS = 1_000;
+
+function waitForChildProcessClose(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve(true);
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (closed: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.off("close", onClose);
+      resolve(closed);
+    };
+    const onClose = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    timer.unref?.();
+    child.once("close", onClose);
+  });
+}
 
 class StdioAcpTransport implements AcpTransport {
   private readonly options: AdapterOptions;
@@ -180,8 +204,16 @@ class StdioAcpTransport implements AcpTransport {
     this.lineReader = null;
     const child = this.child;
     this.child = null;
-    if (child && !child.killed) {
-      child.kill("SIGTERM");
+    if (!child || child.exitCode !== null || child.signalCode !== null) {
+      return;
+    }
+    child.kill("SIGTERM");
+    if (await waitForChildProcessClose(child, ACP_PROCESS_STOP_TIMEOUT_MS)) {
+      return;
+    }
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+      await waitForChildProcessClose(child, ACP_PROCESS_STOP_TIMEOUT_MS);
     }
   }
 }

@@ -53,6 +53,7 @@ import { buildWechatInboundPrompt } from "../../src/bridge/bridge-utils.ts";
 const tempDirectories: string[] = [];
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
+const posixHostTest = process.platform === "win32" ? test.skip : test;
 
 function makeTempDirectory(): string {
   const directory = fs.mkdtempSync(
@@ -611,7 +612,7 @@ describe("buildCliEnvironment", () => {
     ]);
   });
 
-  test("keeps explicit PATH ahead of discovered nvm and WorkBuddy fallbacks", () => {
+  posixHostTest("keeps explicit PATH ahead of discovered nvm and WorkBuddy fallbacks", () => {
     const tempHome = makeTempDirectory();
     const codexBin = path.join(tempHome, ".codex", "bin");
     const nvmBin = path.join(tempHome, ".nvm", "versions", "node", "v24.18.0", "bin");
@@ -652,7 +653,7 @@ describe("buildCliEnvironment", () => {
     ]);
   });
 
-  test("resolves codex from a restricted background PATH when installed under .codex/bin", () => {
+  posixHostTest("resolves codex from a restricted background PATH when installed under .codex/bin", () => {
     const tempHome = makeTempDirectory();
     const codexBin = path.join(tempHome, ".codex", "bin");
     fs.mkdirSync(codexBin, { recursive: true });
@@ -684,7 +685,7 @@ describe("buildCliEnvironment", () => {
     expect(env.no_proxy).toBe("internal.test,127.0.0.1,localhost,::1");
   });
 
-  test("resolves codex from the newest nvm fallback when a background PATH is restricted", () => {
+  posixHostTest("resolves codex from the newest nvm fallback when a background PATH is restricted", () => {
     const tempHome = makeTempDirectory();
     const olderBin = path.join(tempHome, ".nvm", "versions", "node", "v22.16.0", "bin");
     const newerBin = path.join(tempHome, ".nvm", "versions", "node", "v24.18.0", "bin");
@@ -704,7 +705,7 @@ describe("buildCliEnvironment", () => {
     expect(target.file).toBe(path.join(newerBin, "codex"));
   });
 
-  test("resolves codex from its dedicated user bin before generic fallbacks", () => {
+  posixHostTest("resolves codex from its dedicated user bin before generic fallbacks", () => {
     const tempHome = makeTempDirectory();
     const codexBin = path.join(tempHome, ".codex", "bin");
     const nvmBin = path.join(tempHome, ".nvm", "versions", "node", "v99.0.0", "bin");
@@ -724,7 +725,7 @@ describe("buildCliEnvironment", () => {
     expect(target.file).toBe(path.join(codexBin, "codex"));
   });
 
-  test("preserves an explicitly selected codex version ahead of discovered fallbacks", () => {
+  posixHostTest("preserves an explicitly selected codex version ahead of discovered fallbacks", () => {
     const tempHome = makeTempDirectory();
     const selectedBin = path.join(tempHome, "selected-node", "bin");
     const discoveredBin = path.join(
@@ -751,7 +752,7 @@ describe("buildCliEnvironment", () => {
     expect(target.file).toBe(path.join(selectedBin, "codex"));
   });
 
-  test("uses the WorkBuddy codex binary only as a final background fallback", () => {
+  posixHostTest("uses the WorkBuddy codex binary only as a final background fallback", () => {
     const tempHome = makeTempDirectory();
     const workbuddyBin = path.join(
       tempHome,
