@@ -4042,6 +4042,21 @@ describe("Codex mobile generated image messages", () => {
 });
 
 describe("mobile settings API", () => {
+  test("renders settings as a full right drawer with concise terminal and task tabs", () => {
+    expect(CODEX_MOBILE_HTML).toContain('class="settings-drawer"');
+    expect(CODEX_MOBILE_HTML).not.toContain('class="settings-dialog"');
+    expect(CODEX_MOBILE_CSS).toContain("justify-content: flex-end");
+    expect(CODEX_MOBILE_CSS).toContain("height: 100dvh");
+    expect(CODEX_MOBILE_HTML).toContain('aria-selected="true">任务</button>');
+    expect(CODEX_MOBILE_HTML).toContain('aria-selected="false">最近</button>');
+    expect(CODEX_MOBILE_HTML).not.toContain('aria-selected="true">任务看板</button>');
+    expect(CODEX_MOBILE_HTML).not.toContain('aria-selected="false">最近完成</button>');
+    expect(CODEX_MOBILE_JS).not.toContain("adapter-menu-caps");
+    expect(CODEX_MOBILE_CSS).not.toContain(".adapter-menu-caps");
+    expect(CODEX_MOBILE_JS).not.toContain("桌面原生 owner");
+    expect(CODEX_MOBILE_JS).not.toContain("可见 CLI owner");
+  });
+
   test("serves provider capabilities, dependencies and approval rules", async () => {
     const authStore = createAuthStore("settings password");
     const sessionCookie = `codex_mobile_session=${authStore.createSessionToken()}`;
@@ -4201,6 +4216,55 @@ describe("mobile settings API", () => {
       });
       const fresh = await getResponse.json() as { strictApproval: boolean };
       expect(fresh.strictApproval).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("starts a predefined provider installation through the settings API", async () => {
+    const authStore = createAuthStore("settings password");
+    const sessionCookie = `codex_mobile_session=${authStore.createSessionToken()}`;
+    const calls: Array<{ providerId: string; dependencyId: string }> = [];
+    const server = await startCodexMobileServer({
+      host: "127.0.0.1",
+      port: 0,
+      lanAddress: "127.0.0.1",
+      accessToken: "mobile-secret",
+      authStore,
+      listTasks: async () => [],
+      readMessages: async (threadId) => ({
+        threadId,
+        messages: [],
+        queuedMessages: [],
+        progressItems: [],
+        runSummary: null,
+      }),
+      sendMessage: async () => ({ queued: false }),
+      installProviderDependency: async (providerId, dependencyId) => {
+        calls.push({ providerId, dependencyId });
+        return {
+          accepted: true,
+          status: "installing",
+          message: "OpenCode 正在安装，请稍候。",
+        };
+      },
+    });
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${server.port}/api/settings/providers/opencode/install`,
+        {
+          method: "POST",
+          headers: {
+            cookie: sessionCookie,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ dependencyId: "opencode-cli" }),
+        },
+      );
+      expect(response.status).toBe(202);
+      expect(await response.json()).toMatchObject({ status: "installing" });
+      expect(calls).toEqual([{ providerId: "opencode", dependencyId: "opencode-cli" }]);
     } finally {
       await server.close();
     }

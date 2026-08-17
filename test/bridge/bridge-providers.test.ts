@@ -127,6 +127,39 @@ describe("bridge provider registry", () => {
     }
   });
 
+  test("marks optional dependencies separately and only exposes predefined installers", () => {
+    const codex = getBridgeProvider("codex");
+    const codexCommand = codex.dependencies.find(
+      (dep) => dep.kind === "command" && dep.name === "codex",
+    );
+    const codexApp = codex.dependencies.find((dep) => dep.kind === "app");
+    expect(codexCommand).toMatchObject({
+      id: "codex-cli",
+      install: {
+        command: "npm",
+        args: ["install", "-g", "@openai/codex"],
+      },
+    });
+    expect(codexCommand).toMatchObject({ alternativeGroup: "codex-runtime" });
+    expect(codexApp).toMatchObject({ alternativeGroup: "codex-runtime" });
+
+    const claude = getBridgeProvider("claude");
+    expect(claude.dependencies.find(
+      (dep) => dep.kind === "command" && dep.name === "tclaude",
+    )).toMatchObject({ required: false });
+
+    for (const provider of listDaemonProviders()) {
+      for (const dependency of provider.dependencies) {
+        if (dependency.install) {
+          expect(dependency.kind).toBe("command");
+          expect(dependency.id.length).toBeGreaterThan(0);
+          expect(dependency.install.command).toMatch(/^[A-Za-z0-9._-]+$/);
+          expect(dependency.install.args.length).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+
   test("deepseek harness depends on the local harness host", () => {
     const provider = getBridgeProvider("deepseek");
     expect(providerUsesHarnessHost("deepseek")).toBe(true);

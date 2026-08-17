@@ -73,7 +73,25 @@ export type BridgeProviderCapabilities = {
  * they are not. A missing dependency must never be silently treated as
  * "online"; it drives the visible unavailable state instead.
  */
-export type BridgeProviderDependency =
+export type BridgeProviderInstallCommand = {
+  command: string;
+  args: string[];
+};
+
+type BridgeProviderDependencyBase = {
+  /** Stable public key used by the mobile settings API. */
+  id: string;
+  /** Optional human-readable name; the UI otherwise derives one from the dependency. */
+  label?: string;
+  /** Optional dependencies are informative and never make the provider unavailable. */
+  required?: boolean;
+  /** Dependencies in the same group are alternatives; any ready member satisfies the group. */
+  alternativeGroup?: string;
+  /** Predefined argv-only installer. The browser can never supply or replace this command. */
+  install?: BridgeProviderInstallCommand;
+};
+
+export type BridgeProviderDependency = BridgeProviderDependencyBase & (
   | {
       kind: "command";
       name: string;
@@ -96,7 +114,8 @@ export type BridgeProviderDependency =
       kind: "env";
       name: string;
       hint: string;
-    };
+    }
+);
 
 export type BridgeProviderDefinition = {
   id: BridgeProviderId;
@@ -145,8 +164,27 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       localVisibility: "live",
     },
     dependencies: [
-      { kind: "command", name: "codex", hint: "未找到 codex 命令。请先安装 Codex CLI 并登录。" },
-      { kind: "app", path: "/Applications/Codex.app", hint: "macOS Codex 桌面应用未安装；CLI 模式可用 codex 命令。" },
+      {
+        id: "codex-cli",
+        kind: "command",
+        name: "codex",
+        label: "Codex 命令",
+        alternativeGroup: "codex-runtime",
+        hint: "未找到 codex 命令。安装后还需要首次运行并登录。",
+        installHint: "npm install -g @openai/codex",
+        install: {
+          command: "npm",
+          args: ["install", "-g", "@openai/codex"],
+        },
+      },
+      {
+        id: "codex-desktop",
+        kind: "app",
+        path: "/Applications/Codex.app",
+        label: "Codex 桌面应用",
+        alternativeGroup: "codex-runtime",
+        hint: "桌面应用是可选项；只使用 Codex CLI 时无需安装。",
+      },
     ],
   },
   claude: {
@@ -162,8 +200,21 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       localVisibility: "live",
     },
     dependencies: [
-      { kind: "command", name: "claude", hint: "未找到 claude 命令。请安装 Claude Code 并完成登录。" },
-      { kind: "command", name: "tclaude", hint: "未找到 tclaude 命令；如使用 TClaude 请单独安装。" },
+      {
+        id: "claude-cli",
+        kind: "command",
+        name: "claude",
+        label: "Claude Code 命令",
+        hint: "未找到 claude 命令。请按 Claude Code 官方方式安装并完成登录。",
+      },
+      {
+        id: "claude-tclaude-cli",
+        kind: "command",
+        name: "tclaude",
+        label: "TClaude 命令",
+        required: false,
+        hint: "仅使用 TClaude 时需要；Claude Code 本身不依赖它。",
+      },
     ],
   },
   tclaude: {
@@ -179,7 +230,13 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       localVisibility: "live",
     },
     dependencies: [
-      { kind: "command", name: "tclaude", hint: "未找到 tclaude 命令。TClaude 按组织内部方式安装并登录。" },
+      {
+        id: "tclaude-cli",
+        kind: "command",
+        name: "tclaude",
+        label: "TClaude 命令",
+        hint: "未找到 tclaude 命令。请按组织内部方式安装并登录。",
+      },
     ],
   },
   grok: {
@@ -195,7 +252,13 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       localVisibility: "live",
     },
     dependencies: [
-      { kind: "command", name: "grok", hint: "未找到 grok 命令。请按供应方方式安装 Grok CLI 并登录。" },
+      {
+        id: "grok-cli",
+        kind: "command",
+        name: "grok",
+        label: "Grok CLI 命令",
+        hint: "未找到 grok 命令。请按供应方方式安装并登录。",
+      },
     ],
   },
   codebuddy: {
@@ -211,7 +274,13 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       localVisibility: "live",
     },
     dependencies: [
-      { kind: "command", name: "codebuddy", hint: "未找到 codebuddy 命令。请按供应方方式安装 CodeBuddy 并登录。" },
+      {
+        id: "codebuddy-cli",
+        kind: "command",
+        name: "codebuddy",
+        label: "CodeBuddy 命令",
+        hint: "未找到 codebuddy 命令。请按供应方方式安装并登录。",
+      },
     ],
   },
   reasonix: {
@@ -227,7 +296,13 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       localVisibility: "live",
     },
     dependencies: [
-      { kind: "command", name: "reasonix", hint: "未找到 reasonix 命令。请按供应方方式安装 reasonix 并登录。" },
+      {
+        id: "reasonix-cli",
+        kind: "command",
+        name: "reasonix",
+        label: "reasonix 命令",
+        hint: "未找到 reasonix 命令。请按供应方方式安装并登录。",
+      },
     ],
   },
   workbuddy: {
@@ -251,7 +326,13 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       localVisibility: "live",
     },
     dependencies: [
-      { kind: "app", path: "/Applications/WorkBuddy.app", hint: "macOS 未安装 WorkBuddy Desktop。请安装应用并至少创建一个任务。" },
+      {
+        id: "workbuddy-desktop",
+        kind: "app",
+        path: "/Applications/WorkBuddy.app",
+        label: "WorkBuddy 桌面应用",
+        hint: "未找到 WorkBuddy 桌面应用。请按供应方方式安装，并至少创建一个任务。",
+      },
     ],
   },
   deepseek: {
@@ -276,20 +357,31 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
     },
     dependencies: [
       {
+        id: "deepseek-cli",
         kind: "command",
         name: "dsh",
+        label: "DeepSeek Harness 命令",
         hint: "未找到 dsh 命令。请安装 DeepSeek Harness 并运行 dsh web。",
         installHint: "npm install -g @deepseek-ai/dsh",
+        install: {
+          command: "npm",
+          args: ["install", "-g", "@deepseek-ai/dsh"],
+        },
       },
       {
+        id: "deepseek-host",
         kind: "port",
         port: 3080,
         host: "127.0.0.1",
+        label: "Harness 本机服务",
         hint: "本机 3080 端口没有 Harness Host 监听。请保持 dsh web 进程运行；可用 DESKRELAY_DEEPSEEK_HARNESS_URL 指定其他回环地址。",
       },
       {
+        id: "deepseek-url",
         kind: "env",
         name: "DESKRELAY_DEEPSEEK_HARNESS_URL",
+        label: "自定义 Harness 地址",
+        required: false,
         hint: "可选：默认 http://127.0.0.1:3080，只接受本机回环地址。",
       },
     ],
@@ -308,10 +400,16 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
     },
     dependencies: [
       {
+        id: "opencode-cli",
         kind: "command",
         name: "opencode",
+        label: "OpenCode 命令",
         hint: "未找到 opencode 命令。请安装 opencode-ai 并完成模型配置。",
         installHint: "npm install -g opencode-ai",
+        install: {
+          command: "npm",
+          args: ["install", "-g", "opencode-ai"],
+        },
       },
     ],
   },

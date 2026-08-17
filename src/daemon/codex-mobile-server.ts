@@ -16,6 +16,7 @@ import type {
   BridgeSessionRunSummary,
 } from "../bridge/bridge-types.ts";
 import { CodexMobileAuthStore } from "./codex-mobile-auth.ts";
+import type { MobileProviderSettingsEntry } from "./mobile-provider-settings.ts";
 import {
   CODEX_MOBILE_CSS,
   CODEX_MOBILE_HTML,
@@ -66,29 +67,13 @@ export type CodexMobileSettings = {
     label: string;
     description: string;
   }>;
-  providers: Array<{
-    id: string;
-    label: string;
-    transport: string;
-    owner: string;
-    continuity: string;
-    localVisibility: string;
-    capabilities: {
-      sessions: boolean;
-      messages: boolean;
-      images: boolean;
-      queue: boolean;
-      approvals: boolean;
-      stop: boolean;
-      nativeCommands: boolean;
-    };
-    dependencies: Array<{
-      kind: string;
-      name: string;
-      hint: string;
-      installHint?: string;
-    }>;
-  }>;
+  providers: MobileProviderSettingsEntry[];
+};
+
+export type CodexMobileProviderInstallResult = {
+  accepted: true;
+  status: "installing";
+  message: string;
 };
 
 function encodeCodexMobileShortAdapter(adapter: string): string {
@@ -479,6 +464,10 @@ export type StartCodexMobileServerOptions = {
   updateSettings?: (patch: {
     strictApproval?: boolean;
   }) => Promise<CodexMobileSettings>;
+  installProviderDependency?: (
+    providerId: string,
+    dependencyId: string,
+  ) => Promise<CodexMobileProviderInstallResult>;
   listTaskBoard?: () => Promise<CodexMobileTaskBoard>;
   listTasks: (adapter?: string) => Promise<CodexMobileTask[]>;
   createTask?: (
@@ -1514,6 +1503,36 @@ function createRequestHandler(
           patch.strictApproval = body.strictApproval;
         }
         sendJson(response, 200, await options.updateSettings(patch));
+        return;
+      }
+
+      const providerInstallRoute = url.pathname.match(
+        /^\/api\/settings\/providers\/([^/]+)\/install$/,
+      );
+      if (method === "POST" && providerInstallRoute?.[1]) {
+        if (!options.installProviderDependency) {
+          throw new HttpError(409, "当前连接暂不支持安装终端。");
+        }
+        const providerId = decodeURIComponent(providerInstallRoute[1]);
+        const body = await readJsonBody(request, 4_096);
+        const dependencyId = typeof body.dependencyId === "string"
+          ? body.dependencyId.trim()
+          : "";
+        if (!dependencyId) {
+          throw new HttpError(400, "缺少需要安装的组件。请刷新设置后重试。");
+        }
+        try {
+          sendJson(
+            response,
+            202,
+            await options.installProviderDependency(providerId, dependencyId),
+          );
+        } catch (error) {
+          throw new HttpError(
+            400,
+            error instanceof Error ? error.message : "无法开始安装。",
+          );
+        }
         return;
       }
 

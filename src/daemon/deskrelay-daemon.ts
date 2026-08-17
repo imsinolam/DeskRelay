@@ -196,6 +196,10 @@ import {
 import { CodexMobileAuthStore } from "./codex-mobile-auth.ts";
 import { MobileMessageImageStore } from "./mobile-message-image-store.ts";
 import {
+  buildMobileProviderSettings,
+  MobileProviderInstallManager,
+} from "./mobile-provider-settings.ts";
+import {
   MobileAdapterUnavailableError,
   startCodexMobileServer,
   type CodexMobileMessageInput,
@@ -2416,6 +2420,7 @@ class DeskRelayDaemon {
   private readonly deferredInputStore: CodexDeferredInputStore;
   private readonly mobileMessageImageStore: MobileMessageImageStore;
   private readonly wechatImageDrafts = new WechatImageDraftCollector();
+  private readonly mobileProviderInstallManager = new MobileProviderInstallManager();
   private readonly slots = new Map<DaemonAdapterKind, DaemonSlot>();
   private approvalNotificationOrder = 0;
   private globalTaskListSnapshot: GlobalTaskSnapshot | null = null;
@@ -2646,8 +2651,10 @@ class DeskRelayDaemon {
         authStore,
         listAdapters: () => Promise.resolve(this.listMobileAdapters()),
         switchAdapter: (adapter) => this.switchMobileAdapter(adapter),
-        readSettings: () => Promise.resolve(this.buildMobileSettings()),
-        updateSettings: (patch) => Promise.resolve(this.updateMobileSettings(patch)),
+        readSettings: () => this.buildMobileSettings(),
+        updateSettings: (patch) => this.updateMobileSettings(patch),
+        installProviderDependency: (providerId, dependencyId) =>
+          Promise.resolve(this.installMobileProviderDependency(providerId, dependencyId)),
         listTaskBoard: () => this.listMobileTaskBoard(),
         listTasks: (adapter) => this.listMobileTasks(adapter),
         createTask: (adapter, options) =>
@@ -5360,7 +5367,7 @@ class DeskRelayDaemon {
     };
   }
 
-  private buildMobileSettings(): CodexMobileSettings {
+  private async buildMobileSettings(): Promise<CodexMobileSettings> {
     const firstSlot = this.slots.values().next().value as DaemonSlot | undefined;
     return {
       strictApproval: this.strictApprovalEnabled,
@@ -5369,42 +5376,33 @@ class DeskRelayDaemon {
         label: rule.label,
         description: rule.description,
       })),
-      providers: listDaemonProviders().map((provider) => ({
-        id: provider.id,
-        label: provider.label,
-        transport: provider.transport,
-        owner: provider.sessionIntegration.owner,
-        continuity: provider.sessionIntegration.continuity,
-        localVisibility: provider.sessionIntegration.localVisibility,
-        capabilities: { ...provider.capabilities },
-        dependencies: provider.dependencies.map((dependency) => ({
-          kind: dependency.kind,
-          name: dependency.kind === "command"
-            ? dependency.name
-            : dependency.kind === "port"
-              ? String(dependency.port)
-              : dependency.kind === "app"
-                ? dependency.path
-                : dependency.name,
-          hint: dependency.hint,
-          ...(dependency.kind === "command" && dependency.installHint
-            ? { installHint: dependency.installHint }
-            : {}),
-        })),
-      })),
+      providers: await buildMobileProviderSettings(listDaemonProviders(), {
+        installManager: this.mobileProviderInstallManager,
+      }),
     };
   }
 
-  private updateMobileSettings(patch: {
+  private async updateMobileSettings(patch: {
     strictApproval?: boolean;
-  }): CodexMobileSettings {
+  }): Promise<CodexMobileSettings> {
     if (typeof patch.strictApproval === "boolean") {
       this.runtimeStrictApproval = patch.strictApproval;
       appendDaemonLog(
         `settings_updated: strict_approval=${patch.strictApproval} (runtime override)`,
       );
     }
-    return this.buildMobileSettings();
+    return await this.buildMobileSettings();
+  }
+
+  private installMobileProviderDependency(
+    providerId: string,
+    dependencyId: string,
+  ) {
+    const result = this.mobileProviderInstallManager.start(providerId, dependencyId);
+    appendDaemonLog(
+      `provider_install_started: provider=${providerId} dependency=${dependencyId}`,
+    );
+    return result;
   }
 
   private async switchMobileAdapter(adapter: string): Promise<{

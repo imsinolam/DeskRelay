@@ -114,8 +114,8 @@ export const CODEX_MOBILE_HTML = `<!doctype html>
           </div>
           <div class="task-board-toolbar">
             <div class="task-board-view-switch" role="tablist" aria-label="任务看板视图">
-              <button class="task-board-view-button is-active" id="task-board-view-active" type="button" role="tab" aria-selected="true">任务看板</button>
-              <button class="task-board-view-button" id="task-board-view-completed" type="button" role="tab" aria-selected="false">最近完成</button>
+              <button class="task-board-view-button is-active" id="task-board-view-active" type="button" role="tab" aria-selected="true">任务</button>
+              <button class="task-board-view-button" id="task-board-view-completed" type="button" role="tab" aria-selected="false">最近</button>
             </div>
             <label class="task-board-search">
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>
@@ -191,15 +191,20 @@ export const CODEX_MOBILE_HTML = `<!doctype html>
   </div>
 
   <div class="settings-overlay" id="settings-overlay" hidden>
-    <div class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <aside class="settings-drawer" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div class="settings-header">
-        <div class="settings-title" id="settings-title">设置</div>
-        <button class="settings-close" id="settings-close" type="button" aria-label="关闭设置">×</button>
+        <div>
+          <div class="settings-title" id="settings-title">设置</div>
+          <div class="settings-subtitle">管理审批方式与电脑上的终端</div>
+        </div>
+        <button class="settings-close" id="settings-close" type="button" aria-label="关闭设置">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
       </div>
       <div class="settings-body" id="settings-body">
         <div class="settings-loading" id="settings-loading">正在读取设置…</div>
       </div>
-    </div>
+    </aside>
   </div>
 
   <div class="toast" id="toast" role="status"></div>
@@ -673,9 +678,6 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.75; stro
 .adapter-menu-item:hover { background: var(--surface-hover); }
 .adapter-menu-item.is-active { font-weight: 620; }
 .adapter-menu-state { color: var(--muted); font-size: 11px; font-weight: 430; }
-.adapter-menu-caps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
-.adapter-menu-cap { padding: 1px 7px; border: 1px solid var(--border); border-radius: 999px; font-size: 10px; color: var(--muted); background: var(--surface); }
-.adapter-menu-cap:first-child { margin-left: 10px; }
 .workspace-menu-divider { height: 1px; margin: 4px 6px; background: var(--border); }
 .workspace-menu-item { width: 100%; min-height: 34px; display: flex; align-items: center; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; text-decoration: none; cursor: pointer; }
 .workspace-menu-item:hover { background: var(--surface-hover); }
@@ -1105,50 +1107,52 @@ body.image-viewer-open { overflow: hidden; }
   position: fixed;
   inset: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  background: rgba(0,0,0,.28);
+  align-items: stretch;
+  justify-content: flex-end;
+  background: rgba(0,0,0,.22);
   z-index: 70;
 }
-.settings-dialog {
-  width: min(100%, 440px);
-  max-height: min(80dvh, 640px);
+.settings-drawer {
+  width: min(460px, 100vw);
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 18px;
+  border-left: 1px solid var(--border);
   background: var(--page);
-  box-shadow: var(--shadow);
+  box-shadow: -18px 0 48px rgba(0,0,0,.16);
   overflow: hidden;
+  animation: settings-drawer-in .2s ease-out;
 }
+@keyframes settings-drawer-in { from { transform: translateX(22px); opacity: .72; } to { transform: translateX(0); opacity: 1; } }
 .settings-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 18px 12px;
+  min-height: 72px;
+  padding: max(18px, env(safe-area-inset-top)) 22px 16px;
   border-bottom: 1px solid var(--border);
 }
-.settings-title { font-size: 17px; font-weight: 650; letter-spacing: -.025em; }
+.settings-title { font-size: 19px; font-weight: 650; letter-spacing: -.025em; }
+.settings-subtitle { margin-top: 3px; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .settings-close {
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   background: transparent;
   color: var(--muted);
-  font: inherit;
-  font-size: 20px;
-  line-height: 1;
   cursor: pointer;
 }
+.settings-close svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 1.8; }
 .settings-close:hover { background: var(--surface-hover); color: var(--text); }
-.settings-body { overflow-y: auto; padding: 14px 18px 18px; }
+.settings-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 20px 22px max(28px, env(safe-area-inset-bottom)); }
 .settings-loading { padding: 24px 0; text-align: center; color: var(--muted); font-size: 14px; }
-.settings-section { margin-top: 18px; }
+.settings-section { margin-top: 28px; }
 .settings-section:first-child { margin-top: 0; }
-.settings-section-title { font-size: 13px; font-weight: 620; color: var(--text); margin-bottom: 8px; }
+.settings-section-title { font-size: 15px; font-weight: 630; color: var(--text); margin-bottom: 8px; }
 .settings-note { font-size: 12px; color: var(--muted); line-height: 1.5; margin: 6px 0 10px; }
 .settings-toggle-row {
   display: flex;
@@ -1200,18 +1204,35 @@ body.image-viewer-open { overflow: hidden; }
 .settings-rule-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; transform: translateY(-1px); }
 .settings-rule-label { font-size: 14px; font-weight: 580; }
 .settings-rule-desc { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; font-weight: 430; line-height: 1.45; }
-.settings-provider { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.settings-provider { padding: 17px 0; border-bottom: 1px solid var(--border); }
 .settings-provider:last-child { border-bottom: 0; }
 .settings-provider-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.settings-provider-name { font-size: 14px; font-weight: 620; }
-.settings-provider-owner { font-size: 11px; color: var(--muted); }
-.settings-provider-caps { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
-.settings-cap-chip { padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 11px; color: var(--muted); background: var(--surface); }
-.settings-cap-chip.is-on { color: var(--accent); border-color: rgba(16,163,127,.35); background: rgba(16,163,127,.08); }
-.settings-provider-deps { margin-top: 7px; padding-left: 2px; }
-.settings-dep-line { display: flex; align-items: baseline; gap: 6px; font-size: 12px; color: var(--muted); line-height: 1.5; }
-.settings-dep-line::before { content: "·"; color: var(--border-strong); }
-.settings-dep-hint { color: var(--muted); }
+.settings-provider-name { font-size: 15px; font-weight: 620; }
+.settings-provider-status { flex: 0 0 auto; color: var(--muted); font-size: 12px; }
+.settings-provider-status::before { content: ""; width: 7px; height: 7px; display: inline-block; margin-right: 6px; border-radius: 50%; background: var(--border-strong); }
+.settings-provider-status.is-ready::before { background: var(--green); }
+.settings-provider-status.is-installing::before { background: #d6a44b; animation: task-pulse 1.35s ease-in-out infinite; }
+.settings-provider-source { margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.settings-provider-capabilities { margin-top: 7px; color: var(--muted-strong); font-size: 12px; line-height: 1.5; }
+.settings-provider-deps { margin-top: 12px; border-top: 1px solid var(--border); }
+.settings-dep-line { padding: 11px 0; border-bottom: 1px solid var(--border); }
+.settings-dep-line:last-child { border-bottom: 0; padding-bottom: 0; }
+.settings-dep-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.settings-dep-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--border-strong); }
+.settings-dep-line.is-ready .settings-dep-dot { background: var(--green); }
+.settings-dep-line.is-installing .settings-dep-dot { background: #d6a44b; animation: task-pulse 1.35s ease-in-out infinite; }
+.settings-dep-line.is-missing .settings-dep-dot,
+.settings-dep-line.is-failed .settings-dep-dot { background: #c9675a; }
+.settings-dep-label { flex: 1; min-width: 0; color: var(--text); font-size: 13px; font-weight: 550; }
+.settings-dep-status { flex: 0 0 auto; color: var(--muted); font-size: 11px; }
+.settings-dep-detail { margin: 6px 0 0 15px; max-height: 2.9em; overflow: hidden; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.settings-dep-line.is-expanded .settings-dep-detail { max-height: none; }
+.settings-dep-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 9px; }
+.settings-dep-action { min-height: 32px; padding: 0 11px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--page); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.settings-dep-action:hover { background: var(--surface-hover); }
+.settings-dep-action.is-primary { border-color: var(--accent); background: var(--accent); color: var(--page); }
+.settings-dep-action:disabled { opacity: .48; cursor: default; }
+body.settings-open { overflow: hidden; }
 
 .task-rename-actions button:disabled { opacity: .46; cursor: default; }
 body.task-rename-open { overflow: hidden; }
@@ -1244,6 +1265,10 @@ body.task-rename-open { overflow: hidden; }
   .app-shell.sidebar-open .main-panel { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
   .sidebar-overlay { position: fixed; inset: 0; display: block; background: rgba(0,0,0,.28); opacity: 0; pointer-events: none; transition: opacity .2s ease; z-index: 15; }
   .app-shell.sidebar-open .sidebar-overlay { opacity: 1; pointer-events: auto; }
+  .settings-overlay { background: var(--page); }
+  .settings-drawer { width: 100vw; border-left: 0; box-shadow: none; }
+  .settings-header { padding-left: 18px; padding-right: 14px; }
+  .settings-body { padding-left: 18px; padding-right: 18px; }
   .sidebar-close, .menu-button { display: grid; }
   .topbar { position: absolute; top: 0; left: 0; right: 0; min-height: 52px; padding: max(8px, env(safe-area-inset-top)) 8px 8px; background: rgba(255,255,255,.86); z-index: 12; }
   .menu-button { border-radius: 8px; }
@@ -1410,6 +1435,7 @@ export const CODEX_MOBILE_JS = String.raw`
   var settingsBody = document.getElementById("settings-body");
   var settingsOpen = document.getElementById("settings-open");
   var settingsClose = document.getElementById("settings-close");
+  var settingsRefreshTimer = null;
 
   var state = {
     setupToken: "",
@@ -2780,31 +2806,6 @@ export const CODEX_MOBILE_JS = String.raw`
           : adapterStatus;
       button.appendChild(label);
       button.appendChild(status);
-      // DSH-inspired capability chips: surface declared capabilities so the
-      // user can see at a glance what each adapter supports without trial.
-      var caps = adapter.capabilities;
-      if (caps) {
-        var capChips = document.createElement("span");
-        capChips.className = "adapter-menu-caps";
-        var capLabels = {
-          approvals: "审批",
-          images: "图片",
-          queue: "队列",
-          sessions: "会话",
-          nativeCommands: "原生",
-        };
-        Object.keys(capLabels).forEach(function (key) {
-          if (caps[key]) {
-            var chip = document.createElement("span");
-            chip.className = "adapter-menu-cap";
-            chip.textContent = capLabels[key];
-            capChips.appendChild(chip);
-          }
-        });
-        if (capChips.childNodes.length > 0) {
-          button.appendChild(capChips);
-        }
-      }
       button.addEventListener("click", function () {
         void switchAdapter(adapter.id);
       });
@@ -4412,42 +4413,81 @@ export const CODEX_MOBILE_JS = String.raw`
   function openSettingsPanel() {
     toggleWorkspaceMenu(false);
     settingsOverlay.hidden = false;
+    document.body.classList.add("settings-open");
     settingsBody.innerHTML = "";
     var loading = document.createElement("div");
     loading.className = "settings-loading";
     loading.textContent = "正在读取设置…";
     settingsBody.appendChild(loading);
+    requestAnimationFrame(function () { settingsClose.focus(); });
     void loadSettings();
   }
 
   function closeSettingsPanel() {
     settingsOverlay.hidden = true;
+    document.body.classList.remove("settings-open");
+    if (settingsRefreshTimer) {
+      clearTimeout(settingsRefreshTimer);
+      settingsRefreshTimer = null;
+    }
+    settingsOpen.focus();
   }
 
-  function settingsCapabilityChip(key, value) {
-    var chip = document.createElement("span");
-    chip.className = "settings-cap-chip" + (value ? " is-on" : "");
+  function settingsCapabilitySummary(capabilities) {
     var labels = {
-      sessions: "会话",
+      sessions: "任务",
       messages: "消息",
       images: "图片",
-      queue: "队列",
+      queue: "排队",
       approvals: "审批",
       stop: "停止",
       nativeCommands: "原生命令",
     };
-    chip.textContent = labels[key] || key;
-    return chip;
+    return Object.keys(labels).filter(function (key) {
+      return capabilities && capabilities[key];
+    }).map(function (key) { return labels[key]; }).join("、");
   }
 
-  function settingsOwnerLabel(owner) {
-    var labels = {
-      desktop_owner: "桌面原生 owner",
-      visible_cli_owner: "可见 CLI owner",
-      shared_service_owner: "共享服务 owner",
-      none: "无",
-    };
-    return labels[owner] || owner;
+  function settingsHasInstallingProvider(payload) {
+    return Boolean(payload && Array.isArray(payload.providers) && payload.providers.some(function (provider) {
+      return provider.status === "installing" || (provider.dependencies || []).some(function (dep) {
+        return dep.status === "installing";
+      });
+    }));
+  }
+
+  function scheduleSettingsRefresh() {
+    if (settingsRefreshTimer) clearTimeout(settingsRefreshTimer);
+    settingsRefreshTimer = setTimeout(function () {
+      settingsRefreshTimer = null;
+      if (!settingsOverlay.hidden) void loadSettings();
+    }, 1600);
+  }
+
+  async function installSettingsDependency(provider, dependency, button) {
+    var confirmed = window.confirm(
+      "将在这台电脑上安装“" + (dependency.label || dependency.name) + "”。安装命令由 DeskRelay 预先定义，网页不能提交任意命令。是否继续？"
+    );
+    if (!confirmed) return;
+    button.disabled = true;
+    button.textContent = "正在安装…";
+    try {
+      var result = await api(
+        "/api/settings/providers/" + encodeURIComponent(provider.id) + "/install",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ dependencyId: dependency.id })
+        }
+      );
+      showToast(result.message || "安装已开始");
+      await loadSettings();
+      scheduleSettingsRefresh();
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = dependency.action && dependency.action.label || "一键安装";
+      showToast(error && error.message ? error.message : "无法开始安装");
+    }
   }
 
   function renderSettings(payload) {
@@ -4460,12 +4500,12 @@ export const CODEX_MOBILE_JS = String.raw`
       return;
     }
 
-    // 审批规则 section
+    // 审批设置
     var rulesSection = document.createElement("div");
     rulesSection.className = "settings-section";
     var rulesTitle = document.createElement("div");
     rulesTitle.className = "settings-section-title";
-    rulesTitle.textContent = "审批规则";
+    rulesTitle.textContent = "审批设置";
     rulesSection.appendChild(rulesTitle);
 
     var strictToggle = document.createElement("div");
@@ -4525,16 +4565,16 @@ export const CODEX_MOBILE_JS = String.raw`
     }
     settingsBody.appendChild(rulesSection);
 
-    // 适配器能力/依赖 section
+    // 电脑终端与真实依赖状态
     var providersSection = document.createElement("div");
     providersSection.className = "settings-section";
     var providersTitle = document.createElement("div");
     providersTitle.className = "settings-section-title";
-    providersTitle.textContent = "适配器能力与依赖";
+    providersTitle.textContent = "电脑终端";
     providersSection.appendChild(providersTitle);
     var providersNote = document.createElement("div");
     providersNote.className = "settings-note";
-    providersNote.textContent = "能力与依赖由电脑端适配器注册表声明；依赖不满足时对应终端会显示为不可用。";
+    providersNote.textContent = "这里显示电脑上的真实检测结果。已安装但未启动，与尚未安装会分别说明。";
     providersSection.appendChild(providersNote);
 
     payload.providers.forEach(function (provider) {
@@ -4545,39 +4585,72 @@ export const CODEX_MOBILE_JS = String.raw`
       var name = document.createElement("span");
       name.className = "settings-provider-name";
       name.textContent = provider.label || provider.id;
-      var owner = document.createElement("span");
-      owner.className = "settings-provider-owner";
-      owner.textContent = settingsOwnerLabel(provider.owner);
+      var status = document.createElement("span");
+      status.className = "settings-provider-status is-" + (provider.status || "unavailable");
+      status.textContent = provider.statusLabel || "状态未知";
       head.appendChild(name);
-      head.appendChild(owner);
+      head.appendChild(status);
       block.appendChild(head);
 
-      var caps = document.createElement("div");
-      caps.className = "settings-provider-caps";
-      Object.keys(provider.capabilities || {}).forEach(function (key) {
-        caps.appendChild(settingsCapabilityChip(key, provider.capabilities[key]));
-      });
-      block.appendChild(caps);
+      var source = document.createElement("div");
+      source.className = "settings-provider-source";
+      source.textContent = provider.sessionSource || "连接电脑上的真实任务。";
+      block.appendChild(source);
+
+      var capabilitySummary = settingsCapabilitySummary(provider.capabilities);
+      if (capabilitySummary) {
+        var caps = document.createElement("div");
+        caps.className = "settings-provider-capabilities";
+        caps.textContent = "支持：" + capabilitySummary;
+        block.appendChild(caps);
+      }
 
       if (Array.isArray(provider.dependencies) && provider.dependencies.length > 0) {
         var deps = document.createElement("div");
         deps.className = "settings-provider-deps";
         provider.dependencies.forEach(function (dep) {
           var line = document.createElement("div");
-          line.className = "settings-dep-line";
-          var text = dep.kind === "command"
-            ? "命令 " + dep.name + (dep.installHint ? "（" + dep.installHint + "）" : "")
-            : dep.kind === "port"
-              ? "端口 " + dep.name
-              : dep.kind === "app"
-                ? "应用 " + dep.name
-                : "环境变量 " + dep.name;
-          line.textContent = text;
-          line.title = dep.hint || "";
-          var hint = document.createElement("span");
-          hint.className = "settings-dep-hint";
-          hint.textContent = dep.hint || "";
-          line.appendChild(hint);
+          line.className = "settings-dep-line is-" + (dep.status || "missing");
+          var main = document.createElement("div");
+          main.className = "settings-dep-main";
+          var dot = document.createElement("span");
+          dot.className = "settings-dep-dot";
+          var depLabel = document.createElement("span");
+          depLabel.className = "settings-dep-label";
+          depLabel.textContent = dep.label || dep.name;
+          var depStatus = document.createElement("span");
+          depStatus.className = "settings-dep-status";
+          depStatus.textContent = dep.statusLabel || "状态未知";
+          main.appendChild(dot);
+          main.appendChild(depLabel);
+          main.appendChild(depStatus);
+          line.appendChild(main);
+
+          if (dep.detail) {
+            var detail = document.createElement("div");
+            detail.className = "settings-dep-detail";
+            detail.textContent = dep.detail;
+            line.appendChild(detail);
+          }
+
+          if (dep.action) {
+            var actions = document.createElement("div");
+            actions.className = "settings-dep-actions";
+            var action = document.createElement("button");
+            action.type = "button";
+            action.className = "settings-dep-action" + (dep.action.type === "install" ? " is-primary" : "");
+            action.textContent = dep.action.label;
+            action.addEventListener("click", function () {
+              if (dep.action.type === "install") {
+                void installSettingsDependency(provider, dep, action);
+                return;
+              }
+              line.classList.toggle("is-expanded");
+              action.textContent = line.classList.contains("is-expanded") ? "收起" : dep.action.label;
+            });
+            actions.appendChild(action);
+            line.appendChild(actions);
+          }
           deps.appendChild(line);
         });
         block.appendChild(deps);
@@ -4592,6 +4665,7 @@ export const CODEX_MOBILE_JS = String.raw`
       var payload = await api("/api/settings");
       if (settingsOverlay.hidden) return;
       renderSettings(payload);
+      if (settingsHasInstallingProvider(payload)) scheduleSettingsRefresh();
     } catch (error) {
       if (settingsOverlay.hidden) return;
       settingsBody.innerHTML = "";
