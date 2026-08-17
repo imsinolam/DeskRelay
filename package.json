@@ -1,6 +1,6 @@
 {
   "name": "deskrelay",
-  "version": "2.1.3",
+  "version": "2.1.4",
   "description": "Extend real desktop coding-agent sessions to WeChat, LAN web, and an optional public relay without forking context",
   "type": "module",
   "files": [
