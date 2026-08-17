@@ -66,6 +66,38 @@ export type BridgeProviderCapabilities = {
   nativeCommands: boolean;
 };
 
+/**
+ * Declarative dependency graph for a provider (DSH-inspired "coeffects").
+ * The runtime and `deskrelay doctor` use this to determine whether a
+ * provider's prerequisites are satisfied, and what to tell the user when
+ * they are not. A missing dependency must never be silently treated as
+ * "online"; it drives the visible unavailable state instead.
+ */
+export type BridgeProviderDependency =
+  | {
+      kind: "command";
+      name: string;
+      hint: string;
+      /** Set when a full install command is known and safe to print. */
+      installHint?: string;
+    }
+  | {
+      kind: "port";
+      port: number;
+      host?: string;
+      hint: string;
+    }
+  | {
+      kind: "app";
+      path: string;
+      hint: string;
+    }
+  | {
+      kind: "env";
+      name: string;
+      hint: string;
+    };
+
 export type BridgeProviderDefinition = {
   id: BridgeProviderId;
   label: string;
@@ -74,6 +106,11 @@ export type BridgeProviderDefinition = {
   daemon: boolean;
   capabilities: BridgeProviderCapabilities;
   sessionIntegration: BridgeProviderSessionIntegration;
+  /**
+   * Declarative prerequisites. Order matters for doctor output: earlier
+   * entries are checked first.
+   */
+  dependencies: BridgeProviderDependency[];
 };
 
 const BASE_CLI_CAPABILITIES: BridgeProviderCapabilities = {
@@ -107,6 +144,10 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       continuity: "same_owner",
       localVisibility: "live",
     },
+    dependencies: [
+      { kind: "command", name: "codex", hint: "未找到 codex 命令。请先安装 Codex CLI 并登录。" },
+      { kind: "app", path: "/Applications/Codex.app", hint: "macOS Codex 桌面应用未安装；CLI 模式可用 codex 命令。" },
+    ],
   },
   claude: {
     id: "claude",
@@ -120,6 +161,10 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       continuity: "same_owner",
       localVisibility: "live",
     },
+    dependencies: [
+      { kind: "command", name: "claude", hint: "未找到 claude 命令。请安装 Claude Code 并完成登录。" },
+      { kind: "command", name: "tclaude", hint: "未找到 tclaude 命令；如使用 TClaude 请单独安装。" },
+    ],
   },
   tclaude: {
     id: "tclaude",
@@ -133,6 +178,9 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       continuity: "same_owner",
       localVisibility: "live",
     },
+    dependencies: [
+      { kind: "command", name: "tclaude", hint: "未找到 tclaude 命令。TClaude 按组织内部方式安装并登录。" },
+    ],
   },
   grok: {
     id: "grok",
@@ -146,6 +194,9 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       continuity: "same_owner",
       localVisibility: "live",
     },
+    dependencies: [
+      { kind: "command", name: "grok", hint: "未找到 grok 命令。请按供应方方式安装 Grok CLI 并登录。" },
+    ],
   },
   codebuddy: {
     id: "codebuddy",
@@ -159,6 +210,9 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       continuity: "same_owner",
       localVisibility: "live",
     },
+    dependencies: [
+      { kind: "command", name: "codebuddy", hint: "未找到 codebuddy 命令。请按供应方方式安装 CodeBuddy 并登录。" },
+    ],
   },
   reasonix: {
     id: "reasonix",
@@ -172,6 +226,9 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       continuity: "same_owner",
       localVisibility: "live",
     },
+    dependencies: [
+      { kind: "command", name: "reasonix", hint: "未找到 reasonix 命令。请按供应方方式安装 reasonix 并登录。" },
+    ],
   },
   workbuddy: {
     id: "workbuddy",
@@ -193,6 +250,9 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       continuity: "same_owner",
       localVisibility: "live",
     },
+    dependencies: [
+      { kind: "app", path: "/Applications/WorkBuddy.app", hint: "macOS 未安装 WorkBuddy Desktop。请安装应用并至少创建一个任务。" },
+    ],
   },
   deepseek: {
     id: "deepseek",
@@ -210,10 +270,29 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       nativeCommands: true,
     },
     sessionIntegration: {
-      owner: "desktop_owner",
+      owner: "shared_service_owner",
       continuity: "same_owner",
       localVisibility: "live",
     },
+    dependencies: [
+      {
+        kind: "command",
+        name: "dsh",
+        hint: "未找到 dsh 命令。请安装 DeepSeek Harness 并运行 dsh web。",
+        installHint: "npm install -g @deepseek-ai/dsh",
+      },
+      {
+        kind: "port",
+        port: 3080,
+        host: "127.0.0.1",
+        hint: "本机 3080 端口没有 Harness Host 监听。请保持 dsh web 进程运行；可用 DESKRELAY_DEEPSEEK_HARNESS_URL 指定其他回环地址。",
+      },
+      {
+        kind: "env",
+        name: "DESKRELAY_DEEPSEEK_HARNESS_URL",
+        hint: "可选：默认 http://127.0.0.1:3080，只接受本机回环地址。",
+      },
+    ],
   },
   opencode: {
     id: "opencode",
@@ -227,6 +306,14 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       continuity: "same_owner",
       localVisibility: "live",
     },
+    dependencies: [
+      {
+        kind: "command",
+        name: "opencode",
+        hint: "未找到 opencode 命令。请安装 opencode-ai 并完成模型配置。",
+        installHint: "npm install -g opencode-ai",
+      },
+    ],
   },
   shell: {
     id: "shell",
@@ -248,6 +335,7 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
       continuity: "none",
       localVisibility: "none",
     },
+    dependencies: [],
   },
 };
 
@@ -283,4 +371,13 @@ export function getBridgeProvider(
   kind: BridgeProviderId,
 ): BridgeProviderDefinition {
   return BRIDGE_PROVIDERS[kind];
+}
+
+export function listDaemonProviders(): BridgeProviderDefinition[] {
+  return DAEMON_PROVIDER_IDS.map((id) => BRIDGE_PROVIDERS[id]);
+}
+
+/** True when a provider uses the running harness host (e.g. `dsh web`). */
+export function providerUsesHarnessHost(kind: BridgeProviderId): boolean {
+  return BRIDGE_PROVIDERS[kind].transport === "harness_host";
 }

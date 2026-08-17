@@ -3472,6 +3472,134 @@ describe("Codex desktop IPC transport", () => {
     ]);
   });
 
+  test("uses the cached desktop request as the authoritative pending approval", () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    adapter.desktopIpcClient = {
+      getThreadStateView: () => ({
+        requests: [{
+          id: 995,
+          method: "item/commandExecution/requestApproval",
+          params: {
+            threadId: "thread_1",
+            turnId: "turn_1",
+            reason: "桌面端仍在等待确认",
+            command: "/bin/zsh -lc 'echo live-state'",
+            cwd: process.cwd(),
+            availableDecisions: ["accept", "cancel"],
+          },
+        }],
+        threadRuntimeStatus: {
+          type: "active",
+          activeFlags: ["waitingOnApproval"],
+        },
+      }),
+    };
+
+    expect(adapter.getPendingTaskApprovals("thread_1")).toMatchObject([{
+      requestId: "995",
+      threadId: "thread_1",
+      turnId: "turn_1",
+      summary: "桌面端仍在等待确认",
+    }]);
+  });
+
+  test("keeps an automatically approved desktop request actionable when delivery times out", async () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    const events: Array<Record<string, unknown>> = [];
+    adapter.setEventSink((event: Record<string, unknown>) => events.push(event));
+    adapter.desktopIpcClient = {
+      replyToCommandApproval: async () => {
+        throw new Error("Codex 桌面端请求超时：thread-follower-command-approval-decision");
+      },
+      getThreadStateView: () => null,
+    };
+    adapter.sharedThreadId = "thread_1";
+    adapter.state.sharedSessionId = "thread_1";
+    adapter.state.sharedThreadId = "thread_1";
+    adapter.state.status = "busy";
+
+    await adapter.handleDesktopRequest(
+      "thread_1",
+      996,
+      "item/commandExecution/requestApproval",
+      {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        reason: "允许运行低风险检查吗？",
+        command: "/bin/zsh -lc 'echo deskrelay'",
+        cwd: process.cwd(),
+        availableDecisions: ["accept", "cancel"],
+      },
+    );
+
+    expect(adapter.getPendingTaskApprovals("thread_1")).toMatchObject([{
+      requestId: "996",
+      threadId: "thread_1",
+      turnId: "turn_1",
+      summary: "允许运行低风险检查吗？",
+    }]);
+    expect(events.filter((event) => event.type === "approval_required")).toHaveLength(1);
+  });
+
+  test("does not clear an approval until the desktop request actually disappears", async () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    const pendingState = {
+      requests: [{
+        id: 997,
+        method: "item/commandExecution/requestApproval",
+        params: {
+          threadId: "thread_1",
+          turnId: "turn_1",
+          reason: "桌面端尚未真正接受",
+          command: "/bin/zsh -lc 'echo still-pending'",
+          cwd: process.cwd(),
+          availableDecisions: ["accept", "cancel"],
+        },
+      }],
+      threadRuntimeStatus: {
+        type: "active",
+        activeFlags: ["waitingOnApproval"],
+      },
+    };
+    adapter.desktopApprovalSettleTimeoutMs = 1;
+    adapter.desktopIpcClient = {
+      replyToCommandApproval: async () => undefined,
+      getThreadStateView: () => pendingState,
+    };
+    adapter.sharedThreadId = "thread_1";
+    adapter.state.sharedSessionId = "thread_1";
+    adapter.state.sharedThreadId = "thread_1";
+    adapter.state.status = "busy";
+    adapter.handleDesktopThreadStateChanged("thread_1", pendingState, null);
+    await Bun.sleep(0);
+
+    await expect(adapter.resolveTaskApprovals("thread_1", "confirm")).rejects.toThrow(
+      "Codex 桌面端仍在等待审批",
+    );
+    expect(adapter.getPendingTaskApprovals("thread_1")).toMatchObject([{
+      requestId: "997",
+      threadId: "thread_1",
+    }]);
+  });
+
   test("resolves one desktop approval request without consuming the next queued approval", async () => {
     const adapter = new CodexPtyAdapter({
       kind: "codex",

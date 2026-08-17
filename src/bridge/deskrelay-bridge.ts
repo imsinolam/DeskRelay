@@ -19,6 +19,7 @@ import { BridgeController } from "./bridge-controller.ts";
 import { forwardWechatFinalReply } from "./bridge-final-reply.ts";
 import { collectAssistantMessageImages } from "./bridge-message-images.ts";
 import { ensureWechatCredentials } from "../wechat/setup.ts";
+import { WechatImageDraftCollector } from "../wechat/wechat-image-draft.ts";
 import { BridgeStateStore } from "./bridge-state.ts";
 import { reapOrphanedOpencodeProcesses, reapPeerBridgeProcesses } from "./bridge-process-reaper.ts";
 import { createRuntimeHost } from "../runtime/create-runtime-host.ts";
@@ -564,6 +565,7 @@ async function main(): Promise<void> {
     throw new Error("Saved WeChat credentials are missing userId.");
   }
   const transport = new WeChatTransport({ log, logError });
+  const wechatImageDrafts = new WechatImageDraftCollector();
 
   // 非阻塞地检查更新（不影响启动速度，也避免首次登录时打断二维码输出）
   // unref：不能让这个延迟检查把 event loop 挂活（如 --doctor 或快速退出场景），
@@ -1091,6 +1093,7 @@ async function main(): Promise<void> {
         try {
           nextTask = await handleInboundMessage({
             message,
+            imageDraftCollector: wechatImageDrafts,
             options,
             stateStore,
             adapter,
@@ -1599,6 +1602,7 @@ function formatInboundMessagePreview(message: InboundWechatMessage): string {
 
 async function handleInboundMessage(params: {
   message: InboundWechatMessage;
+  imageDraftCollector: WechatImageDraftCollector;
   options: BridgeCliOptions;
   stateStore: BridgeStateStore;
   adapter: BridgeAdapter;
@@ -1616,8 +1620,9 @@ async function handleInboundMessage(params: {
   setAwaitingBareCodexTaskSelection: (value: boolean) => void;
   deferInboundMessage: (message: InboundWechatMessage) => Promise<void>;
 }): Promise<ActiveTask | null> {
+  let message = params.message;
   const {
-    message,
+    imageDraftCollector,
     options,
     stateStore,
     adapter,
@@ -1637,6 +1642,23 @@ async function handleInboundMessage(params: {
       "无权操作：仅接受已绑定微信的消息。",
     );
     return null;
+  }
+
+  const shouldCollectImageDraft =
+    message.attachments.some((attachment) => attachment.kind === "image") ||
+    (imageDraftCollector.hasPendingDraft(message.senderId) &&
+      !message.text.trim().startsWith("/"));
+  if (
+    shouldCollectImageDraft &&
+    !state.pendingConfirmation &&
+    !state.pendingUserInput
+  ) {
+    const imageDraftResult = imageDraftCollector.consume(message);
+    if (imageDraftResult.type === "wait") {
+      await queueWechatMessage(message.senderId, imageDraftResult.reply, "notice");
+      return null;
+    }
+    message = imageDraftResult.message;
   }
 
   const parsedSystemCommand = parseWechatControlCommand(message.text, {

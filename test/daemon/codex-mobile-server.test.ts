@@ -1066,6 +1066,20 @@ function loadMobileRunFailureText(): (summary: {
   >;
 }
 
+function loadMobileTaskApprovalStatusReconciler(): (
+  task: Record<string, unknown>,
+  pendingApproval: Record<string, unknown> | null,
+  runSummary: { status?: string } | null,
+) => Record<string, unknown> {
+  const start = CODEX_MOBILE_JS.indexOf("  function reconcileTaskApprovalStatus");
+  const end = CODEX_MOBILE_JS.indexOf("\n  function currentTask", start);
+  if (start < 0 || end < 0) throw new Error("Mobile task approval reconciler not found");
+  const source = CODEX_MOBILE_JS.slice(start, end);
+  return new Function(`${source}\nreturn reconcileTaskApprovalStatus;`)() as ReturnType<
+    typeof loadMobileTaskApprovalStatusReconciler
+  >;
+}
+
 function loadMobileApprovalResultHelpers(): {
   title: (action: string) => string;
   buildTimeline: (params: {
@@ -1651,6 +1665,30 @@ describe("Codex mobile persistent cache", () => {
 
     expect(restoreIndex).toBeGreaterThan(-1);
     expect(requestIndex).toBeGreaterThan(restoreIndex);
+  });
+});
+
+describe("Codex mobile approval consistency", () => {
+  test("keeps the sidebar, header, and approval card on one authoritative status", () => {
+    const reconcile = loadMobileTaskApprovalStatusReconciler();
+    const staleTask = { threadId: "thread-1", title: "任务", status: "approval" };
+
+    expect(reconcile(staleTask, null, { status: "running" })).toEqual({
+      ...staleTask,
+      status: "running",
+    });
+    expect(reconcile(staleTask, null, { status: "completed" })).toEqual({
+      ...staleTask,
+      status: "idle",
+    });
+    expect(reconcile(
+      { ...staleTask, status: "running" },
+      { requestId: "approval-1" },
+      { status: "running" },
+    )).toEqual({
+      ...staleTask,
+      status: "approval",
+    });
   });
 });
 
@@ -4000,6 +4038,172 @@ describe("Codex mobile generated image messages", () => {
     expect(CODEX_MOBILE_JS).toContain('previewButton.className = "composer-media-preview"');
     expect(CODEX_MOBILE_JS).toContain("openImageViewer(image.previewUrl, image.fileName)");
     expect(CODEX_MOBILE_CSS).toContain(".composer-media-preview");
+  });
+});
+
+describe("mobile settings API", () => {
+  test("serves provider capabilities, dependencies and approval rules", async () => {
+    const authStore = createAuthStore("settings password");
+    const sessionCookie = `codex_mobile_session=${authStore.createSessionToken()}`;
+    const server = await startCodexMobileServer({
+      host: "127.0.0.1",
+      port: 0,
+      lanAddress: "127.0.0.1",
+      accessToken: "mobile-secret",
+      authStore,
+      listTasks: async () => [],
+      readMessages: async (threadId) => ({
+        threadId,
+        messages: [],
+        queuedMessages: [],
+        progressItems: [],
+        runSummary: null,
+      }),
+      sendMessage: async () => ({ queued: false }),
+      readSettings: async () => ({
+        strictApproval: true,
+        approvalRules: [
+          { id: "strict-approval", label: "严格审批", description: "全部交给远程端。" },
+          { id: "task-free-pass", label: "任务免审", description: "已开启免审的任务自动接受。" },
+        ],
+        providers: [
+          {
+            id: "deepseek",
+            label: "DeepSeek Harness",
+            transport: "harness_host",
+            owner: "shared_service_owner",
+            continuity: "same_owner",
+            localVisibility: "live",
+            capabilities: {
+              sessions: true,
+              messages: true,
+              images: true,
+              queue: true,
+              approvals: true,
+              stop: true,
+              nativeCommands: true,
+            },
+            dependencies: [
+              { kind: "command", name: "dsh", hint: "未找到 dsh 命令。" },
+              { kind: "port", name: "3080", hint: "3080 端口无监听。" },
+            ],
+          },
+        ],
+      }),
+    });
+
+    try {
+      const root = `http://127.0.0.1:${server.port}`;
+      const response = await fetch(`${root}/api/settings`, {
+        headers: { cookie: sessionCookie },
+      });
+      expect(response.status).toBe(200);
+      const payload = await response.json() as {
+        strictApproval: boolean;
+        approvalRules: Array<{ id: string }>;
+        providers: Array<{ id: string; dependencies: Array<{ kind: string }> }>;
+      };
+      expect(payload.strictApproval).toBe(true);
+      expect(payload.approvalRules.map((rule) => rule.id)).toEqual([
+        "strict-approval",
+        "task-free-pass",
+      ]);
+      expect(payload.providers[0].id).toBe("deepseek");
+      expect(payload.providers[0].dependencies.map((dep) => dep.kind)).toEqual([
+        "command",
+        "port",
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("returns 409 when the connection does not expose settings", async () => {
+    const authStore = createAuthStore("settings password");
+    const sessionCookie = `codex_mobile_session=${authStore.createSessionToken()}`;
+    const server = await startCodexMobileServer({
+      host: "127.0.0.1",
+      port: 0,
+      lanAddress: "127.0.0.1",
+      accessToken: "mobile-secret",
+      authStore,
+      listTasks: async () => [],
+      readMessages: async (threadId) => ({
+        threadId,
+        messages: [],
+        queuedMessages: [],
+        progressItems: [],
+        runSummary: null,
+      }),
+      sendMessage: async () => ({ queued: false }),
+    });
+
+    try {
+      const root = `http://127.0.0.1:${server.port}`;
+      const response = await fetch(`${root}/api/settings`, {
+        headers: { cookie: sessionCookie },
+      });
+      expect(response.status).toBe(409);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("updates strict approval through POST /api/settings", async () => {
+    const authStore = createAuthStore("settings password");
+    const sessionCookie = `codex_mobile_session=${authStore.createSessionToken()}`;
+    let strictApproval = false;
+    const server = await startCodexMobileServer({
+      host: "127.0.0.1",
+      port: 0,
+      lanAddress: "127.0.0.1",
+      accessToken: "mobile-secret",
+      authStore,
+      listTasks: async () => [],
+      readMessages: async (threadId) => ({
+        threadId,
+        messages: [],
+        queuedMessages: [],
+        progressItems: [],
+        runSummary: null,
+      }),
+      sendMessage: async () => ({ queued: false }),
+      readSettings: async () => ({
+        strictApproval,
+        approvalRules: [],
+        providers: [],
+      }),
+      updateSettings: async (patch) => {
+        if (typeof patch.strictApproval === "boolean") {
+          strictApproval = patch.strictApproval;
+        }
+        return { strictApproval, approvalRules: [], providers: [] };
+      },
+    });
+
+    try {
+      const root = `http://127.0.0.1:${server.port}`;
+      const response = await fetch(`${root}/api/settings`, {
+        method: "POST",
+        headers: {
+          cookie: sessionCookie,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ strictApproval: true }),
+      });
+      expect(response.status).toBe(200);
+      const payload = await response.json() as { strictApproval: boolean };
+      expect(payload.strictApproval).toBe(true);
+
+      // GET reflects the update.
+      const getResponse = await fetch(`${root}/api/settings`, {
+        headers: { cookie: sessionCookie },
+      });
+      const fresh = await getResponse.json() as { strictApproval: boolean };
+      expect(fresh.strictApproval).toBe(true);
+    } finally {
+      await server.close();
+    }
   });
 });
 

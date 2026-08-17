@@ -10,7 +10,12 @@ import {
   type BridgeLockPayload,
 } from "../bridge/bridge-state.ts";
 import type { BridgeAdapterKind } from "../bridge/bridge-types.ts";
-import { isBridgeAdapterKind } from "../bridge/bridge-providers.ts";
+import {
+  getBridgeProvider,
+  isBridgeAdapterKind,
+  listDaemonProviders,
+  type BridgeProviderDefinition,
+} from "../bridge/bridge-providers.ts";
 import {
   readLocalCompanionEndpoint as readWorkspaceEndpoint,
   type LocalCompanionEndpoint,
@@ -632,6 +637,74 @@ function appendCliLines(
   }
 }
 
+async function appendProviderDependencyLines(
+  lines: string[],
+  options: DoctorCliOptions,
+  deps: ResolvedDoctorDeps,
+): Promise<void> {
+  let providers: BridgeProviderDefinition[];
+  if (options.mode === "bridge") {
+    if (options.adapter === "shell") {
+      // Shell bridge has no provider dependencies to report.
+      return;
+    }
+    providers = options.adapter
+      ? [getBridgeProvider(options.adapter)]
+      : [getBridgeProvider("codex")];
+  } else if (options.adapter) {
+    providers = [getBridgeProvider(options.adapter)];
+  } else {
+    providers = listDaemonProviders();
+  }
+  if (providers.length === 0) {
+    return;
+  }
+  section(lines, msg("section.providerDeps"));
+  for (const provider of providers) {
+    const statuses: string[] = [];
+    let hasFailure = false;
+    for (const dependency of provider.dependencies) {
+      if (dependency.kind === "command") {
+        const loc = deps.findExecutable(dependency.name);
+        if (loc) {
+          statuses.push(row(STATE_OK, `${dependency.name}`, loc));
+        } else {
+          hasFailure = true;
+          statuses.push(row(STATE_FAIL, `${dependency.name}`, dependency.hint));
+        }
+      } else if (dependency.kind === "port") {
+        const host = dependency.host ?? "127.0.0.1";
+        const reachable = await deps.isTcpPortReachable(dependency.port, 800);
+        if (reachable) {
+          statuses.push(row(STATE_OK, `${host}:${dependency.port}`, msg("providerDeps.portOpen")));
+        } else {
+          hasFailure = true;
+          statuses.push(row(STATE_FAIL, `${host}:${dependency.port}`, dependency.hint));
+        }
+      } else if (dependency.kind === "app") {
+        const found = deps.exists(dependency.path);
+        if (found) {
+          statuses.push(row(STATE_OK, dependency.path, msg("providerDeps.appFound")));
+        } else {
+          hasFailure = true;
+          statuses.push(row(STATE_FAIL, dependency.path, dependency.hint));
+        }
+      } else if (dependency.kind === "env") {
+        const value = (deps.env ?? {})[dependency.name];
+        if (value) {
+          statuses.push(row(STATE_OK, dependency.name, value));
+        } else {
+          statuses.push(row(STATE_WARN, dependency.name, dependency.hint));
+        }
+      }
+    }
+    lines.push(fieldRow(provider.label, hasFailure ? msg("providerDeps.unavailable") : msg("providerDeps.ready")));
+    for (const status of statuses) {
+      lines.push(status);
+    }
+  }
+}
+
 async function appendEndpointSummary(
   lines: string[],
   label: string,
@@ -845,6 +918,7 @@ export async function buildDoctorReport(
   }
 
   appendCliLines(lines, doctorOptions, deps);
+  await appendProviderDependencyLines(lines, doctorOptions, deps);
 
   section(lines, msg("section.data"));
   const dataDir = deps.resolveDataDir();

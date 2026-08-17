@@ -50,6 +50,7 @@ export const CODEX_MOBILE_HTML = `<!doctype html>
           <div class="workspace-menu" id="workspace-menu" role="menu" hidden>
             <div class="adapter-menu" id="adapter-menu"></div>
             <div class="workspace-menu-divider" role="separator"></div>
+            <button class="workspace-menu-item" id="settings-open" type="button" role="menuitem">设置</button>
             <a class="workspace-menu-item" href="/about" role="menuitem">项目说明</a>
             <button class="workspace-menu-item" id="auth-logout" type="button" role="menuitem">退出</button>
           </div>
@@ -187,6 +188,18 @@ export const CODEX_MOBILE_HTML = `<!doctype html>
         <button class="task-rename-save" id="task-rename-save" type="submit">保存</button>
       </div>
     </form>
+  </div>
+
+  <div class="settings-overlay" id="settings-overlay" hidden>
+    <div class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="settings-header">
+        <div class="settings-title" id="settings-title">设置</div>
+        <button class="settings-close" id="settings-close" type="button" aria-label="关闭设置">×</button>
+      </div>
+      <div class="settings-body" id="settings-body">
+        <div class="settings-loading" id="settings-loading">正在读取设置…</div>
+      </div>
+    </div>
   </div>
 
   <div class="toast" id="toast" role="status"></div>
@@ -660,6 +673,9 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.75; stro
 .adapter-menu-item:hover { background: var(--surface-hover); }
 .adapter-menu-item.is-active { font-weight: 620; }
 .adapter-menu-state { color: var(--muted); font-size: 11px; font-weight: 430; }
+.adapter-menu-caps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.adapter-menu-cap { padding: 1px 7px; border: 1px solid var(--border); border-radius: 999px; font-size: 10px; color: var(--muted); background: var(--surface); }
+.adapter-menu-cap:first-child { margin-left: 10px; }
 .workspace-menu-divider { height: 1px; margin: 4px 6px; background: var(--border); }
 .workspace-menu-item { width: 100%; min-height: 34px; display: flex; align-items: center; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; text-decoration: none; cursor: pointer; }
 .workspace-menu-item:hover { background: var(--surface-hover); }
@@ -1085,6 +1101,118 @@ body.image-viewer-open { overflow: hidden; }
 .task-rename-actions button { min-width: 72px; min-height: 40px; padding: 0 15px; border: 0; border-radius: 10px; font: inherit; font-size: 14px; font-weight: 580; cursor: pointer; }
 .task-rename-cancel { background: var(--surface); color: var(--text); }
 .task-rename-save { background: var(--accent); color: var(--page); }
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0,0,0,.28);
+  z-index: 70;
+}
+.settings-dialog {
+  width: min(100%, 440px);
+  max-height: min(80dvh, 640px);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--page);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-title { font-size: 17px; font-weight: 650; letter-spacing: -.025em; }
+.settings-close {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.settings-close:hover { background: var(--surface-hover); color: var(--text); }
+.settings-body { overflow-y: auto; padding: 14px 18px 18px; }
+.settings-loading { padding: 24px 0; text-align: center; color: var(--muted); font-size: 14px; }
+.settings-section { margin-top: 18px; }
+.settings-section:first-child { margin-top: 0; }
+.settings-section-title { font-size: 13px; font-weight: 620; color: var(--text); margin-bottom: 8px; }
+.settings-note { font-size: 12px; color: var(--muted); line-height: 1.5; margin: 6px 0 10px; }
+.settings-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.settings-toggle-row:last-child { border-bottom: 0; }
+.settings-toggle-label { font-size: 14px; }
+.settings-toggle-label small { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; font-weight: 430; line-height: 1.45; }
+.settings-toggle {
+  position: relative;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 26px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--border-strong);
+  cursor: pointer;
+  transition: background .18s ease;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.settings-toggle::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--page);
+  box-shadow: 0 1px 3px rgba(0,0,0,.25);
+  transition: transform .18s ease;
+}
+.settings-toggle.is-on { background: var(--accent); }
+.settings-toggle.is-on::after { transform: translateX(18px); }
+.settings-rule-list { list-style: none; margin: 0; padding: 0; }
+.settings-rule-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.settings-rule-item:last-child { border-bottom: 0; }
+.settings-rule-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; transform: translateY(-1px); }
+.settings-rule-label { font-size: 14px; font-weight: 580; }
+.settings-rule-desc { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; font-weight: 430; line-height: 1.45; }
+.settings-provider { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.settings-provider:last-child { border-bottom: 0; }
+.settings-provider-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.settings-provider-name { font-size: 14px; font-weight: 620; }
+.settings-provider-owner { font-size: 11px; color: var(--muted); }
+.settings-provider-caps { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.settings-cap-chip { padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 11px; color: var(--muted); background: var(--surface); }
+.settings-cap-chip.is-on { color: var(--accent); border-color: rgba(16,163,127,.35); background: rgba(16,163,127,.08); }
+.settings-provider-deps { margin-top: 7px; padding-left: 2px; }
+.settings-dep-line { display: flex; align-items: baseline; gap: 6px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.settings-dep-line::before { content: "·"; color: var(--border-strong); }
+.settings-dep-hint { color: var(--muted); }
+
 .task-rename-actions button:disabled { opacity: .46; cursor: default; }
 body.task-rename-open { overflow: hidden; }
 .toast { position: fixed; left: 50%; bottom: calc(82px + env(safe-area-inset-bottom)); max-width: calc(100vw - 36px); transform: translate(-50%, 14px); padding: 9px 13px; border-radius: 10px; background: rgba(13,13,13,.9); color: white; font-size: 12px; opacity: 0; pointer-events: none; transition: .18s ease; z-index: 40; }
@@ -1278,6 +1406,10 @@ export const CODEX_MOBILE_JS = String.raw`
   var taskRenameInput = document.getElementById("task-rename-input");
   var taskRenameCancel = document.getElementById("task-rename-cancel");
   var taskRenameSave = document.getElementById("task-rename-save");
+  var settingsOverlay = document.getElementById("settings-overlay");
+  var settingsBody = document.getElementById("settings-body");
+  var settingsOpen = document.getElementById("settings-open");
+  var settingsClose = document.getElementById("settings-close");
 
   var state = {
     setupToken: "",
@@ -2648,6 +2780,31 @@ export const CODEX_MOBILE_JS = String.raw`
           : adapterStatus;
       button.appendChild(label);
       button.appendChild(status);
+      // DSH-inspired capability chips: surface declared capabilities so the
+      // user can see at a glance what each adapter supports without trial.
+      var caps = adapter.capabilities;
+      if (caps) {
+        var capChips = document.createElement("span");
+        capChips.className = "adapter-menu-caps";
+        var capLabels = {
+          approvals: "审批",
+          images: "图片",
+          queue: "队列",
+          sessions: "会话",
+          nativeCommands: "原生",
+        };
+        Object.keys(capLabels).forEach(function (key) {
+          if (caps[key]) {
+            var chip = document.createElement("span");
+            chip.className = "adapter-menu-cap";
+            chip.textContent = capLabels[key];
+            capChips.appendChild(chip);
+          }
+        });
+        if (capChips.childNodes.length > 0) {
+          button.appendChild(capChips);
+        }
+      }
       button.addEventListener("click", function () {
         void switchAdapter(adapter.id);
       });
@@ -3148,6 +3305,22 @@ export const CODEX_MOBILE_JS = String.raw`
     if (status === "input") return "待输入";
     if (status === "error") return "异常";
     return "空闲";
+  }
+
+  function reconcileTaskApprovalStatus(task, pendingApproval, runSummary) {
+    if (!task) return task;
+    if (pendingApproval) {
+      return task.status === "approval"
+        ? task
+        : Object.assign({}, task, { status: "approval" });
+    }
+    if (task.status !== "approval") return task;
+    var nextStatus = runSummary && runSummary.status === "running"
+      ? "running"
+      : runSummary && runSummary.status === "failed"
+        ? "error"
+        : "idle";
+    return Object.assign({}, task, { status: nextStatus });
   }
 
   function currentTask() {
@@ -4234,6 +4407,199 @@ export const CODEX_MOBILE_JS = String.raw`
     workspaceMenu.hidden = !nextOpen;
     workspaceSwitcher.setAttribute("aria-expanded", nextOpen ? "true" : "false");
     if (nextOpen) void loadAdapters().catch(function () {});
+  }
+
+  function openSettingsPanel() {
+    toggleWorkspaceMenu(false);
+    settingsOverlay.hidden = false;
+    settingsBody.innerHTML = "";
+    var loading = document.createElement("div");
+    loading.className = "settings-loading";
+    loading.textContent = "正在读取设置…";
+    settingsBody.appendChild(loading);
+    void loadSettings();
+  }
+
+  function closeSettingsPanel() {
+    settingsOverlay.hidden = true;
+  }
+
+  function settingsCapabilityChip(key, value) {
+    var chip = document.createElement("span");
+    chip.className = "settings-cap-chip" + (value ? " is-on" : "");
+    var labels = {
+      sessions: "会话",
+      messages: "消息",
+      images: "图片",
+      queue: "队列",
+      approvals: "审批",
+      stop: "停止",
+      nativeCommands: "原生命令",
+    };
+    chip.textContent = labels[key] || key;
+    return chip;
+  }
+
+  function settingsOwnerLabel(owner) {
+    var labels = {
+      desktop_owner: "桌面原生 owner",
+      visible_cli_owner: "可见 CLI owner",
+      shared_service_owner: "共享服务 owner",
+      none: "无",
+    };
+    return labels[owner] || owner;
+  }
+
+  function renderSettings(payload) {
+    settingsBody.innerHTML = "";
+    if (!payload || !Array.isArray(payload.providers)) {
+      var empty = document.createElement("div");
+      empty.className = "settings-loading";
+      empty.textContent = "暂无可用的设置信息。";
+      settingsBody.appendChild(empty);
+      return;
+    }
+
+    // 审批规则 section
+    var rulesSection = document.createElement("div");
+    rulesSection.className = "settings-section";
+    var rulesTitle = document.createElement("div");
+    rulesTitle.className = "settings-section-title";
+    rulesTitle.textContent = "审批规则";
+    rulesSection.appendChild(rulesTitle);
+
+    var strictToggle = document.createElement("div");
+    strictToggle.className = "settings-toggle-row";
+    var strictLabelWrap = document.createElement("div");
+    strictLabelWrap.className = "settings-toggle-label";
+    strictLabelWrap.innerHTML = "严格审批<small>所有审批请求都交给远程端确认，不自动通过。切换后立即生效，重启后恢复环境变量默认值。</small>";
+    var strictToggleBtn = document.createElement("button");
+    strictToggleBtn.type = "button";
+    strictToggleBtn.className = "settings-toggle" + (payload.strictApproval ? " is-on" : "");
+    strictToggleBtn.setAttribute("role", "switch");
+    strictToggleBtn.setAttribute("aria-checked", payload.strictApproval ? "true" : "false");
+    strictToggleBtn.title = "切换后立即生效（本机运行时覆盖，重启后恢复环境变量默认值）";
+    strictToggleBtn.addEventListener("click", function () {
+      var next = !payload.strictApproval;
+      strictToggleBtn.disabled = true;
+      void api("/api/settings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ strictApproval: next }),
+      }).then(function (updated) {
+        strictToggleBtn.disabled = false;
+        if (updated && typeof updated.strictApproval === "boolean") {
+          payload.strictApproval = updated.strictApproval;
+          strictToggleBtn.classList.toggle("is-on", payload.strictApproval);
+          strictToggleBtn.setAttribute("aria-checked", payload.strictApproval ? "true" : "false");
+        }
+      }).catch(function (error) {
+        strictToggleBtn.disabled = false;
+        showToast(error && error.message ? error.message : "设置保存失败");
+      });
+    });
+    strictToggle.appendChild(strictLabelWrap);
+    strictToggle.appendChild(strictToggleBtn);
+    rulesSection.appendChild(strictToggle);
+
+    if (Array.isArray(payload.approvalRules) && payload.approvalRules.length > 0) {
+      var rulesList = document.createElement("ul");
+      rulesList.className = "settings-rule-list";
+      payload.approvalRules.forEach(function (rule) {
+        var item = document.createElement("li");
+        item.className = "settings-rule-item";
+        var dot = document.createElement("span");
+        dot.className = "settings-rule-dot";
+        var label = document.createElement("span");
+        label.className = "settings-rule-label";
+        label.textContent = rule.label || rule.id;
+        var desc = document.createElement("span");
+        desc.className = "settings-rule-desc";
+        desc.textContent = rule.description || "";
+        item.appendChild(dot);
+        item.appendChild(label);
+        item.appendChild(desc);
+        rulesList.appendChild(item);
+      });
+      rulesSection.appendChild(rulesList);
+    }
+    settingsBody.appendChild(rulesSection);
+
+    // 适配器能力/依赖 section
+    var providersSection = document.createElement("div");
+    providersSection.className = "settings-section";
+    var providersTitle = document.createElement("div");
+    providersTitle.className = "settings-section-title";
+    providersTitle.textContent = "适配器能力与依赖";
+    providersSection.appendChild(providersTitle);
+    var providersNote = document.createElement("div");
+    providersNote.className = "settings-note";
+    providersNote.textContent = "能力与依赖由电脑端适配器注册表声明；依赖不满足时对应终端会显示为不可用。";
+    providersSection.appendChild(providersNote);
+
+    payload.providers.forEach(function (provider) {
+      var block = document.createElement("div");
+      block.className = "settings-provider";
+      var head = document.createElement("div");
+      head.className = "settings-provider-head";
+      var name = document.createElement("span");
+      name.className = "settings-provider-name";
+      name.textContent = provider.label || provider.id;
+      var owner = document.createElement("span");
+      owner.className = "settings-provider-owner";
+      owner.textContent = settingsOwnerLabel(provider.owner);
+      head.appendChild(name);
+      head.appendChild(owner);
+      block.appendChild(head);
+
+      var caps = document.createElement("div");
+      caps.className = "settings-provider-caps";
+      Object.keys(provider.capabilities || {}).forEach(function (key) {
+        caps.appendChild(settingsCapabilityChip(key, provider.capabilities[key]));
+      });
+      block.appendChild(caps);
+
+      if (Array.isArray(provider.dependencies) && provider.dependencies.length > 0) {
+        var deps = document.createElement("div");
+        deps.className = "settings-provider-deps";
+        provider.dependencies.forEach(function (dep) {
+          var line = document.createElement("div");
+          line.className = "settings-dep-line";
+          var text = dep.kind === "command"
+            ? "命令 " + dep.name + (dep.installHint ? "（" + dep.installHint + "）" : "")
+            : dep.kind === "port"
+              ? "端口 " + dep.name
+              : dep.kind === "app"
+                ? "应用 " + dep.name
+                : "环境变量 " + dep.name;
+          line.textContent = text;
+          line.title = dep.hint || "";
+          var hint = document.createElement("span");
+          hint.className = "settings-dep-hint";
+          hint.textContent = dep.hint || "";
+          line.appendChild(hint);
+          deps.appendChild(line);
+        });
+        block.appendChild(deps);
+      }
+      providersSection.appendChild(block);
+    });
+    settingsBody.appendChild(providersSection);
+  }
+
+  async function loadSettings() {
+    try {
+      var payload = await api("/api/settings");
+      if (settingsOverlay.hidden) return;
+      renderSettings(payload);
+    } catch (error) {
+      if (settingsOverlay.hidden) return;
+      settingsBody.innerHTML = "";
+      var failed = document.createElement("div");
+      failed.className = "settings-loading";
+      failed.textContent = "设置读取失败：" + (error && error.message ? error.message : "未知错误");
+      settingsBody.appendChild(failed);
+    }
   }
 
   async function loadTasks(initial) {
@@ -5958,6 +6324,13 @@ export const CODEX_MOBILE_JS = String.raw`
         state.approvalResults = Array.isArray(payload.approvalResults)
           ? payload.approvalResults
           : [];
+        if (taskIndex >= 0) {
+          state.tasks[taskIndex] = reconcileTaskApprovalStatus(
+            state.tasks[taskIndex],
+            state.pendingApproval,
+            payload.runSummary || null
+          );
+        }
         updateRunSummary(payload.runSummary || null, payload.task || null);
         state.progressItems = filterProgressItemsForOptimisticTurn(
           filterProgressItemsForCurrentTurn(
@@ -6808,6 +7181,7 @@ export const CODEX_MOBILE_JS = String.raw`
     toggleWorkspaceMenu(false);
     closeTaskContextMenu();
     closeTaskRenameDialog(true);
+    closeSettingsPanel();
     try { await fetchJson("/api/auth/logout", { method: "POST" }); } catch (_) {}
     state.taskRequestId += 1;
     state.messageRequestId += 1;
@@ -6960,6 +7334,11 @@ export const CODEX_MOBILE_JS = String.raw`
         closeImageViewer();
         return;
       }
+      if (!settingsOverlay.hidden) {
+        event.preventDefault();
+        closeSettingsPanel();
+        return;
+      }
       if (!taskRenameOverlay.hidden) {
         event.preventDefault();
         closeTaskRenameDialog();
@@ -6973,6 +7352,11 @@ export const CODEX_MOBILE_JS = String.raw`
   document.getElementById("menu-button").addEventListener("click", function () { app.classList.add("sidebar-open"); });
   document.getElementById("sidebar-close").addEventListener("click", closeSidebar);
   document.getElementById("sidebar-overlay").addEventListener("click", closeSidebar);
+  settingsOpen.addEventListener("click", openSettingsPanel);
+  settingsClose.addEventListener("click", closeSettingsPanel);
+  settingsOverlay.addEventListener("click", function (event) {
+    if (event.target === settingsOverlay) closeSettingsPanel();
+  });
 
   function scheduleLiveRefresh(delayMs) {
     if (!state.authenticated) return;

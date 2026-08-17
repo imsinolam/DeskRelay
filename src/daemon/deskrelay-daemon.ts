@@ -46,7 +46,10 @@ import {
   providerRequiresVisibleClient,
   providerUsesDesktopOwner,
   isDaemonAdapterKind,
+  listDaemonProviders,
 } from "../bridge/bridge-providers.ts";
+import { ApprovalRuleChain } from "./approval-rules.ts";
+import { AdapterUndoScope } from "./adapter-undo-scope.ts";
 import type {
   ApprovalRequest,
   BridgeAdapter,
@@ -103,6 +106,7 @@ import {
   sanitizeCodexVisibleUserMessageForDisplay,
   sanitizeWechatInboundPromptForDisplay,
   shouldNotifyTaskInterrupted,
+  isStrictApprovalModeEnabled,
   splitWechatTextIntoChunks,
   truncatePreview,
 } from "../bridge/bridge-utils.ts";
@@ -137,6 +141,7 @@ import {
   BoundedTtlSet,
 } from "../utils/bounded-ttl-cache.ts";
 import { ensureWechatCredentials } from "../wechat/setup.ts";
+import { WechatImageDraftCollector } from "../wechat/wechat-image-draft.ts";
 import {
   classifyWechatTransportError,
   DEFAULT_LONG_POLL_TIMEOUT_MS,
@@ -204,6 +209,7 @@ import {
   type CodexMobileTask,
   type CodexMobileTaskBoard,
   type CodexMobileTaskStatus,
+  type CodexMobileSettings,
 } from "./codex-mobile-server.ts";
 import {
   startDeskRelayRelayClient,
@@ -453,6 +459,8 @@ type DaemonSlot = {
   pendingConfirmations: DaemonPendingApproval[];
   notifiedApprovalKeys: BoundedTtlSet<string>;
   taskApprovalAutoApprover: DaemonTaskApprovalAutoApprover;
+  approvalRuleChain: ApprovalRuleChain;
+  undoScope: AdapterUndoScope;
   pendingUserInputs: PendingUserInputRequest[];
   activeTasks: Map<string, ActiveTask>;
   deferredInboundMessages: CodexInboundTaskQueue<DeferredInboundMessage>;
@@ -1775,6 +1783,18 @@ export function resolveCodexMobileTaskStatusFromSignals(params: {
     return "input";
   }
   if (params.runtimeStatus?.type === "active") {
+    if (
+      params.runtimeTaskApprovals !== undefined &&
+      params.runtimeTaskApprovals.length === 0 &&
+      params.runtimeStatus.activeFlags.includes("waitingOnApproval")
+    ) {
+      return mapCodexMobileTaskStatus({
+        ...params.runtimeStatus,
+        activeFlags: params.runtimeStatus.activeFlags.filter(
+          (flag) => flag !== "waitingOnApproval",
+        ),
+      });
+    }
     return mapCodexMobileTaskStatus(params.runtimeStatus);
   }
   if (params.hasActiveTask) {
@@ -2395,6 +2415,7 @@ class DeskRelayDaemon {
   private readonly stateStore: DaemonWorkspaceStateStore;
   private readonly deferredInputStore: CodexDeferredInputStore;
   private readonly mobileMessageImageStore: MobileMessageImageStore;
+  private readonly wechatImageDrafts = new WechatImageDraftCollector();
   private readonly slots = new Map<DaemonAdapterKind, DaemonSlot>();
   private approvalNotificationOrder = 0;
   private globalTaskListSnapshot: GlobalTaskSnapshot | null = null;
@@ -2406,6 +2427,17 @@ class DeskRelayDaemon {
   private activeTaskListScope: "global" | "adapter" = "global";
   private readonly startedAt = new Date().toISOString();
   private readonly bridgeStartedAtMs = Date.now();
+
+  /** Runtime override for strict approval; null = follow env var. */
+  private runtimeStrictApproval: boolean | null = null;
+
+  /** True when DESKRELAY_STRICT_APPROVAL is enabled (all approvals go remote). */
+  private get strictApprovalEnabled(): boolean {
+    if (this.runtimeStrictApproval !== null) {
+      return this.runtimeStrictApproval;
+    }
+    return isStrictApprovalModeEnabled();
+  }
   private backlogNoticeSent = false;
   private activeAdapter: DaemonAdapterKind | null = null;
   takenOverAdapter?: DaemonAdapterKind;
@@ -2614,6 +2646,8 @@ class DeskRelayDaemon {
         authStore,
         listAdapters: () => Promise.resolve(this.listMobileAdapters()),
         switchAdapter: (adapter) => this.switchMobileAdapter(adapter),
+        readSettings: () => Promise.resolve(this.buildMobileSettings()),
+        updateSettings: (patch) => Promise.resolve(this.updateMobileSettings(patch)),
         listTaskBoard: () => this.listMobileTaskBoard(),
         listTasks: (adapter) => this.listMobileTasks(adapter),
         createTask: (adapter, options) =>
@@ -2894,6 +2928,11 @@ class DeskRelayDaemon {
     await this.attachmentSendChain.catch(() => undefined);
 
     for (const slot of this.slots.values()) {
+      try {
+        await slot.undoScope.undoAll();
+      } catch {
+        // Best effort undo.
+      }
       try {
         await slot.runtime.dispose();
       } catch {
@@ -3177,6 +3216,8 @@ class DeskRelayDaemon {
         ttlMs: DAEMON_TRANSIENT_CACHE_TTL_MS,
       }),
       taskApprovalAutoApprover,
+      approvalRuleChain: new ApprovalRuleChain(),
+      undoScope: new AdapterUndoScope(),
       pendingUserInputs: [],
       activeTasks: new Map(),
       deferredInboundMessages,
@@ -3192,6 +3233,13 @@ class DeskRelayDaemon {
       taskListHistory: [],
       suppressStartupNotifications: true,
     };
+
+    // DSH-inspired revertible effects: register the free-pass snapshot so
+    // removing this slot can restore the persisted auto-approve state.
+    slot.undoScope.effect("free-pass-state", () => {
+      slot.taskApprovalAutoApprover.clear();
+      this.persistTaskApprovalAutoApprover(slot);
+    });
 
     runtime.setEventSink((event) => {
       this.handleSlotEvent(slot, event);
@@ -3399,17 +3447,31 @@ class DeskRelayDaemon {
           appendDaemonLog(
             `approval_required: adapter=${slot.adapter} source=${pending.source} command=${truncatePreview(pending.commandPreview)}`,
           );
-          if (
-            slot.taskApprovalAutoApprover.shouldAutoApprove(approvalIdentity)
-          ) {
-            const count = pending.threadId && slot.runtime.resolveTaskApprovals
-              ? await slot.runtime.resolveTaskApprovals(pending.threadId, "confirm")
-              : approvalIdentity.threadId && slot.runtime.resolveTaskApprovals
-                ? await slot.runtime.resolveTaskApprovals(
-                    approvalIdentity.threadId,
-                    "confirm",
-                  )
-                : await slot.runtime.resolveAllApprovals("confirm");
+          const approvalDecision = slot.approvalRuleChain.decide({
+            adapter: slot.adapter,
+            toolName: pending.toolName,
+            commandPreview: pending.commandPreview,
+            taskIdentityKey: approvalIdentity.threadId,
+            taskFreePassEnabled: slot.taskApprovalAutoApprover.shouldAutoApprove(approvalIdentity),
+            strictApproval: this.strictApprovalEnabled,
+          });
+          const shouldAutoApprove = approvalDecision === "allow";
+          if (shouldAutoApprove) {
+            let count = 0;
+            try {
+              count = pending.threadId && slot.runtime.resolveTaskApprovals
+                ? await slot.runtime.resolveTaskApprovals(pending.threadId, "confirm")
+                : approvalIdentity.threadId && slot.runtime.resolveTaskApprovals
+                  ? await slot.runtime.resolveTaskApprovals(
+                      approvalIdentity.threadId,
+                      "confirm",
+                    )
+                  : await slot.runtime.resolveAllApprovals("confirm");
+            } catch (error) {
+              appendDaemonLog(
+                `approval_task_auto_confirm_error: adapter=${slot.adapter} thread=${approvalIdentity.threadId ?? "unknown"} turn=${approvalIdentity.turnId ?? "unknown"} error=${truncatePreview(error instanceof Error ? error.message : String(error), 300)}`,
+              );
+            }
             if (count > 0) {
               const taskThreadId = pending.threadId ?? approvalIdentity.threadId;
               slot.pendingConfirmations = taskThreadId
@@ -3703,7 +3765,8 @@ class DeskRelayDaemon {
     }
   }
 
-  private async handleInboundMessage(message: InboundWechatMessage): Promise<void> {
+  private async handleInboundMessage(initialMessage: InboundWechatMessage): Promise<void> {
+    let message = initialMessage;
     if (message.senderId !== this.authorizedUserId) {
       await this.queueWechatMessage(
         message.senderId,
@@ -3843,6 +3906,28 @@ class DeskRelayDaemon {
       );
       return;
     }
+
+    const shouldCollectImageDraft =
+      message.attachments.some((attachment) => attachment.kind === "image") ||
+      (this.wechatImageDrafts.hasPendingDraft(message.senderId) &&
+        !message.text.trim().startsWith("/"));
+    if (shouldCollectImageDraft && slot.pendingUserInputs.length === 0 && !pendingApproval) {
+      const imageDraftResult = this.wechatImageDrafts.consume(message);
+      if (imageDraftResult.type === "wait") {
+        await this.queueWechatMessage(
+          message.senderId,
+          this.prefixSlotMessage(
+            slot,
+            imageDraftResult.reply,
+            this.getSlotThreadId(slot),
+          ),
+          "notice",
+        );
+        return;
+      }
+      message = imageDraftResult.message;
+    }
+
     const globalTargetedTaskMessage = this.activeTaskListScope === "global" &&
         this.globalTaskListSnapshot
       ? resolveGlobalTaskTargetedMessage({
@@ -5269,9 +5354,57 @@ class DeskRelayDaemon {
             visibleClientOpen: openAdapters.has(adapter),
           }),
           active: adapter === this.activeAdapter,
+          capabilities: { ...getBridgeProvider(adapter).capabilities },
         };
       }),
     };
+  }
+
+  private buildMobileSettings(): CodexMobileSettings {
+    const firstSlot = this.slots.values().next().value as DaemonSlot | undefined;
+    return {
+      strictApproval: this.strictApprovalEnabled,
+      approvalRules: (firstSlot?.approvalRuleChain.list() ?? []).map((rule) => ({
+        id: rule.id,
+        label: rule.label,
+        description: rule.description,
+      })),
+      providers: listDaemonProviders().map((provider) => ({
+        id: provider.id,
+        label: provider.label,
+        transport: provider.transport,
+        owner: provider.sessionIntegration.owner,
+        continuity: provider.sessionIntegration.continuity,
+        localVisibility: provider.sessionIntegration.localVisibility,
+        capabilities: { ...provider.capabilities },
+        dependencies: provider.dependencies.map((dependency) => ({
+          kind: dependency.kind,
+          name: dependency.kind === "command"
+            ? dependency.name
+            : dependency.kind === "port"
+              ? String(dependency.port)
+              : dependency.kind === "app"
+                ? dependency.path
+                : dependency.name,
+          hint: dependency.hint,
+          ...(dependency.kind === "command" && dependency.installHint
+            ? { installHint: dependency.installHint }
+            : {}),
+        })),
+      })),
+    };
+  }
+
+  private updateMobileSettings(patch: {
+    strictApproval?: boolean;
+  }): CodexMobileSettings {
+    if (typeof patch.strictApproval === "boolean") {
+      this.runtimeStrictApproval = patch.strictApproval;
+      appendDaemonLog(
+        `settings_updated: strict_approval=${patch.strictApproval} (runtime override)`,
+      );
+    }
+    return this.buildMobileSettings();
   }
 
   private async switchMobileAdapter(adapter: string): Promise<{

@@ -39,6 +39,7 @@ import {
   ensurePrivateDir,
   writePrivateFileAtomic,
 } from "../utils/private-files.ts";
+import { readFileTail, scanFileTail } from "../utils/file-tail.ts";
 import {
   CodexDesktopIpcClient,
   type CodexDesktopConversationState,
@@ -1902,77 +1903,36 @@ function mergeCodexSessionProgress(
 export function readCodexSessionProgressFromRolloutTail(
   filePath: string,
 ): BridgeSessionProgressItem[] {
-  let stats: fs.Stats;
-  try {
-    stats = fs.statSync(filePath);
-  } catch {
-    return [];
-  }
-  let fileDescriptor: number;
-  try {
-    fileDescriptor = fs.openSync(filePath, "r");
-  } catch {
+  const lines = readFileTail(filePath, {
+    scanLimitBytes: CODEX_SESSION_PROGRESS_SCAN_LIMIT_BYTES,
+    chunkBytes: CODEX_DESKTOP_RUNTIME_STATUS_SCAN_CHUNK_BYTES,
+  });
+  if (!lines) {
     return [];
   }
 
+  // The primitive emits lines in file order (oldest first); parse from the
+  // newest line backward and stop at the first record of a previous turn,
+  // mirroring the original reverse-scan semantics.
   const records: CodexRolloutProgressRecord[] = [];
   let latestTurnId: string | undefined;
-  try {
-    let endOffset = stats.size;
-    let scannedBytes = 0;
-    let leadingLineFragment = "";
-    let reachedPreviousTurn = false;
-    while (
-      endOffset > 0 &&
-      scannedBytes < CODEX_SESSION_PROGRESS_SCAN_LIMIT_BYTES &&
-      !reachedPreviousTurn
-    ) {
-      const bytesToRead = Math.min(
-        CODEX_DESKTOP_RUNTIME_STATUS_SCAN_CHUNK_BYTES,
-        endOffset,
-        CODEX_SESSION_PROGRESS_SCAN_LIMIT_BYTES - scannedBytes,
-      );
-      const startOffset = endOffset - bytesToRead;
-      const buffer = Buffer.alloc(bytesToRead);
-      const bytesRead = fs.readSync(
-        fileDescriptor,
-        buffer,
-        0,
-        buffer.length,
-        startOffset,
-      );
-      const content = buffer.subarray(0, bytesRead).toString("utf8") + leadingLineFragment;
-      const lines = content.split(/\r?\n/);
-      leadingLineFragment = startOffset > 0 ? (lines.shift() ?? "") : "";
-      for (let index = lines.length - 1; index >= 0; index -= 1) {
-        const record = parseCodexRolloutProgressRecord(lines[index] ?? "");
-        if (!record?.turnId) {
-          continue;
-        }
-        if (!latestTurnId) {
-          latestTurnId = record.turnId;
-        } else if (record.turnId !== latestTurnId) {
-          reachedPreviousTurn = records.length > 0;
-          if (reachedPreviousTurn) {
-            break;
-          }
-          continue;
-        }
-        records.push(record);
-      }
-      endOffset = startOffset;
-      scannedBytes += bytesRead;
+  let reachedPreviousTurn = false;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (reachedPreviousTurn) break;
+    const record = parseCodexRolloutProgressRecord(lines[index] ?? "");
+    if (!record?.turnId) {
+      continue;
     }
-    if (!reachedPreviousTurn && endOffset === 0 && leadingLineFragment) {
-      const record = parseCodexRolloutProgressRecord(leadingLineFragment);
-      if (record?.turnId && (!latestTurnId || record.turnId === latestTurnId)) {
-        records.push(record);
+    if (!latestTurnId) {
+      latestTurnId = record.turnId;
+    } else if (record.turnId !== latestTurnId) {
+      reachedPreviousTurn = records.length > 0;
+      if (reachedPreviousTurn) {
+        break;
       }
+      continue;
     }
-  } catch {
-    return [];
-  } finally {
-    fs.closeSync(fileDescriptor);
+    records.push(record);
   }
   records.reverse();
   return codexRolloutProgressFromRecords(records);
@@ -2122,69 +2082,20 @@ export function readCodexSessionRunSummaryFromRolloutTail(
   filePath: string,
   nowMs = Date.now(),
 ): BridgeSessionRunSummary | null {
-  let stats: fs.Stats;
-  try {
-    stats = fs.statSync(filePath);
-  } catch {
-    return null;
-  }
-
-  let fileDescriptor: number;
-  try {
-    fileDescriptor = fs.openSync(filePath, "r");
-  } catch {
-    return null;
-  }
-
-  try {
-    let endOffset = stats.size;
-    let scannedBytes = 0;
-    let leadingLineFragment = "";
-
-    while (
-      endOffset > 0 &&
-      scannedBytes < CODEX_SESSION_RUN_SUMMARY_SCAN_LIMIT_BYTES
-    ) {
-      const bytesToRead = Math.min(
-        CODEX_DESKTOP_RUNTIME_STATUS_SCAN_CHUNK_BYTES,
-        endOffset,
-        CODEX_SESSION_RUN_SUMMARY_SCAN_LIMIT_BYTES - scannedBytes,
-      );
-      const startOffset = endOffset - bytesToRead;
-      const buffer = Buffer.alloc(bytesToRead);
-      const bytesRead = fs.readSync(
-        fileDescriptor,
-        buffer,
-        0,
-        buffer.length,
-        startOffset,
-      );
-      const content =
-        buffer.subarray(0, bytesRead).toString("utf8") + leadingLineFragment;
-      const lines = content.split(/\r?\n/);
-      leadingLineFragment = startOffset > 0 ? (lines.shift() ?? "") : "";
-
-      for (let index = lines.length - 1; index >= 0; index -= 1) {
-        const summary = parseCodexSessionRunSummary(lines[index] ?? "", nowMs);
-        if (summary) {
-          return summary;
-        }
-      }
-
-      endOffset = startOffset;
-      scannedBytes += bytesRead;
+  let summary: BridgeSessionRunSummary | null = null;
+  // Scan from the newest line backward; the first parsable summary wins.
+  // The primitive emits lines in file order, so iterate and keep the
+  // newest parse result (later lines overwrite earlier ones).
+  scanFileTail(filePath, {
+    scanLimitBytes: CODEX_SESSION_RUN_SUMMARY_SCAN_LIMIT_BYTES,
+    chunkBytes: CODEX_DESKTOP_RUNTIME_STATUS_SCAN_CHUNK_BYTES,
+  }, (line) => {
+    const parsed = parseCodexSessionRunSummary(line.text, nowMs);
+    if (parsed) {
+      summary = parsed;
     }
-
-    if (endOffset === 0 && leadingLineFragment) {
-      return parseCodexSessionRunSummary(leadingLineFragment, nowMs);
-    }
-  } catch {
-    return null;
-  } finally {
-    fs.closeSync(fileDescriptor);
-  }
-
-  return null;
+  });
+  return summary;
 }
 
 function readCodexDesktopRuntimeStatusFromSessionTail(
@@ -2564,6 +2475,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
   private removeDesktopConnectionListener: (() => void) | null = null;
   private desktopInitializedThreadIds = new Set<string>();
   private desktopSeenRequestKeys = new Set<string>();
+  private desktopApprovalSettleTimeoutMs = 1_500;
   private subscribedThreadIds = new Set<string>();
   private sharedThreadId: string | null = null;
   private announcedThreadId: string | null = null;
@@ -4577,6 +4489,82 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     return `${threadId}\u0000${typeof requestId}:${String(requestId)}`;
   }
 
+  private reconcileDesktopApprovalRequests(threadId: string): void {
+    if (!this.usesDesktopTransport()) {
+      return;
+    }
+    const state = this.getDesktopThreadStateView(threadId);
+    if (!state || !Array.isArray(state.requests)) {
+      return;
+    }
+
+    const liveRequests: CodexPendingApprovalRequest[] = [];
+    for (const value of state.requests) {
+      if (!isRecord(value)) {
+        continue;
+      }
+      const requestId = getCodexRpcRequestId(value.id);
+      const method = typeof value.method === "string" ? value.method : "";
+      if (
+        requestId === null ||
+        (method !== "item/commandExecution/requestApproval" &&
+          method !== "item/fileChange/requestApproval" &&
+          method !== "item/permissions/requestApproval" &&
+          method !== "mcpServer/elicitation/request") ||
+        !isRecord(value.params)
+      ) {
+        continue;
+      }
+      const requestThreadId = getNotificationThreadId(value.params) ?? threadId;
+      if (requestThreadId !== threadId) {
+        continue;
+      }
+      const turnId = getNotificationTurnId(value.params) ??
+        (this.activeTurn?.threadId === threadId ? this.activeTurn.turnId : null) ??
+        this.getBackgroundTurnForThread(threadId)?.turnId ?? null;
+      const request = buildCodexApprovalRequest(method, value.params);
+      if (!request) {
+        continue;
+      }
+      const origin: BridgeTurnOrigin = turnId && this.bridgeOwnedTurnIds.has(turnId)
+        ? "wechat"
+        : "local";
+      liveRequests.push({
+        requestId,
+        method,
+        threadId,
+        turnId: turnId ?? `desktop-request:${String(requestId)}`,
+        origin,
+        params: value.params,
+        request: {
+          ...request,
+          requestId: String(requestId),
+          createdAt: nowIso(),
+          threadId,
+          ...(turnId ? { turnId } : {}),
+          origin,
+        },
+      });
+    }
+
+    const liveKeys = new Set(
+      liveRequests.map((request) => this.desktopRequestKey(threadId, request.requestId)),
+    );
+    this.pendingApprovalRequests = this.pendingApprovalRequests.filter(
+      (request) =>
+        request.threadId !== threadId ||
+        liveKeys.has(this.desktopRequestKey(threadId, request.requestId)),
+    );
+    for (const request of liveRequests) {
+      const key = this.desktopRequestKey(threadId, request.requestId);
+      if (!this.pendingApprovalRequests.some(
+        (candidate) => this.desktopRequestKey(threadId, candidate.requestId) === key
+      )) {
+        this.pendingApprovalRequests.push(request);
+      }
+    }
+  }
+
   private async handleDesktopRequest(
     fallbackThreadId: string,
     requestId: CodexRpcRequestId,
@@ -4659,8 +4647,13 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     }
     const autoResponse = getCodexApprovalAutoResponse(approvalMethod, params);
     if (autoResponse) {
-      await this.respondToDesktopApprovalResult(pendingRequest, autoResponse.result);
-      return;
+      try {
+        await this.respondToDesktopApprovalResult(pendingRequest, autoResponse.result);
+        return;
+      } catch {
+        // The desktop owner still has the request. Keep it actionable in the
+        // mobile surfaces instead of treating an unconfirmed decision as done.
+      }
     }
 
     const request = buildCodexApprovalRequest(approvalMethod, params);
@@ -4677,7 +4670,12 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       origin,
     };
     pendingRequest.request = contextualRequest;
-    this.pendingApprovalRequests.push(pendingRequest);
+    const pendingKey = this.desktopRequestKey(threadId, requestId);
+    if (!this.pendingApprovalRequests.some(
+      (candidate) => this.desktopRequestKey(threadId, candidate.requestId) === pendingKey
+    )) {
+      this.pendingApprovalRequests.push(pendingRequest);
+    }
     if (threadId === this.sharedThreadId) {
       this.syncSelectedThreadState("Codex 有操作等待确认。");
     }
@@ -6579,6 +6577,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     if (!threadId) {
       return [];
     }
+    this.reconcileDesktopApprovalRequests(threadId);
     return this.pendingApprovalRequests.filter((request) => request.threadId === threadId);
   }
 
@@ -7009,6 +7008,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
         request.requestId,
         result,
       );
+      await this.waitForDesktopApprovalRequestToClear(request);
       return;
     }
     if (request.method === "mcpServer/elicitation/request") {
@@ -7017,6 +7017,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
         request.requestId,
         result,
       );
+      await this.waitForDesktopApprovalRequestToClear(request);
       return;
     }
     const decision = result.decision;
@@ -7026,6 +7027,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
         request.requestId,
         decision,
       );
+      await this.waitForDesktopApprovalRequestToClear(request);
       return;
     }
     await client.replyToCommandApproval(
@@ -7033,6 +7035,43 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       request.requestId,
       decision,
     );
+    await this.waitForDesktopApprovalRequestToClear(request);
+  }
+
+  private async waitForDesktopApprovalRequestToClear(
+    request: CodexPendingApprovalRequest,
+  ): Promise<void> {
+    const client = this.desktopIpcClient as (CodexDesktopIpcClient & {
+      getThreadStateView?: (
+        threadId: string,
+      ) => CodexDesktopConversationState | null;
+    }) | null;
+    if (!client?.getThreadStateView) {
+      return;
+    }
+    const deadline = Date.now() + this.desktopApprovalSettleTimeoutMs;
+    while (true) {
+      const state = client.getThreadStateView(request.threadId);
+      const stillPending = Boolean(
+        state &&
+        Array.isArray(state.requests) &&
+        state.requests.some((value) =>
+          isRecord(value) &&
+          value.id === request.requestId &&
+          value.method === request.method
+        ),
+      );
+      if (state && !stillPending) {
+        return;
+      }
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new Error(
+          `Codex 桌面端仍在等待审批：${request.method}#${String(request.requestId)}`,
+        );
+      }
+      await delay(Math.min(50, remainingMs));
+    }
   }
 
   private handleRpcMessageData(data: unknown): void {

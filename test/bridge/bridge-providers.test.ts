@@ -6,6 +6,8 @@ import {
   isBridgeAdapterKind,
   isClaudeProviderKind,
   isDaemonAdapterKind,
+  listDaemonProviders,
+  providerUsesHarnessHost,
 } from "../../src/bridge/bridge-providers.ts";
 import { createBridgeAdapter } from "../../src/bridge/bridge-adapters.ts";
 import { LocalCompanionProxyAdapter } from "../../src/bridge/bridge-adapters.core.ts";
@@ -47,7 +49,7 @@ describe("bridge provider registry", () => {
       command: "dsh",
       transport: "harness_host",
       sessionIntegration: {
-        owner: "desktop_owner",
+        owner: "shared_service_owner",
         continuity: "same_owner",
         localVisibility: "live",
       },
@@ -100,5 +102,36 @@ describe("bridge provider registry", () => {
         localVisibility: "live",
       });
     }
+  });
+
+  test("declares a dependency graph for every provider", () => {
+    for (const provider of listDaemonProviders()) {
+      expect(Array.isArray(provider.dependencies)).toBe(true);
+      for (const dep of provider.dependencies) {
+        if (dep.kind === "command") {
+          expect(dep.name.length).toBeGreaterThan(0);
+          expect(dep.hint.length).toBeGreaterThan(0);
+        } else if (dep.kind === "port") {
+          expect(dep.port).toBeGreaterThan(0);
+          expect(dep.hint.length).toBeGreaterThan(0);
+        } else if (dep.kind === "app") {
+          expect(dep.path.length).toBeGreaterThan(0);
+          expect(dep.hint.length).toBeGreaterThan(0);
+        } else if (dep.kind === "env") {
+          expect(dep.name.length).toBeGreaterThan(0);
+          expect(dep.hint.length).toBeGreaterThan(0);
+        } else {
+          throw new Error(`unknown dependency kind for ${provider.id}`);
+        }
+      }
+    }
+  });
+
+  test("deepseek harness depends on the local harness host", () => {
+    const provider = getBridgeProvider("deepseek");
+    expect(providerUsesHarnessHost("deepseek")).toBe(true);
+    const portDeps = provider.dependencies.filter((dep) => dep.kind === "port");
+    expect(portDeps.some((dep) => dep.kind === "port" && dep.port === 3080)).toBe(true);
+    expect(provider.dependencies.some((dep) => dep.kind === "command" && dep.name === "dsh")).toBe(true);
   });
 });

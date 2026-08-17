@@ -53,6 +53,44 @@ export type CodexMobileTaskShortTarget = {
   threadId: string;
 };
 
+/**
+ * Settings payload served to the mobile settings panel. It merges the
+ * declarative provider metadata (capabilities + dependency graph) with the
+ * live approval-rule chain and strict-approval mode, so the panel can render
+ * capability chips and dependency checks without duplicating the registry.
+ */
+export type CodexMobileSettings = {
+  strictApproval: boolean;
+  approvalRules: Array<{
+    id: string;
+    label: string;
+    description: string;
+  }>;
+  providers: Array<{
+    id: string;
+    label: string;
+    transport: string;
+    owner: string;
+    continuity: string;
+    localVisibility: string;
+    capabilities: {
+      sessions: boolean;
+      messages: boolean;
+      images: boolean;
+      queue: boolean;
+      approvals: boolean;
+      stop: boolean;
+      nativeCommands: boolean;
+    };
+    dependencies: Array<{
+      kind: string;
+      name: string;
+      hint: string;
+      installHint?: string;
+    }>;
+  }>;
+};
+
 function encodeCodexMobileShortAdapter(adapter: string): string {
   const normalized = adapter.trim().toLowerCase() || "codex";
   const known = CODEX_MOBILE_SHORT_ADAPTER_CODES[normalized];
@@ -218,6 +256,16 @@ export type CodexMobileAdapter = {
   label: string;
   status: string;
   active: boolean;
+  /** Declared capabilities for UI adaptation (DSH-inspired). */
+  capabilities?: {
+    sessions: boolean;
+    messages: boolean;
+    images: boolean;
+    queue: boolean;
+    approvals: boolean;
+    stop: boolean;
+    nativeCommands: boolean;
+  };
 };
 
 export type CodexMobileAdapterList = {
@@ -427,6 +475,10 @@ export type StartCodexMobileServerOptions = {
   resolveDesktopPublicAddress?: () => Promise<string | null>;
   listAdapters?: () => Promise<CodexMobileAdapterList>;
   switchAdapter?: (adapter: string) => Promise<CodexMobileAdapterSwitchResult>;
+  readSettings?: () => Promise<CodexMobileSettings>;
+  updateSettings?: (patch: {
+    strictApproval?: boolean;
+  }) => Promise<CodexMobileSettings>;
   listTaskBoard?: () => Promise<CodexMobileTaskBoard>;
   listTasks: (adapter?: string) => Promise<CodexMobileTask[]>;
   createTask?: (
@@ -1441,6 +1493,27 @@ function createRequestHandler(
               adapters: [{ id: "codex", label: "Codex", status: "idle", active: true }],
             };
         sendJson(response, 200, payload);
+        return;
+      }
+
+      if (method === "GET" && url.pathname === "/api/settings") {
+        if (!options.readSettings) {
+          throw new HttpError(409, "当前连接暂不支持读取设置。");
+        }
+        sendJson(response, 200, await options.readSettings());
+        return;
+      }
+
+      if (method === "POST" && url.pathname === "/api/settings") {
+        if (!options.updateSettings) {
+          throw new HttpError(409, "当前连接暂不支持修改设置。");
+        }
+        const body = await readJsonBody(request);
+        const patch: { strictApproval?: boolean } = {};
+        if (typeof body.strictApproval === "boolean") {
+          patch.strictApproval = body.strictApproval;
+        }
+        sendJson(response, 200, await options.updateSettings(patch));
         return;
       }
 

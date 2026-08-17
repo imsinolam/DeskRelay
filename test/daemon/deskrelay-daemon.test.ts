@@ -959,6 +959,14 @@ describe("deskrelay-daemon helpers", () => {
       selectedStateStatus: "busy",
     })).toBe("running");
     expect(resolveCodexMobileTaskStatusFromSignals({
+      runtimeStatus: { type: "active", activeFlags: ["waitingOnApproval"] },
+      hasPendingApproval: true,
+      runtimeTaskApprovals: [],
+      hasPendingUserInput: false,
+      hasActiveTask: true,
+      selectedStateStatus: "awaiting_approval",
+    })).toBe("running");
+    expect(resolveCodexMobileTaskStatusFromSignals({
       runtimeStatus: { type: "notLoaded" },
       hasPendingApproval: false,
       hasPendingUserInput: false,
@@ -1985,7 +1993,7 @@ describe("deskrelay-daemon helpers", () => {
   test("defaultDaemonSessionStartMode restores desktop owners and starts CLI owners fresh", () => {
     expect(defaultDaemonSessionStartMode("codex")).toBe("restore");
     expect(defaultDaemonSessionStartMode("workbuddy")).toBe("restore");
-    expect(defaultDaemonSessionStartMode("deepseek")).toBe("restore");
+    expect(defaultDaemonSessionStartMode("deepseek")).toBe("new");
     expect(defaultDaemonSessionStartMode("claude")).toBe("new");
     expect(defaultDaemonSessionStartMode("tclaude")).toBe("new");
     expect(defaultDaemonSessionStartMode("grok")).toBe("new");
