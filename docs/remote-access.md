@@ -19,11 +19,13 @@ DeskRelay 支持两种网络模式：
 
 ## 模式一：没有公网服务器
 
-不要设置 `DESKRELAY_RELAY_URL` 或 `DESKRELAY_MOBILE_PUBLIC_URL`，直接启动：
+不要设置 `DESKRELAY_RELAY_URL` 或 `DESKRELAY_MOBILE_PUBLIC_URL`。长期后台运行建议先让入口上线，再按需连接终端：
 
 ```bash
-deskrelay --adapter codex
+deskrelay --idle-start --no-open
 ```
+
+如果明确希望启动时立即连接某个终端，也可以使用 `deskrelay --adapter codex` 或 `deskrelay --adapter deepseek`。后台默认不会自动启动 ChatGPT；只有显式传入 `--open-desktop-apps` 才允许这样做。
 
 DeskRelay 会：
 

@@ -313,12 +313,14 @@ OpenCode 通过本机 HTTP/SSE server 同步 session，不依赖 `node-pty`。
 
 ## 四、多 Agent 常驻模式
 
-推荐在项目目录启动一个 daemon：
+推荐在项目目录启动一个 daemon。常驻后台优先使用空闲启动，避免登录或服务重启时自动恢复某个终端、弹出桌面应用：
 
 ```bash
 cd /path/to/project
-deskrelay --adapter codex
+deskrelay --idle-start --no-open
 ```
+
+若明确要在启动时连接某个已有 owner，可使用 `deskrelay --adapter codex` 或 `deskrelay --adapter deepseek`。DeepSeek Harness 会复用已经运行的 `dsh web`，不需要额外打开 companion 终端。
 
 微信中切换：
 

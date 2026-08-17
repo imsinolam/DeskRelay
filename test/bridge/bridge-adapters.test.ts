@@ -15,6 +15,7 @@ import {
   buildShellInputPayload,
   buildShellProfileCommand,
   createBridgeAdapter,
+  desktopLaunchBackoffMs,
   extractCodexFinalTextFromItem,
   extractCodexThreadFollowIdFromStatusChanged,
   extractCodexThreadStartedThreadId,
@@ -32,6 +33,7 @@ import {
   shouldAutoCompleteCodexWechatTurnAfterFinalReply,
   shouldIgnoreCodexSessionReplayEntry,
   shouldRecoverCodexStaleBusyState,
+  shouldThrottleDesktopLaunch,
 } from "../../src/bridge/bridge-adapters.ts";
 import {
   CodexPtyAdapter,
@@ -466,6 +468,25 @@ describe("resolveSpawnTarget", () => {
     expect(target.args[3]).toContain("hello");
   });
 
+  test("wraps cmd launchers for every CLI adapter on Windows", () => {
+    const tempDir = makeTempDirectory();
+    const cmdPath = path.join(tempDir, "reasonix.cmd");
+    writeFile(cmdPath);
+
+    const target = resolveSpawnTarget(cmdPath, "reasonix", {
+      platform: "win32",
+      env: {
+        ComSpec: "C:\\Windows\\System32\\cmd.exe",
+      },
+      forwardArgs: ["serve", "-addr", "127.0.0.1:43123"],
+    });
+
+    expect(target.file.toLowerCase()).toBe("c:\\windows\\system32\\cmd.exe");
+    expect(target.args).toHaveLength(4);
+    expect(target.args[3]).toContain("reasonix.cmd");
+    expect(target.args[3]).toContain("serve");
+  });
+
   test("launches claude.exe directly on Windows", () => {
     if (process.platform !== "win32") {
       return;
@@ -557,7 +578,8 @@ describe("buildCliEnvironment", () => {
     });
 
     expect(env.PATH).toBe(
-      "/home/tester/.local/bin:/home/tester/.grok/bin:/home/tester/.codebuddy/bin:" +
+      "/home/tester/.codex/bin:/home/tester/.local/bin:/home/tester/.grok/bin:" +
+      "/home/tester/.codebuddy/bin:" +
       "/home/tester/.hermes/node/bin:" +
       "/home/tester/.opencode/bin:/home/tester/.bun/bin:/usr/bin",
     );
@@ -577,6 +599,7 @@ describe("buildCliEnvironment", () => {
     });
 
     expect(env.PATH.split(":")).toEqual([
+      "/Users/tester/.codex/bin",
       "/Users/tester/.local/bin",
       "/Users/tester/.grok/bin",
       "/Users/tester/.codebuddy/bin",
@@ -586,6 +609,64 @@ describe("buildCliEnvironment", () => {
       "/usr/bin",
       "/bin",
     ]);
+  });
+
+  test("keeps explicit PATH ahead of discovered nvm and WorkBuddy fallbacks", () => {
+    const tempHome = makeTempDirectory();
+    const codexBin = path.join(tempHome, ".codex", "bin");
+    const nvmBin = path.join(tempHome, ".nvm", "versions", "node", "v24.18.0", "bin");
+    const workbuddyBin = path.join(
+      tempHome,
+      ".workbuddy",
+      "binaries",
+      "node",
+      "versions",
+      "22.22.2",
+      "bin",
+    );
+    for (const dir of [codexBin, nvmBin, workbuddyBin]) {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "codex"), "#!/bin/sh\n");
+    }
+
+    const env = buildCliEnvironment("codex", {
+      platform: "darwin",
+      env: {
+        PATH: "/usr/bin:/bin",
+        HOME: tempHome,
+      },
+    });
+
+    expect(env.PATH.split(":")).toEqual([
+      codexBin,
+      `${tempHome}/.local/bin`,
+      `${tempHome}/.grok/bin`,
+      `${tempHome}/.codebuddy/bin`,
+      `${tempHome}/.hermes/node/bin`,
+      `${tempHome}/.opencode/bin`,
+      `${tempHome}/.bun/bin`,
+      "/usr/bin",
+      "/bin",
+      nvmBin,
+      workbuddyBin,
+    ]);
+  });
+
+  test("resolves codex from a restricted background PATH when installed under .codex/bin", () => {
+    const tempHome = makeTempDirectory();
+    const codexBin = path.join(tempHome, ".codex", "bin");
+    fs.mkdirSync(codexBin, { recursive: true });
+    fs.writeFileSync(path.join(codexBin, "codex"), "#!/bin/sh\n");
+
+    const target = resolveSpawnTarget("codex", "codex", {
+      platform: "darwin",
+      env: {
+        PATH: "/usr/bin:/bin",
+        HOME: tempHome,
+      },
+    });
+
+    expect(target.file).toBe(path.join(codexBin, "codex"));
   });
 
   test("preserves existing no_proxy values while adding local loopback hosts", () => {
@@ -601,6 +682,177 @@ describe("buildCliEnvironment", () => {
 
     expect(env.NO_PROXY).toBe("example.com,localhost,127.0.0.1,::1");
     expect(env.no_proxy).toBe("internal.test,127.0.0.1,localhost,::1");
+  });
+
+  test("resolves codex from the newest nvm fallback when a background PATH is restricted", () => {
+    const tempHome = makeTempDirectory();
+    const olderBin = path.join(tempHome, ".nvm", "versions", "node", "v22.16.0", "bin");
+    const newerBin = path.join(tempHome, ".nvm", "versions", "node", "v24.18.0", "bin");
+    for (const directory of [olderBin, newerBin]) {
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(path.join(directory, "codex"), "#!/bin/sh\n");
+    }
+
+    const target = resolveSpawnTarget("codex", "codex", {
+      platform: "darwin",
+      env: {
+        PATH: "/usr/bin:/bin",
+        HOME: tempHome,
+      },
+    });
+
+    expect(target.file).toBe(path.join(newerBin, "codex"));
+  });
+
+  test("resolves codex from its dedicated user bin before generic fallbacks", () => {
+    const tempHome = makeTempDirectory();
+    const codexBin = path.join(tempHome, ".codex", "bin");
+    const nvmBin = path.join(tempHome, ".nvm", "versions", "node", "v99.0.0", "bin");
+    for (const directory of [codexBin, nvmBin]) {
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(path.join(directory, "codex"), "#!/bin/sh\n");
+    }
+
+    const target = resolveSpawnTarget("codex", "codex", {
+      platform: "darwin",
+      env: {
+        PATH: "/usr/bin:/bin",
+        HOME: tempHome,
+      },
+    });
+
+    expect(target.file).toBe(path.join(codexBin, "codex"));
+  });
+
+  test("preserves an explicitly selected codex version ahead of discovered fallbacks", () => {
+    const tempHome = makeTempDirectory();
+    const selectedBin = path.join(tempHome, "selected-node", "bin");
+    const discoveredBin = path.join(
+      tempHome,
+      ".nvm",
+      "versions",
+      "node",
+      "v99.0.0",
+      "bin",
+    );
+    for (const directory of [selectedBin, discoveredBin]) {
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(path.join(directory, "codex"), "#!/bin/sh\n");
+    }
+
+    const target = resolveSpawnTarget("codex", "codex", {
+      platform: "darwin",
+      env: {
+        PATH: `${selectedBin}:/usr/bin:/bin`,
+        HOME: tempHome,
+      },
+    });
+
+    expect(target.file).toBe(path.join(selectedBin, "codex"));
+  });
+
+  test("uses the WorkBuddy codex binary only as a final background fallback", () => {
+    const tempHome = makeTempDirectory();
+    const workbuddyBin = path.join(
+      tempHome,
+      ".workbuddy",
+      "binaries",
+      "node",
+      "versions",
+      "22.22.2",
+      "bin",
+    );
+    fs.mkdirSync(workbuddyBin, { recursive: true });
+    fs.writeFileSync(path.join(workbuddyBin, "codex"), "#!/bin/sh\n");
+
+    const target = resolveSpawnTarget("codex", "codex", {
+      platform: "darwin",
+      env: {
+        PATH: "/usr/bin:/bin",
+        HOME: tempHome,
+      },
+    });
+
+    expect(target.file).toBe(path.join(workbuddyBin, "codex"));
+  });
+});
+
+describe("desktopLaunchBackoffMs", () => {
+  test("starts at one minute and grows with consecutive failures", () => {
+    expect(desktopLaunchBackoffMs(1)).toBe(60_000);
+    expect(desktopLaunchBackoffMs(2)).toBe(120_000);
+    expect(desktopLaunchBackoffMs(3)).toBe(180_000);
+  });
+
+  test("caps the backoff at five minutes", () => {
+    expect(desktopLaunchBackoffMs(5)).toBe(300_000);
+    expect(desktopLaunchBackoffMs(10)).toBe(300_000);
+  });
+
+  test("treats zero or negative failures as a first failure", () => {
+    expect(desktopLaunchBackoffMs(0)).toBe(60_000);
+    expect(desktopLaunchBackoffMs(-3)).toBe(60_000);
+  });
+});
+
+describe("shouldThrottleDesktopLaunch", () => {
+  test("allows the first launch attempt", () => {
+    expect(
+      shouldThrottleDesktopLaunch({
+        nowMs: 1_000_000,
+        lastLaunchAtMs: 0,
+        backoffUntilMs: 0,
+      }),
+    ).toBe(false);
+  });
+
+  test("throttles a second launch within the window", () => {
+    expect(
+      shouldThrottleDesktopLaunch({
+        nowMs: 1_000_030_000,
+        lastLaunchAtMs: 1_000_000_000,
+        backoffUntilMs: 1_000_060_000,
+      }),
+    ).toBe(true);
+  });
+
+  test("allows a launch once the throttle window has passed", () => {
+    expect(
+      shouldThrottleDesktopLaunch({
+        nowMs: 1_000_061_000,
+        lastLaunchAtMs: 1_000_000_000,
+        backoffUntilMs: 1_000_000_000,
+      }),
+    ).toBe(false);
+  });
+
+  test("throttles while the failure backoff is still active even past the window", () => {
+    expect(
+      shouldThrottleDesktopLaunch({
+        nowMs: 1_000_070_000,
+        lastLaunchAtMs: 1_000_000_000,
+        backoffUntilMs: 1_000_120_000,
+      }),
+    ).toBe(true);
+  });
+
+  test("honors a custom throttle window", () => {
+    expect(
+      shouldThrottleDesktopLaunch({
+        nowMs: 1_000_003_000,
+        lastLaunchAtMs: 1_000_000_000,
+        backoffUntilMs: 0,
+        throttleMs: 5_000,
+      }),
+    ).toBe(true);
+    expect(
+      shouldThrottleDesktopLaunch({
+        nowMs: 1_000_006_000,
+        lastLaunchAtMs: 1_000_000_000,
+        backoffUntilMs: 0,
+        throttleMs: 5_000,
+      }),
+    ).toBe(false);
   });
 });
 

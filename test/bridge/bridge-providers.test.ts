@@ -7,6 +7,7 @@ import {
   isClaudeProviderKind,
   isDaemonAdapterKind,
   listDaemonProviders,
+  providerRequiresVisibleClient,
   providerUsesHarnessHost,
 } from "../../src/bridge/bridge-providers.ts";
 import { createBridgeAdapter } from "../../src/bridge/bridge-adapters.ts";
@@ -160,9 +161,10 @@ describe("bridge provider registry", () => {
     }
   });
 
-  test("deepseek harness depends on the local harness host", () => {
+  test("deepseek harness depends on the local harness host without opening a companion terminal", () => {
     const provider = getBridgeProvider("deepseek");
     expect(providerUsesHarnessHost("deepseek")).toBe(true);
+    expect(providerRequiresVisibleClient("deepseek")).toBe(false);
     const portDeps = provider.dependencies.filter((dep) => dep.kind === "port");
     expect(portDeps.some((dep) => dep.kind === "port" && dep.port === 3080)).toBe(true);
     expect(provider.dependencies.some((dep) => dep.kind === "command" && dep.name === "dsh")).toBe(true);

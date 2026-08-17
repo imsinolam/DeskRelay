@@ -42,6 +42,7 @@ import {
 import { readFileTail, scanFileTail } from "../utils/file-tail.ts";
 import {
   CodexDesktopIpcClient,
+  isCodexDesktopMainProcessRunning,
   type CodexDesktopConversationState,
 } from "./codex-desktop-ipc.ts";
 import { ensureWorkspaceChannelDir } from "../wechat/channel-config.ts";
@@ -85,6 +86,133 @@ type CodexDesktopTurnState = {
   startedAtMs?: number;
 };
 
+const CODEX_DESKTOP_RECONNECT_GRACE_MS = 3_000;
+const CODEX_DESKTOP_STARTUP_TIMEOUT_MS = 15_000;
+const CODEX_DESKTOP_CONNECT_RETRY_INTERVAL_MS = 300;
+const CODEX_DESKTOP_METADATA_RECOVERY_GRACE_MS = 300;
+const CODEX_DESKTOP_METADATA_RECOVERY_MAX_ATTEMPTS = 3;
+const CODEX_DESKTOP_METADATA_RECOVERY_RETRY_MS = 500;
+const CODEX_DESKTOP_BUNDLED_CLI_PATHS = [
+  "/Applications/ChatGPT.app/Contents/Resources/codex",
+  "/Applications/Codex.app/Contents/Resources/codex",
+] as const;
+
+type CodexDesktopAppServerSpawnTargetOptions = {
+  platform?: NodeJS.Platform;
+  env?: Record<string, string | undefined>;
+  isExecutable?: (filePath: string) => boolean;
+};
+
+export function resolveCodexDesktopAppServerSpawnTarget(
+  command: string,
+  options: CodexDesktopAppServerSpawnTargetOptions = {},
+): SpawnTarget {
+  const platform = options.platform ?? process.platform;
+  if (platform === "darwin" && command.trim() === "codex") {
+    const isExecutable = options.isExecutable ?? ((filePath: string) => {
+      try {
+        fs.accessSync(filePath, fs.constants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    const bundledCli = CODEX_DESKTOP_BUNDLED_CLI_PATHS.find(isExecutable);
+    if (bundledCli) {
+      return { file: bundledCli, args: [] };
+    }
+  }
+  return resolveSpawnTarget(command, "codex", {
+    platform,
+    ...(options.env ? { env: options.env } : {}),
+  });
+}
+
+export type CodexAppServerFailureAction =
+  | "suppress"
+  | "recover_metadata"
+  | "fatal";
+
+export function resolveCodexAppServerFailureAction(params: {
+  expectedShutdown: boolean;
+  usesDesktopTransport: boolean;
+  desktopTransportStarted: boolean;
+}): CodexAppServerFailureAction {
+  if (params.expectedShutdown) {
+    return "suppress";
+  }
+  if (params.usesDesktopTransport && params.desktopTransportStarted) {
+    return "recover_metadata";
+  }
+  return "fatal";
+}
+
+type CodexDesktopIpcConnectOptions = {
+  platform?: NodeJS.Platform;
+  allowDesktopApplicationLaunch?: boolean;
+  isDesktopMainProcessRunning?: () => Promise<boolean>;
+  launchDesktopApp?: () => void;
+  retryIntervalMs?: number;
+  startupTimeoutMs?: number;
+};
+
+export async function connectCodexDesktopIpcClientWithLaunch(
+  client: Pick<CodexDesktopIpcClient, "connect">,
+  options: CodexDesktopIpcConnectOptions = {},
+): Promise<void> {
+  try {
+    await client.connect();
+    return;
+  } catch (initialError) {
+    const platform = options.platform ?? process.platform;
+    if (platform !== "darwin") {
+      throw initialError;
+    }
+
+    const isDesktopMainProcessRunning =
+      options.isDesktopMainProcessRunning ?? isCodexDesktopMainProcessRunning;
+    if (
+      !await isDesktopMainProcessRunning() &&
+      options.allowDesktopApplicationLaunch === true
+    ) {
+      try {
+        const launchDesktopApp = options.launchDesktopApp ?? (() => {
+          const launcher = spawnChild("/usr/bin/open", ["-g", "-a", "ChatGPT"], {
+            detached: true,
+            stdio: "ignore",
+          });
+          launcher.unref();
+        });
+        launchDesktopApp();
+      } catch {
+        throw initialError;
+      }
+    }
+
+    const deadline = Date.now() +
+      Math.max(0, options.startupTimeoutMs ?? CODEX_DESKTOP_STARTUP_TIMEOUT_MS);
+    const retryIntervalMs = Math.max(0,
+      options.retryIntervalMs ?? CODEX_DESKTOP_CONNECT_RETRY_INTERVAL_MS);
+    let lastError: unknown = initialError;
+    while (Date.now() < deadline) {
+      await delay(retryIntervalMs);
+      try {
+        await client.connect();
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    const launchHint = options.allowDesktopApplicationLaunch === true
+      ? ""
+      : "DeskRelay 不会自动打开 ChatGPT，请先手动打开后重试。";
+    throw new Error(
+      `无法连接 Codex 桌面端：${describeUnknownError(lastError)}${launchHint}`,
+      { cause: initialError },
+    );
+  }
+}
+
 type CodexDesktopRuntimeStatusCacheEntry = {
   filePath: string;
   fileSize: number;
@@ -92,6 +220,19 @@ type CodexDesktopRuntimeStatusCacheEntry = {
   scannedAtMs: number;
   runtimeStatus: BridgeResumeSessionRuntimeStatus;
 };
+
+export function shouldAttemptCodexDesktopApplicationLaunch(params: {
+  allowDesktopApplicationLaunch: boolean;
+  nowMs: number;
+  lastLaunchAtMs: number;
+  backoffUntilMs: number;
+}): boolean {
+  return params.allowDesktopApplicationLaunch && !shared.shouldThrottleDesktopLaunch({
+    nowMs: params.nowMs,
+    lastLaunchAtMs: params.lastLaunchAtMs,
+    backoffUntilMs: params.backoffUntilMs,
+  });
+}
 
 const CODEX_DESKTOP_RUNTIME_STATUS_SCAN_CHUNK_BYTES = 64 * 1024;
 const CODEX_DESKTOP_RUNTIME_STATUS_SCAN_LIMIT_BYTES = 8 * 1024 * 1024;
@@ -2473,6 +2614,13 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
   private desktopTransportStarted = false;
   private removeDesktopStateListener: (() => void) | null = null;
   private removeDesktopConnectionListener: (() => void) | null = null;
+  private desktopReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private desktopReconnectGraceMs = CODEX_DESKTOP_RECONNECT_GRACE_MS;
+  private desktopDisconnectWasReported = false;
+  private desktopMetadataRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  private desktopMetadataRecoveryPromise: Promise<boolean> | null = null;
+  private desktopMetadataRecoveryGraceMs = CODEX_DESKTOP_METADATA_RECOVERY_GRACE_MS;
+  private desktopMetadataUnavailableReason: string | null = null;
   private desktopInitializedThreadIds = new Set<string>();
   private desktopSeenRequestKeys = new Set<string>();
   private desktopApprovalSettleTimeoutMs = 1_500;
@@ -4194,52 +4342,55 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       },
     );
     this.removeDesktopConnectionListener = client.onConnectionChanged((connected) => {
+      this.handleDesktopConnectionChanged(connected);
+    });
+    await connectCodexDesktopIpcClientWithLaunch(client, {
+      allowDesktopApplicationLaunch:
+        this.options.allowDesktopApplicationLaunch === true,
+    });
+  }
+
+  private handleDesktopConnectionChanged(connected: boolean): void {
+    if (!this.desktopTransportStarted || this.shuttingDown) {
+      return;
+    }
+    if (connected) {
+      this.clearDesktopReconnectTimer();
+      if (!this.desktopDisconnectWasReported) {
+        return;
+      }
+      this.desktopDisconnectWasReported = false;
+      this.syncSelectedThreadState("Codex 桌面端已重新连接。", {
+        recoverConnectionError: true,
+      });
+      return;
+    }
+    if (this.desktopReconnectTimer || this.desktopDisconnectWasReported) {
+      return;
+    }
+    this.desktopReconnectTimer = setTimeout(() => {
+      this.desktopReconnectTimer = null;
       if (!this.desktopTransportStarted || this.shuttingDown) {
         return;
       }
-      if (connected) {
-        this.syncSelectedThreadState("Codex 桌面端已重新连接。", {
-          recoverConnectionError: true,
-        });
-        return;
-      }
+      this.desktopDisconnectWasReported = true;
       this.setStatus("error", "Codex 桌面端连接已断开，正在重连。");
-    });
-    try {
-      await client.connect();
-    } catch (initialError) {
-      if (process.platform !== "darwin") {
-        throw initialError;
-      }
-      try {
-        const launcher = spawnChild("/usr/bin/open", ["-g", "-a", "ChatGPT"], {
-          detached: true,
-          stdio: "ignore",
-        });
-        launcher.unref();
-      } catch {
-        throw initialError;
-      }
+    }, Math.max(0, this.desktopReconnectGraceMs));
+    this.desktopReconnectTimer.unref?.();
+  }
 
-      const deadline = Date.now() + 15_000;
-      let lastError: unknown = initialError;
-      while (Date.now() < deadline) {
-        await delay(300);
-        try {
-          await client.connect();
-          return;
-        } catch (error) {
-          lastError = error;
-        }
-      }
-      throw new Error(
-        `无法连接 Codex 桌面端：${describeUnknownError(lastError)}`,
-        { cause: initialError },
-      );
+  private clearDesktopReconnectTimer(): void {
+    if (!this.desktopReconnectTimer) {
+      return;
     }
+    clearTimeout(this.desktopReconnectTimer);
+    this.desktopReconnectTimer = null;
   }
 
   private async stopDesktopIpcClient(): Promise<void> {
+    this.clearDesktopReconnectTimer();
+    this.clearDesktopMetadataRecoveryTimer();
+    this.desktopDisconnectWasReported = false;
     this.removeDesktopStateListener?.();
     this.removeDesktopStateListener = null;
     this.removeDesktopConnectionListener?.();
@@ -5669,6 +5820,119 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     return true;
   }
 
+  private handleUnexpectedAppServerFailure(
+    message: string,
+    expectedShutdown = shouldSuppressCodexTransportFatalError({
+      transportShuttingDown: this.appServerShuttingDown,
+      shuttingDown: this.shuttingDown,
+      cleanPanelExitInProgress: this.cleanPanelExitInProgress,
+    }),
+  ): void {
+    const action = resolveCodexAppServerFailureAction({
+      expectedShutdown,
+      usesDesktopTransport: this.usesDesktopTransport(),
+      desktopTransportStarted: this.desktopTransportStarted,
+    });
+    if (action === "suppress") {
+      return;
+    }
+    if (action === "recover_metadata") {
+      this.state.pid = undefined;
+      this.scheduleDesktopMetadataRecovery(message);
+      return;
+    }
+    this.emit({
+      type: "fatal_error",
+      message,
+      timestamp: nowIso(),
+    });
+    this.terminateCodexClient();
+  }
+
+  private scheduleDesktopMetadataRecovery(reason: string): void {
+    this.desktopMetadataUnavailableReason = reason;
+    if (
+      this.desktopMetadataRecoveryTimer ||
+      this.desktopMetadataRecoveryPromise ||
+      this.shuttingDown ||
+      !this.desktopTransportStarted
+    ) {
+      return;
+    }
+    this.desktopMetadataRecoveryTimer = setTimeout(() => {
+      this.desktopMetadataRecoveryTimer = null;
+      if (this.shuttingDown || !this.desktopTransportStarted) {
+        return;
+      }
+      void this.recoverDesktopMetadataAppServer(reason);
+    }, Math.max(0, this.desktopMetadataRecoveryGraceMs));
+    this.desktopMetadataRecoveryTimer.unref?.();
+  }
+
+  private clearDesktopMetadataRecoveryTimer(): void {
+    if (!this.desktopMetadataRecoveryTimer) {
+      return;
+    }
+    clearTimeout(this.desktopMetadataRecoveryTimer);
+    this.desktopMetadataRecoveryTimer = null;
+  }
+
+  private async recoverDesktopMetadataAppServer(reason: string): Promise<boolean> {
+    if (this.desktopMetadataRecoveryPromise) {
+      return await this.desktopMetadataRecoveryPromise;
+    }
+    this.clearDesktopMetadataRecoveryTimer();
+    this.desktopMetadataRecoveryPromise = (async () => {
+      await this.disconnectRpcClient().catch(() => undefined);
+      await this.stopAppServer().catch(() => undefined);
+      let lastError = reason;
+      for (
+        let attempt = 1;
+        attempt <= CODEX_DESKTOP_METADATA_RECOVERY_MAX_ATTEMPTS;
+        attempt += 1
+      ) {
+        if (this.shuttingDown || !this.desktopTransportStarted) {
+          return false;
+        }
+        if (attempt > 1) {
+          await delay(CODEX_DESKTOP_METADATA_RECOVERY_RETRY_MS * (attempt - 1));
+        }
+        try {
+          await this.startAppServer();
+          await this.connectRpcClient();
+          this.desktopMetadataUnavailableReason = null;
+          this.state.pid = this.appServer?.pid ?? undefined;
+          this.emit({
+            type: "status",
+            status: this.state.status,
+            message: "Codex 任务索引连接已恢复。",
+            timestamp: nowIso(),
+          });
+          return true;
+        } catch (error) {
+          lastError = describeUnknownError(error);
+          await this.disconnectRpcClient().catch(() => undefined);
+          await this.stopAppServer().catch(() => undefined);
+        }
+      }
+      this.desktopMetadataUnavailableReason = lastError;
+      this.state.pid = undefined;
+      this.emit({
+        type: "status",
+        status: this.state.status,
+        message:
+          "Codex 桌面任务仍可继续，但任务列表、历史和重命名暂时不可用；DeskRelay 会在下次读取时重试任务索引连接。",
+        timestamp: nowIso(),
+      });
+      return false;
+    })();
+    try {
+      return await this.desktopMetadataRecoveryPromise;
+    } finally {
+      this.desktopMetadataRecoveryPromise = null;
+    }
+  }
+
   private async startAppServer(): Promise<void> {
     if (this.appServer) {
       return;
@@ -5683,7 +5947,9 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       `codex-app-server-token-${this.localClientInstanceId}.txt`,
     );
     writePrivateFileAtomic(tokenFilePath, `${token}\n`, { encoding: "utf8" });
-    const spawnTarget = resolveSpawnTarget(this.options.command, "codex");
+    const spawnTarget = this.usesDesktopTransport()
+      ? resolveCodexDesktopAppServerSpawnTarget(this.options.command)
+      : resolveSpawnTarget(this.options.command, "codex");
     const child = spawnChild(
       spawnTarget.file,
       [
@@ -5722,10 +5988,15 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     child.stderr.on("data", (chunk: string) => {
       this.appServerLog = appendBoundedLog(this.appServerLog, chunk);
     });
+    let terminationHandled = false;
     child.once("error", (error: Error) => {
+      if (terminationHandled) {
+        return;
+      }
+      terminationHandled = true;
       // spawn itself failed (ENOENT/EACCES/EMFILE). Without this listener the
-      // 'error' event is unhandled and crashes the bridge. Mirror the exit
-      // handler's cleanup so the failure surfaces as a fatal_error instead.
+      // 'error' event is unhandled and crashes the bridge. Desktop transport
+      // can recover this metadata-only helper after startup; other modes stay fatal.
       const expectedShutdown = shouldSuppressCodexTransportFatalError({
         transportShuttingDown: this.appServerShuttingDown,
         shuttingDown: this.shuttingDown,
@@ -5736,18 +6007,17 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       this.appServerShuttingDown = false;
       this.deleteAppServerAuthTokenFile();
       this.appServerAuthToken = null;
-      if (expectedShutdown) {
-        return;
-      }
       const details = this.describeAppServerLog();
-      this.emit({
-        type: "fatal_error",
-        message: `codex app-server failed to start: ${String(error)}${details}`,
-        timestamp: nowIso(),
-      });
-      this.terminateCodexClient();
+      this.handleUnexpectedAppServerFailure(
+        `codex app-server failed to start: ${String(error)}${details}`,
+        expectedShutdown,
+      );
     });
     child.on("exit", (code, signal) => {
+      if (terminationHandled) {
+        return;
+      }
+      terminationHandled = true;
       const expectedShutdown = shouldSuppressCodexTransportFatalError({
         transportShuttingDown: this.appServerShuttingDown,
         shuttingDown: this.shuttingDown,
@@ -5758,21 +6028,14 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       this.appServerShuttingDown = false;
       this.deleteAppServerAuthTokenFile();
       this.appServerAuthToken = null;
-
-      if (expectedShutdown) {
-        return;
-      }
 
       const exitLabel =
         signal ? `signal ${signal}` : `code ${typeof code === "number" ? code : "unknown"}`;
       const details = this.describeAppServerLog();
-      this.emit({
-        type: "fatal_error",
-        message: `codex app-server exited unexpectedly with ${exitLabel}.${details}`,
-        timestamp: nowIso(),
-      });
-
-      this.terminateCodexClient();
+      this.handleUnexpectedAppServerFailure(
+        `codex app-server exited unexpectedly with ${exitLabel}.${details}`,
+        expectedShutdown,
+      );
     });
 
     try {
@@ -5791,33 +6054,76 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
   }
 
   private async connectRpcClient(): Promise<void> {
-    if (this.rpcSocket) {
+    if (this.isRpcSocketOpen()) {
       return;
     }
-    if (!this.appServerPort) {
+    const appServer = this.appServer;
+    const appServerPort = this.appServerPort;
+    const appServerAuthToken = this.appServerAuthToken;
+    if (!appServer || !appServerPort) {
       throw new Error("Codex app-server is not ready.");
     }
     if (typeof WebSocket !== "function") {
       throw new Error("Global WebSocket is unavailable in this runtime.");
     }
 
-    const url = `ws://${CODEX_APP_SERVER_HOST}:${this.appServerPort}`;
+    const isCurrentAppServer = () => (
+      this.appServer === appServer &&
+      this.appServerPort === appServerPort &&
+      this.appServerAuthToken === appServerAuthToken
+    );
+    const url = `ws://${CODEX_APP_SERVER_HOST}:${appServerPort}`;
     const deadline = Date.now() + CODEX_APP_SERVER_READY_TIMEOUT_MS;
     let lastError = "Timed out before the websocket became ready.";
 
     while (Date.now() < deadline) {
+      if (this.isRpcSocketOpen()) {
+        return;
+      }
+      if (!isCurrentAppServer()) {
+        throw new Error("Codex app-server changed while connecting.");
+      }
+
+      let socket: WebSocket | null = null;
       try {
-        const socket = await this.openRpcSocket(
+        socket = await this.openRpcSocket(
           url,
-          this.appServerAuthToken,
+          appServerAuthToken,
           deadline - Date.now(),
         );
+        if (!isCurrentAppServer()) {
+          try {
+            socket.close();
+          } catch {
+            // Best effort cleanup for a superseded connection attempt.
+          }
+          throw new Error("Codex app-server changed while connecting.");
+        }
         this.attachRpcSocket(socket);
         await this.initializeRpcClient();
+        if (!isCurrentAppServer() || this.rpcSocket !== socket) {
+          throw new Error("Codex app-server changed while connecting.");
+        }
         return;
       } catch (err) {
         lastError = describeUnknownError(err);
-        await this.disconnectRpcClient();
+        if (socket && this.rpcSocket === socket) {
+          await this.disconnectRpcClient();
+        } else if (socket) {
+          try {
+            socket.close();
+          } catch {
+            // Best effort cleanup for a superseded connection attempt.
+          }
+        }
+        if (this.isRpcSocketOpen()) {
+          return;
+        }
+        if (!isCurrentAppServer()) {
+          throw new Error("Codex app-server changed while connecting.", {
+            cause: err,
+          });
+        }
         await delay(CODEX_RPC_CONNECT_RETRY_MS);
       }
     }
@@ -5955,6 +6261,17 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       return;
     }
 
+    if (
+      this.usesDesktopTransport() &&
+      this.desktopTransportStarted &&
+      (!this.appServer || !this.appServerPort)
+    ) {
+      this.scheduleDesktopMetadataRecovery(
+        `codex app-server websocket closed unexpectedly.${this.describeAppServerLog()}`,
+      );
+      return;
+    }
+
     void this.reconnectRpcClientAfterUnexpectedClose();
   }
 
@@ -5983,6 +6300,11 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
           })
         ) {
           return false;
+        }
+        if (this.usesDesktopTransport() && this.desktopTransportStarted) {
+          return await this.recoverDesktopMetadataAppServer(
+            `codex app-server websocket closed unexpectedly.${this.describeAppServerLog()}`,
+          );
         }
         const details = this.describeAppServerLog();
         this.emit({
@@ -6020,6 +6342,11 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
         })
       ) {
         return false;
+      }
+      if (this.usesDesktopTransport() && this.desktopTransportStarted) {
+        return await this.recoverDesktopMetadataAppServer(
+          `codex app-server websocket closed unexpectedly and could not reconnect: ${lastError}.${details}`,
+        );
       }
       this.emit({
         type: "fatal_error",
@@ -6849,7 +7176,26 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     if (this.rpcReconnectPromise) {
       const reconnected = await this.rpcReconnectPromise;
       if (!reconnected || !this.isRpcSocketOpen()) {
-        throw new Error("Codex websocket is not connected.");
+        if (!(this.usesDesktopTransport() && this.desktopTransportStarted)) {
+          throw new Error("Codex websocket is not connected.");
+        }
+      } else {
+        return;
+      }
+    }
+
+    if (
+      this.usesDesktopTransport() &&
+      this.desktopTransportStarted &&
+      (!this.appServer || !this.appServerPort)
+    ) {
+      const recovered = await this.recoverDesktopMetadataAppServer(
+        this.desktopMetadataUnavailableReason ?? "Codex 任务索引连接不可用。",
+      );
+      if (!recovered || !this.isRpcSocketOpen()) {
+        throw new Error(
+          "Codex 任务索引暂时不可用，请稍后重试；当前已打开任务仍可继续发送消息。",
+        );
       }
       return;
     }

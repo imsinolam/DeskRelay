@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import path from "node:path";
 
 import {
   parseRelayServerCliOptions,
@@ -18,7 +19,7 @@ describe("DeskRelay relay server CLI", () => {
       deviceId: "example-device",
       deviceToken: "server-secret",
       allowNonLoopback: false,
-      taskLinkStateFile: "/tmp/deskrelay-test/relay-task-links.json",
+      taskLinkStateFile: path.join("/tmp/deskrelay-test", "relay-task-links.json"),
     });
   });
 

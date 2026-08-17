@@ -54,8 +54,14 @@ describe("WorkBuddy desktop RPC client", () => {
   });
 
   test("uses a per-user Unix socket path", () => {
-    expect(resolveWorkBuddyDesktopSocketPath({ uid: 501, tmpDir: "/tmp" }))
+    expect(resolveWorkBuddyDesktopSocketPath({
+      uid: 501,
+      tmpDir: "/tmp",
+      platform: "darwin",
+    }))
       .toBe("/tmp/deskrelay-workbuddy-501.sock");
+    expect(resolveWorkBuddyDesktopSocketPath({ uid: 501, platform: "win32" }))
+      .toBe("\\\\.\\pipe\\deskrelay-workbuddy-501");
     if (process.platform === "darwin") {
       expect(resolveWorkBuddyDesktopSocketPath({ uid: 501 }))
         .toBe("/tmp/deskrelay-workbuddy-501.sock");
@@ -141,7 +147,7 @@ describe("WorkBuddy desktop RPC client", () => {
       await ensureWorkBuddyDesktopHookFile(hookPath);
       const source = await fs.promises.readFile(hookPath, "utf8");
       const mode = (await fs.promises.stat(hookPath)).mode & 0o777;
-      expect(mode).toBe(0o600);
+      if (process.platform !== "win32") expect(mode).toBe(0o600);
       expect(source).toContain('require("node:net")');
       expect(source).toContain("fs.chmodSync(socketPath, 0o600)");
       expect(source).not.toContain('require("node:http")');

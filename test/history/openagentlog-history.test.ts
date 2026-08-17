@@ -9,6 +9,7 @@ import {
 } from "../../src/history/openagentlog-history.ts";
 
 const tempDirs: string[] = [];
+const posixTest = process.platform === "win32" ? test.skip : test;
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
@@ -170,7 +171,25 @@ describe("OpenAgentLog history provider", () => {
     })).toBeNull();
   });
 
-  test("falls back on the first page when the runtime file is insecure", async () => {
+  test("uses Windows ACLs instead of POSIX mode bits for the local runtime descriptor", async () => {
+    const runtimeFilePath = createRuntimeFile();
+    fs.chmodSync(runtimeFilePath, 0o666);
+    const provider = new OpenAgentLogHistoryProvider({
+      runtimeFilePath,
+      platform: "win32",
+      fetch: async () => new Response(JSON.stringify(completePage()), { status: 200 }),
+    });
+
+    expect(await provider.readPage("codex", "thread-1", {
+      historyOnly: true,
+      limit: 40,
+    })).toMatchObject({
+      source: "openagentlog",
+      caughtUp: true,
+    });
+  });
+
+  posixTest("falls back on the first page when the runtime file is insecure", async () => {
     const runtimeFilePath = createRuntimeFile();
     fs.chmodSync(runtimeFilePath, 0o644);
     let fetchCalls = 0;

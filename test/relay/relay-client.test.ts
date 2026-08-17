@@ -36,6 +36,8 @@ describe("DeskRelay relay command journal", () => {
 
     expect(new DeskRelayRelayCommandJournal(stateFile).get("relay-command-1"))
       .toEqual(response);
-    expect(fs.statSync(stateFile).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(fs.statSync(stateFile).mode & 0o777).toBe(0o600);
+    }
   });
 });

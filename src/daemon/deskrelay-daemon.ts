@@ -45,6 +45,7 @@ import {
   isClaudeProviderKind,
   providerRequiresVisibleClient,
   providerUsesDesktopOwner,
+  providerUsesHarnessHost,
   isDaemonAdapterKind,
   listDaemonProviders,
 } from "../bridge/bridge-providers.ts";
@@ -240,6 +241,8 @@ type DaemonCliOptions = {
   profile?: string;
   initialAdapter?: DaemonAdapterKind;
   openVisible: boolean;
+  restorePersistedAdapter: boolean;
+  allowDesktopApplicationLaunch: boolean;
 };
 
 type ActiveTask = {
@@ -713,6 +716,8 @@ export function parseDaemonCliArgs(argv: string[]): DaemonCliOptions {
   let profile: string | undefined;
   let initialAdapter: DaemonAdapterKind | undefined;
   let openVisible = true;
+  let restorePersistedAdapter = true;
+  let allowDesktopApplicationLaunch = false;
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -724,7 +729,7 @@ export function parseDaemonCliArgs(argv: string[]): DaemonCliOptions {
     if (arg === "--help" || arg === "-h") {
       process.stdout.write(
         [
-          "Usage: deskrelay [--cwd <path>] [--adapter <codex|claude|tclaude|grok|codebuddy|reasonix|workbuddy|deepseek|opencode>] [--profile <name-or-path>] [--no-open]",
+          "Usage: deskrelay [--cwd <path>] [--adapter <codex|claude|tclaude|grok|codebuddy|reasonix|workbuddy|deepseek|opencode>] [--profile <name-or-path>] [--idle-start] [--no-open] [--open-desktop-apps]",
           "",
           "Keeps one WeChat connection alive and switches between supported agents from WeChat.",
           "Send /codex, /claude, /tclaude, /grok, /codebuddy, /reasonix, /workbuddy, /deepseek, or /opencode in WeChat to switch the active agent.",
@@ -761,15 +766,42 @@ export function parseDaemonCliArgs(argv: string[]): DaemonCliOptions {
       continue;
     }
 
+    if (arg === "--idle-start") {
+      restorePersistedAdapter = false;
+      continue;
+    }
+
     if (arg === "--no-open") {
       openVisible = false;
+      continue;
+    }
+
+    if (arg === "--open-desktop-apps") {
+      allowDesktopApplicationLaunch = true;
       continue;
     }
 
     throw new Error(`Unknown argument: ${arg}`);
   }
 
-  return { cwd, profile, initialAdapter, openVisible };
+  return {
+    cwd,
+    profile,
+    initialAdapter,
+    openVisible,
+    restorePersistedAdapter,
+    allowDesktopApplicationLaunch,
+  };
+}
+
+export function resolveDaemonInitialAdapter(
+  options: DaemonCliOptions,
+  persistedAdapter?: DaemonAdapterKind,
+): DaemonAdapterKind | undefined {
+  if (options.initialAdapter) {
+    return options.initialAdapter;
+  }
+  return options.restorePersistedAdapter ? persistedAdapter : undefined;
 }
 
 export function parseDaemonSwitchCommand(text: string): DaemonAdapterKind | null {
@@ -874,7 +906,9 @@ export function resolveDaemonTaskListScope(params: {
 export function defaultDaemonSessionStartMode(
   adapter: DaemonAdapterKind,
 ): BridgeSessionStartMode {
-  return providerUsesDesktopOwner(adapter) ? "restore" : "new";
+  return providerUsesDesktopOwner(adapter) || providerUsesHarnessHost(adapter)
+    ? "restore"
+    : "new";
 }
 
 export function resolveDaemonSessionStartMode(params: {
@@ -1588,6 +1622,7 @@ export function buildDaemonRuntimeOptions(params: {
   profile?: string;
   sessionStartMode?: BridgeSessionStartMode;
   initialSharedSessionId?: string;
+  allowDesktopApplicationLaunch?: boolean;
 }): AdapterOptions {
   const initialSharedSessionId = params.initialSharedSessionId;
   return {
@@ -1598,6 +1633,7 @@ export function buildDaemonRuntimeOptions(params: {
     lifecycle: "persistent",
     sessionStartMode: params.sessionStartMode,
     companionLaunchMode: "daemon_auto",
+    allowDesktopApplicationLaunch: params.allowDesktopApplicationLaunch === true,
     initialSharedSessionId,
     initialSharedThreadId: initialSharedSessionId,
   };
@@ -2421,6 +2457,7 @@ class DeskRelayDaemon {
   private readonly mobileMessageImageStore: MobileMessageImageStore;
   private readonly wechatImageDrafts = new WechatImageDraftCollector();
   private readonly mobileProviderInstallManager = new MobileProviderInstallManager();
+  private readonly allowDesktopApplicationLaunch: boolean;
   private readonly slots = new Map<DaemonAdapterKind, DaemonSlot>();
   private approvalNotificationOrder = 0;
   private globalTaskListSnapshot: GlobalTaskSnapshot | null = null;
@@ -2493,12 +2530,15 @@ class DeskRelayDaemon {
     authorizedUserId: string;
     transport: WeChatTransport;
     stateStore: DaemonWorkspaceStateStore;
+    allowDesktopApplicationLaunch?: boolean;
   }) {
     this.cwd = params.cwd;
     this.profile = params.profile;
     this.authorizedUserId = params.authorizedUserId;
     this.transport = params.transport;
     this.stateStore = params.stateStore;
+    this.allowDesktopApplicationLaunch =
+      params.allowDesktopApplicationLaunch === true;
     this.deferredInputStore = new CodexDeferredInputStore(params.cwd);
     this.mobileMessageImageStore = new MobileMessageImageStore(params.cwd);
     this.codexCompletionDeliveries = new CodexCompletionDeliveryQueue({
@@ -2724,8 +2764,10 @@ class DeskRelayDaemon {
   }
 
   async runInitialAdapter(options: DaemonCliOptions): Promise<void> {
-    const initialAdapter =
-      options.initialAdapter ?? this.stateStore.getPersistedState()?.activeAdapter;
+    const initialAdapter = resolveDaemonInitialAdapter(
+      options,
+      this.stateStore.getPersistedState()?.activeAdapter,
+    );
     if (!initialAdapter) {
       return;
     }
@@ -3194,6 +3236,7 @@ class DeskRelayDaemon {
       profile: options.profile,
       sessionStartMode: options.sessionStartMode,
       initialSharedSessionId,
+      allowDesktopApplicationLaunch: this.allowDesktopApplicationLaunch,
     }));
     const controller = new BridgeController(runtime, this.cwd);
     const deferredInboundMessages = new CodexInboundTaskQueue<DeferredInboundMessage>();
@@ -8018,6 +8061,7 @@ export async function runDaemon(
     authorizedUserId: credentials.userId,
     transport: new WeChatTransport({ log, logError }),
     stateStore,
+    allowDesktopApplicationLaunch: options.allowDesktopApplicationLaunch,
   });
   if (cleanupResult.action === "stopped" && isDaemonAdapterKind(cleanupResult.lock.adapter)) {
     daemon.takenOverAdapter = cleanupResult.lock.adapter;
@@ -8029,7 +8073,7 @@ export async function runDaemon(
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     appendDaemonLog(
-      `initial_adapter_start_error: adapter=${options.initialAdapter ?? persistedState?.activeAdapter ?? "none"} error=${truncatePreview(detail, 400)}`,
+      `initial_adapter_start_error: adapter=${resolveDaemonInitialAdapter(options, persistedState?.activeAdapter) ?? "none"} error=${truncatePreview(detail, 400)}`,
     );
     logError(`初始终端暂时无法连接，DeskRelay 将继续运行：${detail}`);
   }

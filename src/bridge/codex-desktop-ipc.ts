@@ -13,6 +13,10 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_RECONNECT_DELAY_MS = 500;
 const MAX_FRAME_BYTES = 256 * 1024 * 1024;
 const INITIALIZING_CLIENT_ID = "initializing-client";
+const CODEX_DESKTOP_MAIN_PROCESS_PATHS = [
+  "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+  "/Applications/Codex.app/Contents/MacOS/ChatGPT",
+] as const;
 
 export type CodexDesktopConversationState = Record<string, unknown>;
 
@@ -72,6 +76,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function cloneValue<T>(value: T): T {
   return structuredClone(value);
+}
+
+export function isCodexDesktopMainProcessCommandLine(commandLine: string): boolean {
+  const normalized = commandLine.trim();
+  return CODEX_DESKTOP_MAIN_PROCESS_PATHS.some(
+    (executable) => normalized === executable || normalized.startsWith(`${executable} `),
+  );
+}
+
+export async function isCodexDesktopMainProcessRunning(): Promise<boolean> {
+  if (process.platform !== "darwin") {
+    return false;
+  }
+  try {
+    const { stdout } = await execFileAsync("/bin/ps", ["-axo", "command="]);
+    return stdout
+      .split(/\r?\n/)
+      .some((commandLine) => isCodexDesktopMainProcessCommandLine(commandLine));
+  } catch {
+    return false;
+  }
 }
 
 function isCodexDesktopTurnActiveStatus(value: unknown): boolean {
@@ -241,6 +266,11 @@ export function resolveCodexDesktopIpcSocketPath(
 ): string {
   const codexHome = env.CODEX_HOME?.trim() || path.join(os.homedir(), ".codex");
   return path.join(codexHome, "ipc", "ipc.sock");
+}
+
+export function isWindowsNamedPipePath(socketPath: string): boolean {
+  const normalized = socketPath.toLowerCase();
+  return normalized.startsWith("\\\\.\\pipe\\") || normalized.startsWith("\\\\?\\pipe\\");
 }
 
 async function openCodexDesktopThread(threadId: string): Promise<void> {
@@ -667,7 +697,7 @@ export class CodexDesktopIpcClient {
 
   private async connectOnce(): Promise<void> {
     const socketPath = this.options.socketPath ?? resolveCodexDesktopIpcSocketPath();
-    if (!fs.existsSync(socketPath)) {
+    if (!isWindowsNamedPipePath(socketPath) && !fs.existsSync(socketPath)) {
       throw new Error("Codex 桌面端未运行，请先打开 Codex 应用。");
     }
 

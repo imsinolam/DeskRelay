@@ -391,11 +391,21 @@ process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 `);
     fs.chmodSync(scriptPath, 0o755);
+    const commandPath = process.platform === "win32"
+      ? path.join(stateHome, "fake-reasonix.cmd")
+      : scriptPath;
+    if (process.platform === "win32") {
+      fs.writeFileSync(
+        commandPath,
+        `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`,
+        "utf8",
+      );
+    }
 
     const events: BridgeEvent[] = [];
     const adapter = new ReasonixServerAdapter({
       kind: "reasonix",
-      command: scriptPath,
+      command: commandPath,
       cwd: projectCwd,
       renderMode: "companion",
       sessionStartMode: "restore",

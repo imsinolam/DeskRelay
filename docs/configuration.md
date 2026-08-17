@@ -53,6 +53,21 @@ Relay 地址必须是 HTTPS 基础地址，不能包含账号密码、查询参�
 
 服务器和电脑必须配置相同的设备 ID 与设备密钥。服务器环境文件和短链接映射文件建议使用 `0600` 权限，由 systemd 读取；外部访问由 Nginx/Caddy 提供 HTTPS。
 
+## 常驻启动策略
+
+长期运行、仅负责微信和网页入口的后台 daemon 推荐使用：
+
+```bash
+deskrelay --idle-start --no-open
+```
+
+- `--idle-start`：启动网页、微信和公网 Relay，但不恢复上一次终端；用户在网页或 ClawBot 明确选择终端后，再连接该终端的真实任务。
+- `--no-open`：不自动打开可见终端窗口。
+- DeskRelay 后台默认也不会启动 ChatGPT 等桌面应用；如果确实需要旧式自动打开行为，必须显式增加 `--open-desktop-apps`。
+- `--adapter deepseek` 会连接已经运行的 `dsh web` 并恢复最近或已持久化的 Harness 任务，不会额外打开终端或默认新建替代任务。
+
+`dsh web`、ChatGPT 或其他 Agent 进程正在运行，不等于 DeskRelay 公网设备已经在线。公网网页还需要 DeskRelay daemon 主动连接 Relay；可分别检查本机 `/health` 与公网 `/health`。
+
 ## Agent 环境继承
 
 DeskRelay 启动 Agent 子进程时会继承当前环境，包括 Agent 自己使用的 API 地址、令牌、代理和状态目录。先在同一个终端中确认 Agent 能独立启动，再运行 DeskRelay。

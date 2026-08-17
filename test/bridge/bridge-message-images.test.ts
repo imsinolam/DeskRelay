@@ -38,6 +38,26 @@ describe("extractBridgeMessageImages", () => {
       { source: "local", path: "/tmp/generated/a.png" },
     ]);
   });
+
+  test("preserves Windows paths and decodes Windows file URLs on every host", () => {
+    expect(extractBridgeMessageImages([
+      '<image path="C:\\Users\\tester\\Desktop\\input.png">',
+      "![结果](file:///C:/Users/tester/Desktop/result.webp)",
+      "![相对图片](images/final.jpg)",
+    ].join("\n"), { cwd: "C:\\repo\\deskrelay" })).toEqual([
+      { source: "local", path: "C:\\Users\\tester\\Desktop\\input.png" },
+      {
+        source: "local",
+        path: "C:\\Users\\tester\\Desktop\\result.webp",
+        alt: "结果",
+      },
+      {
+        source: "local",
+        path: "C:\\repo\\deskrelay\\images\\final.jpg",
+        alt: "相对图片",
+      },
+    ]);
+  });
   test("collects only the current turn images and falls back to the latest assistant message", () => {
     const messages = [
       {

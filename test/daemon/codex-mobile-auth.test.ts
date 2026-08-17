@@ -41,7 +41,9 @@ describe("Codex mobile password auth", () => {
     const persisted = fs.readFileSync(stateFile, "utf8");
     expect(persisted).not.toContain("correct horse battery staple");
     expect(JSON.parse(persisted)).toMatchObject({ version: 1 });
-    expect((fs.statSync(stateFile).mode & 0o777)).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((fs.statSync(stateFile).mode & 0o777)).toBe(0o600);
+    }
   });
 
   test("creates restart-safe signed sessions and rejects expired sessions", () => {

@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   CodexPtyAdapter,
   applyCodexDesktopProjectMetadata,
+  connectCodexDesktopIpcClientWithLaunch,
   extractCodexDesktopThreadMessages,
   extractCodexDesktopThreadProgress,
   extractCodexDesktopThreadRunSummary,
@@ -18,13 +19,21 @@ import {
   readCodexSessionMessagePageFromRollout,
   readCodexSessionProgressFromRolloutTail,
   readCodexSessionRunSummaryFromRolloutTail,
+  resolveCodexAppServerFailureAction,
+  resolveCodexDesktopAppServerSpawnTarget,
   resolveCodexDesktopPermissionSettings,
   resolveCodexTaskOutcome,
+  shouldAttemptCodexDesktopApplicationLaunch,
   shouldSuppressCodexTransportFatalError,
   shouldTreatCodexNativeExitAsExpected,
 } from "../../src/bridge/bridge-adapters.codex.ts";
+import { isCodexDesktopMainProcessCommandLine } from "../../src/bridge/codex-desktop-ipc.ts";
 import { createRuntimeHost } from "../../src/runtime/create-runtime-host.ts";
 import { getWorkspaceChannelPaths } from "../../src/wechat/channel-config.ts";
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 describe("Codex desktop permission alignment", () => {
   const globalState = {
@@ -2364,7 +2373,396 @@ describe("Codex parallel desktop task switching", () => {
   });
 });
 
+describe("Codex desktop application launch policy", () => {
+  test("never launches ChatGPT when desktop application launch is disabled", () => {
+    expect(shouldAttemptCodexDesktopApplicationLaunch({
+      allowDesktopApplicationLaunch: false,
+      nowMs: 120_000,
+      lastLaunchAtMs: 0,
+      backoffUntilMs: 0,
+    })).toBe(false);
+  });
+
+  test("allows an explicit desktop launch only when the retry window is open", () => {
+    expect(shouldAttemptCodexDesktopApplicationLaunch({
+      allowDesktopApplicationLaunch: true,
+      nowMs: 120_000,
+      lastLaunchAtMs: 0,
+      backoffUntilMs: 0,
+    })).toBe(true);
+    expect(shouldAttemptCodexDesktopApplicationLaunch({
+      allowDesktopApplicationLaunch: true,
+      nowMs: 120_000,
+      lastLaunchAtMs: 119_500,
+      backoffUntilMs: 0,
+    })).toBe(false);
+  });
+});
+
 describe("Codex desktop IPC transport", () => {
+  test("recovers a runtime desktop metadata app-server exit without failing the desktop slot", () => {
+    expect(resolveCodexAppServerFailureAction({
+      expectedShutdown: false,
+      usesDesktopTransport: true,
+      desktopTransportStarted: true,
+    })).toBe("recover_metadata");
+  });
+
+  test("does not hide desktop metadata startup failures before the desktop slot is ready", () => {
+    expect(resolveCodexAppServerFailureAction({
+      expectedShutdown: false,
+      usesDesktopTransport: true,
+      desktopTransportStarted: false,
+    })).toBe("fatal");
+  });
+
+  test("keeps standalone app-server failures fatal", () => {
+    expect(resolveCodexAppServerFailureAction({
+      expectedShutdown: false,
+      usesDesktopTransport: false,
+      desktopTransportStarted: true,
+    })).toBe("fatal");
+  });
+
+  test("suppresses app-server failures during an expected shutdown", () => {
+    expect(resolveCodexAppServerFailureAction({
+      expectedShutdown: true,
+      usesDesktopTransport: true,
+      desktopTransportStarted: true,
+    })).toBe("suppress");
+  });
+
+  test("delays desktop metadata recovery so daemon shutdown can win the signal race", async () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    const recoveries: string[] = [];
+    const events: Array<{ type: string }> = [];
+    adapter.desktopTransportStarted = true;
+    adapter.desktopMetadataRecoveryGraceMs = 5;
+    adapter.recoverDesktopMetadataAppServer = async (reason: string) => {
+      recoveries.push(reason);
+      return true;
+    };
+    adapter.setEventSink((event: { type: string }) => events.push(event));
+
+    adapter.handleUnexpectedAppServerFailure(
+      "codex app-server exited unexpectedly with code 0.",
+    );
+    adapter.shuttingDown = true;
+    await wait(15);
+
+    expect(recoveries).toEqual([]);
+    expect(events.some((event) => event.type === "fatal_error")).toBe(false);
+  });
+
+  test("restarts only the desktop metadata helper after an unexpected runtime exit", async () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    const recoveries: string[] = [];
+    const events: Array<{ type: string }> = [];
+    adapter.desktopTransportStarted = true;
+    adapter.desktopMetadataRecoveryGraceMs = 1;
+    adapter.recoverDesktopMetadataAppServer = async (reason: string) => {
+      recoveries.push(reason);
+      return true;
+    };
+    adapter.setEventSink((event: { type: string }) => events.push(event));
+
+    adapter.handleUnexpectedAppServerFailure(
+      "codex app-server exited unexpectedly with code 0.",
+    );
+    await wait(10);
+
+    expect(recoveries).toEqual([
+      "codex app-server exited unexpectedly with code 0.",
+    ]);
+    expect(events.some((event) => event.type === "fatal_error")).toBe(false);
+    expect(adapter.shuttingDown).toBe(false);
+  });
+
+  test("routes a desktop metadata websocket close into helper recovery instead of fatal", () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    const recoveries: string[] = [];
+    const events: Array<{ type: string }> = [];
+    adapter.desktopTransportStarted = true;
+    adapter.appServer = null;
+    adapter.appServerPort = null;
+    adapter.scheduleDesktopMetadataRecovery = (reason: string) => {
+      recoveries.push(reason);
+    };
+    adapter.setEventSink((event: { type: string }) => events.push(event));
+
+    adapter.handleRpcSocketClosed();
+
+    expect(recoveries).toHaveLength(1);
+    expect(recoveries[0]).toContain("websocket closed");
+    expect(events.some((event) => event.type === "fatal_error")).toBe(false);
+    expect(adapter.shuttingDown).toBe(false);
+  });
+
+  test("does not let a stale RPC connection attempt close the recovered metadata socket", async () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    const oldAppServer = {};
+    const recoveredAppServer = {};
+    let oldSocketCloses = 0;
+    let recoveredSocketCloses = 0;
+    let replacementSocketCloses = 0;
+    let openAttempts = 0;
+    let initializeAttempts = 0;
+    const createSocket = (onClose: () => void) => {
+      const closeListeners: Array<() => void> = [];
+      return {
+        readyState: WebSocket.OPEN,
+        addEventListener: (type: string, listener: () => void) => {
+          if (type === "close") {
+            closeListeners.push(listener);
+          }
+        },
+        close() {
+          this.readyState = WebSocket.CLOSED;
+          onClose();
+          for (const listener of closeListeners) {
+            listener();
+          }
+        },
+      };
+    };
+    const oldSocket = createSocket(() => {
+      oldSocketCloses += 1;
+    });
+    const recoveredSocket = createSocket(() => {
+      recoveredSocketCloses += 1;
+    });
+    const replacementSocket = createSocket(() => {
+      replacementSocketCloses += 1;
+    });
+
+    adapter.appServer = oldAppServer;
+    adapter.appServerPort = 1111;
+    adapter.appServerAuthToken = "old-token";
+    adapter.rpcSocket = null;
+    adapter.openRpcSocket = async () => {
+      openAttempts += 1;
+      return openAttempts === 1 ? oldSocket : replacementSocket;
+    };
+    adapter.attachRpcSocket = (socket: WebSocket) => {
+      adapter.rpcSocket = socket;
+    };
+    adapter.initializeRpcClient = async () => {
+      initializeAttempts += 1;
+      if (initializeAttempts !== 1) {
+        return;
+      }
+      adapter.appServer = recoveredAppServer;
+      adapter.appServerPort = 2222;
+      adapter.appServerAuthToken = "recovered-token";
+      adapter.rpcSocket = recoveredSocket;
+      throw new Error("stale initialize failed");
+    };
+
+    await adapter.connectRpcClient();
+
+    expect(openAttempts).toBe(1);
+    expect(adapter.rpcSocket).toBe(recoveredSocket);
+    expect(oldSocketCloses).toBe(1);
+    expect(recoveredSocketCloses).toBe(0);
+    expect(replacementSocketCloses).toBe(0);
+  });
+
+  test("reconnects the desktop metadata helper on demand before an RPC read", async () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    let recoveries = 0;
+    adapter.desktopTransportStarted = true;
+    adapter.appServer = null;
+    adapter.appServerPort = null;
+    adapter.rpcSocket = null;
+    adapter.recoverDesktopMetadataAppServer = async () => {
+      recoveries += 1;
+      adapter.appServer = {};
+      adapter.appServerPort = 12345;
+      adapter.rpcSocket = { readyState: WebSocket.OPEN };
+      return true;
+    };
+
+    await adapter.ensureRpcClientConnected();
+
+    expect(recoveries).toBe(1);
+    expect(adapter.rpcSocket.readyState).toBe(WebSocket.OPEN);
+  });
+
+  test("uses the ChatGPT-bundled Codex for desktop metadata app-server", () => {
+    const bundledCodex = "/Applications/ChatGPT.app/Contents/Resources/codex";
+    const target = resolveCodexDesktopAppServerSpawnTarget("codex", {
+      platform: "darwin",
+      env: {
+        HOME: "/Users/tester",
+        PATH: "/Users/tester/.nvm/versions/node/v22.16.0/bin:/usr/bin:/bin",
+      },
+      isExecutable: (candidate) => candidate === bundledCodex,
+    });
+
+    expect(target).toEqual({ file: bundledCodex, args: [] });
+  });
+
+  test("respects an explicitly configured Codex command in desktop mode", () => {
+    const customCodex = "/opt/custom/bin/codex";
+    const target = resolveCodexDesktopAppServerSpawnTarget(customCodex, {
+      platform: "darwin",
+      env: { PATH: "/usr/bin:/bin" },
+      isExecutable: () => true,
+    });
+
+    expect(target).toEqual({ file: customCodex, args: [] });
+  });
+
+  test("does not relaunch ChatGPT when its main process is already running", async () => {
+    let connectAttempts = 0;
+    let launchCount = 0;
+    const client = {
+      connect: async () => {
+        connectAttempts += 1;
+        if (connectAttempts === 1) {
+          throw new Error("ipc unavailable");
+        }
+      },
+    };
+
+    await connectCodexDesktopIpcClientWithLaunch(client, {
+      platform: "darwin",
+      allowDesktopApplicationLaunch: true,
+      isDesktopMainProcessRunning: async () => true,
+      launchDesktopApp: () => {
+        launchCount += 1;
+      },
+      retryIntervalMs: 1,
+      startupTimeoutMs: 20,
+    });
+
+    expect(connectAttempts).toBe(2);
+    expect(launchCount).toBe(0);
+  });
+
+  test("keeps ChatGPT closed when desktop auto-launch is disabled", async () => {
+    let connectAttempts = 0;
+    let launchCount = 0;
+    const client = {
+      connect: async () => {
+        connectAttempts += 1;
+        if (connectAttempts === 1) {
+          throw new Error("ipc unavailable");
+        }
+      },
+    };
+
+    await connectCodexDesktopIpcClientWithLaunch(client, {
+      platform: "darwin",
+      allowDesktopApplicationLaunch: false,
+      isDesktopMainProcessRunning: async () => false,
+      launchDesktopApp: () => {
+        launchCount += 1;
+      },
+      retryIntervalMs: 1,
+      startupTimeoutMs: 20,
+    });
+
+    expect(connectAttempts).toBe(2);
+    expect(launchCount).toBe(0);
+  });
+
+  test("launches ChatGPT once when its main process is absent", async () => {
+    let connectAttempts = 0;
+    let launchCount = 0;
+    const client = {
+      connect: async () => {
+        connectAttempts += 1;
+        if (connectAttempts === 1) {
+          throw new Error("ipc unavailable");
+        }
+      },
+    };
+
+    await connectCodexDesktopIpcClientWithLaunch(client, {
+      platform: "darwin",
+      allowDesktopApplicationLaunch: true,
+      isDesktopMainProcessRunning: async () => false,
+      launchDesktopApp: () => {
+        launchCount += 1;
+      },
+      retryIntervalMs: 1,
+      startupTimeoutMs: 20,
+    });
+
+    expect(connectAttempts).toBe(2);
+    expect(launchCount).toBe(1);
+  });
+
+  test("does not attempt to launch a desktop app on non-macOS platforms", async () => {
+    let launchCount = 0;
+
+    await expect(connectCodexDesktopIpcClientWithLaunch({
+      connect: async () => {
+        throw new Error("ipc unavailable");
+      },
+    }, {
+      platform: "linux",
+      allowDesktopApplicationLaunch: true,
+      isDesktopMainProcessRunning: async () => false,
+      launchDesktopApp: () => {
+        launchCount += 1;
+      },
+      retryIntervalMs: 1,
+      startupTimeoutMs: 5,
+    })).rejects.toThrow("ipc unavailable");
+
+    expect(launchCount).toBe(0);
+  });
+
+  test("recognizes only the ChatGPT desktop main process", () => {
+    expect(
+      isCodexDesktopMainProcessCommandLine(
+        "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+      ),
+    ).toBe(true);
+    expect(
+      isCodexDesktopMainProcessCommandLine(
+        "/Applications/ChatGPT.app/Contents/Resources/codex app-server",
+      ),
+    ).toBe(false);
+    expect(
+      isCodexDesktopMainProcessCommandLine(
+        "/Applications/ChatGPT.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper",
+      ),
+    ).toBe(false);
+  });
+
   test("uses desktop transport for the bridge-owned Codex runtime host", () => {
     const runtime = createRuntimeHost({
       kind: "codex",
@@ -2865,6 +3263,82 @@ describe("Codex desktop IPC transport", () => {
       status: "idle",
       message: "Codex 桌面端已重新连接。",
     });
+  });
+
+  test("does not expose a transient desktop IPC disconnect that recovers within the grace window", async () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    const events: string[] = [];
+    adapter.desktopTransportStarted = true;
+    adapter.desktopReconnectGraceMs = 20;
+    adapter.setStatus = (_status: string, message?: string) => {
+      events.push(`status:${message ?? ""}`);
+    };
+    adapter.syncSelectedThreadState = (message?: string) => {
+      events.push(`sync:${message ?? ""}`);
+    };
+
+    adapter.handleDesktopConnectionChanged(false);
+    await wait(5);
+    adapter.handleDesktopConnectionChanged(true);
+    await wait(30);
+
+    expect(events).toEqual([]);
+  });
+
+  test("reports recovery only when the desktop IPC disconnect was visible", async () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    const events: string[] = [];
+    adapter.desktopTransportStarted = true;
+    adapter.desktopReconnectGraceMs = 5;
+    adapter.setStatus = (_status: string, message?: string) => {
+      events.push(`status:${message ?? ""}`);
+    };
+    adapter.syncSelectedThreadState = (message?: string) => {
+      events.push(`sync:${message ?? ""}`);
+    };
+
+    adapter.handleDesktopConnectionChanged(false);
+    await wait(20);
+    adapter.handleDesktopConnectionChanged(true);
+
+    expect(events).toEqual([
+      "status:Codex 桌面端连接已断开，正在重连。",
+      "sync:Codex 桌面端已重新连接。",
+    ]);
+  });
+
+  test("reports a desktop IPC disconnect only after the grace window expires", async () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    const events: string[] = [];
+    adapter.desktopTransportStarted = true;
+    adapter.desktopReconnectGraceMs = 5;
+    adapter.setStatus = (_status: string, message?: string) => {
+      events.push(message ?? "");
+    };
+
+    adapter.handleDesktopConnectionChanged(false);
+    expect(events).toEqual([]);
+    await wait(20);
+
+    expect(events).toEqual(["Codex 桌面端连接已断开，正在重连。"]);
   });
 
   test("starts a queued turn in its original background task without switching the selected task", async () => {

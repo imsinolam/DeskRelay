@@ -72,6 +72,8 @@ export type AdapterOptions = {
   renderMode?: "embedded" | "panel" | "companion" | "headless";
   codexTransport?: "app-server" | "desktop";
   inheritCodexDesktopPermissions?: boolean;
+  /** Explicit opt-in for starting a desktop application from a background runtime. */
+  allowDesktopApplicationLaunch?: boolean;
   codexDesktopGlobalStateFile?: string;
 };
 
@@ -180,6 +182,29 @@ export const CODEX_RPC_CONNECT_RETRY_MS = 150;
 export const CODEX_RPC_RECONNECT_TIMEOUT_MS = 5_000;
 export const CODEX_SESSION_LOCAL_MIRROR_FALLBACK_WINDOW_MS = 15_000;
 export const LOCAL_COMPANION_RECONNECT_GRACE_MS = 15_000;
+// Minimum interval between two `open -a ChatGPT` desktop launches issued by
+// the Codex adapter. An external agent may be killing the desktop app on
+// purpose; relaunching on every reconnect attempt would turn that into an
+// infinite launch/kill resonance loop that keeps interrupting running turns.
+export const DESKTOP_LAUNCH_THROTTLE_MS = 60_000;
+
+export function desktopLaunchBackoffMs(consecutiveFailures: number): number {
+  const capped = Math.min(Math.max(consecutiveFailures, 1), 5);
+  return 60_000 * capped;
+}
+
+export function shouldThrottleDesktopLaunch(params: {
+  nowMs: number;
+  lastLaunchAtMs: number;
+  backoffUntilMs: number;
+  throttleMs?: number;
+}): boolean {
+  const throttleMs = params.throttleMs ?? DESKTOP_LAUNCH_THROTTLE_MS;
+  if (params.nowMs < params.backoffUntilMs) {
+    return true;
+  }
+  return params.nowMs - params.lastLaunchAtMs < throttleMs;
+}
 export const CLAUDE_HOOK_LISTEN_HOST = "127.0.0.1";
 export const CLAUDE_HELP_PROBE_TIMEOUT_MS = 5_000;
 export const CLAUDE_WECHAT_WORKING_NOTICE_DELAY_MS = 12_000;
@@ -1121,6 +1146,19 @@ function applyLoopbackNoProxy(env: Record<string, string>): Record<string, strin
   return env;
 }
 
+function listVersionManagerBinDirectories(root: string): string[] {
+  try {
+    return fs
+      .readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort((left, right) => right.localeCompare(left, "en", { numeric: true }))
+      .map((version) => path.join(root, version, "bin"));
+  } catch {
+    return [];
+  }
+}
+
 function prependCommonUserCliDirectories(
   env: Record<string, string>,
   platform: NodeJS.Platform,
@@ -1136,15 +1174,26 @@ function prependCommonUserCliDirectories(
     .split(":")
     .map((entry) => entry.trim())
     .filter(Boolean);
-  const directories = [
-    path.join(home, ".local", "bin"),
-    path.join(home, ".grok", "bin"),
-    path.join(home, ".codebuddy", "bin"),
-    path.join(home, ".hermes", "node", "bin"),
-    path.join(home, ".opencode", "bin"),
-    path.join(home, ".bun", "bin"),
+  const preferredDirectories = [
+    path.posix.join(home, ".codex", "bin"),
+    path.posix.join(home, ".local", "bin"),
+    path.posix.join(home, ".grok", "bin"),
+    path.posix.join(home, ".codebuddy", "bin"),
+    path.posix.join(home, ".hermes", "node", "bin"),
+    path.posix.join(home, ".opencode", "bin"),
+    path.posix.join(home, ".bun", "bin"),
   ];
-  env.PATH = Array.from(new Set([...directories, ...current])).join(":");
+  const fallbackDirectories = [
+    ...listVersionManagerBinDirectories(
+      path.posix.join(home, ".nvm", "versions", "node"),
+    ),
+    ...listVersionManagerBinDirectories(
+      path.posix.join(home, ".workbuddy", "binaries", "node", "versions"),
+    ),
+  ];
+  env.PATH = Array.from(
+    new Set([...preferredDirectories, ...current, ...fallbackDirectories]),
+  ).join(":");
 }
 
 export function resolveDefaultAdapterCommand(
@@ -1849,10 +1898,7 @@ export function resolveSpawnTarget(
   }
 
   const resolved = resolveCommandPath(trimmed, platform, resolutionEnv) ?? trimmed;
-  if (
-    platform !== "win32" ||
-    (kind !== "codex" && !isClaudeProviderKind(kind) && kind !== "opencode")
-  ) {
+  if (platform !== "win32") {
     return { file: resolved, args: [...forwardArgs] };
   }
 

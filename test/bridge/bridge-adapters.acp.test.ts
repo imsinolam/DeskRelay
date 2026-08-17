@@ -250,17 +250,22 @@ describe("ACP bridge helpers", () => {
       const entries = (await fs.promises.readFile(logPath, "utf8"))
         .trim()
         .split("\n")
-        .map((line) => JSON.parse(line));
-      expect(entries).toEqual([
+        .map((line) => JSON.parse(line) as Record<string, string>);
+      const canonicalEntries = await Promise.all(entries.map(async (entry) => ({
+        method: entry.method,
+        processCwd: await fs.promises.realpath(entry.processCwd),
+        requestedCwd: await fs.promises.realpath(entry.requestedCwd),
+      })));
+      expect(canonicalEntries).toEqual([
         {
           method: "session/new",
           processCwd: realInitialCwd,
-          requestedCwd: initialCwd,
+          requestedCwd: realInitialCwd,
         },
         {
           method: "session/load",
           processCwd: realSessionCwd,
-          requestedCwd: sessionCwd,
+          requestedCwd: realSessionCwd,
         },
       ]);
     } finally {
@@ -325,6 +330,7 @@ describe("ACP bridge helpers", () => {
   test("preserves the filesystem root as a resumable CodeBuddy task directory", async () => {
     const configDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "codebuddy-root-history-"));
     const sessionId = "44444444-4444-4444-8444-444444444444";
+    const rootCwd = path.parse(configDir).root;
     await fs.promises.mkdir(path.join(configDir, "projects"), { recursive: true });
     await fs.promises.writeFile(
       path.join(configDir, "projects", `${sessionId}.jsonl`),
@@ -335,13 +341,13 @@ describe("ACP bridge helpers", () => {
         role: "user",
         content: [{ type: "input_text", text: "根目录任务" }],
         sessionId,
-        cwd: "/",
+        cwd: rootCwd,
       }),
     );
     const previous = process.env.CODEBUDDY_CONFIG_DIR;
     process.env.CODEBUDDY_CONFIG_DIR = configDir;
     try {
-      expect(resolveCodeBuddySessionCwd(sessionId)).toBe("/");
+      expect(resolveCodeBuddySessionCwd(sessionId)).toBe(rootCwd);
     } finally {
       if (previous === undefined) delete process.env.CODEBUDDY_CONFIG_DIR;
       else process.env.CODEBUDDY_CONFIG_DIR = previous;

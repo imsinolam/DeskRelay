@@ -102,9 +102,10 @@ describe("codex remote client helpers", () => {
     const env = buildRemoteCodexClientEnv(endpoint, {
       PATH: "/usr/bin",
       HOME: "/tmp/home",
-    });
+    }, "linux");
 
     expect(env.PATH).toBe([
+      "/tmp/home/.codex/bin",
       "/tmp/home/.local/bin",
       "/tmp/home/.grok/bin",
       "/tmp/home/.codebuddy/bin",

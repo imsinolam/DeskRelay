@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -10,6 +11,7 @@ import {
   buildCodexDesktopThreadUrl,
   compactCodexDesktopConversationState,
   encodeCodexDesktopIpcMessage,
+  isWindowsNamedPipePath,
 } from "../../src/bridge/codex-desktop-ipc.ts";
 
 const cleanupPaths: string[] = [];
@@ -50,9 +52,13 @@ async function createMockRouter(
     message: Record<string, unknown>,
   ) => void,
 ): Promise<{ socketPath: string; server: net.Server }> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-desktop-ipc-test-"));
-  const socketPath = path.join(dir, "ipc.sock");
-  cleanupPaths.push(dir);
+  const dir = process.platform === "win32"
+    ? null
+    : fs.mkdtempSync(path.join(os.tmpdir(), "codex-desktop-ipc-test-"));
+  const socketPath = process.platform === "win32"
+    ? `\\\\.\\pipe\\deskrelay-codex-ipc-${process.pid}-${crypto.randomUUID()}`
+    : path.join(dir!, "ipc.sock");
+  if (dir) cleanupPaths.push(dir);
   const server = net.createServer((socket) => {
     cleanupSockets.push(socket);
     socket.on("data", createFrameReader((message) => handleMessage(socket, message)));
@@ -70,6 +76,12 @@ function sendFrame(socket: net.Socket, message: Record<string, unknown>): void {
 }
 
 describe("Codex desktop IPC framing and state", () => {
+  test("recognizes Windows named pipes without requiring a filesystem entry", () => {
+    expect(isWindowsNamedPipePath("\\\\.\\pipe\\deskrelay-codex-ipc")).toBe(true);
+    expect(isWindowsNamedPipePath("\\\\?\\pipe\\deskrelay-codex-ipc")).toBe(true);
+    expect(isWindowsNamedPipePath("/tmp/codex-ipc.sock")).toBe(false);
+  });
+
   test("builds the native Codex thread deep link", () => {
     expect(buildCodexDesktopThreadUrl("0000000a-0000-7000-8000-00000000000a")).toBe(
       "codex://threads/0000000a-0000-7000-8000-00000000000a",

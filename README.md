@@ -39,9 +39,10 @@ npm install -g deskrelay
 deskrelay-setup
 cd /path/to/your/project
 deskrelay --adapter codex
+# 常驻后台、不自动恢复终端或打开桌面应用：deskrelay --idle-start --no-open
 ```
 
-完成微信扫码后，向 ClawBot 发送“任务”即可选择电脑上的真实任务；启动后显示的移动网页链接可在手机浏览器打开。
+完成微信扫码后，向 ClawBot 发送“任务”即可选择电脑上的真实任务；启动后显示的移动网页链接可在手机浏览器打开。后台 daemon 默认不会自动启动 ChatGPT；只有显式传入 `--open-desktop-apps` 才会允许。
 
 不要把扫码结果、setup 链接、移动密码、`~/.deskrelay` 或任务截图提交到 issue。
 

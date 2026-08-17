@@ -68,10 +68,15 @@ type WorkBuddyDesktopRpcFrame = {
 export function resolveWorkBuddyDesktopSocketPath(options: {
   uid?: number;
   tmpDir?: string;
+  platform?: NodeJS.Platform;
 } = {}): string {
+  const platform = options.platform ?? process.platform;
   const uid = options.uid ?? (typeof process.getuid === "function" ? process.getuid() : undefined);
-  const tmpDir = options.tmpDir ?? (process.platform === "darwin" ? "/tmp" : os.tmpdir());
-  return path.join(tmpDir, `deskrelay-workbuddy-${uid ?? "user"}.sock`);
+  if (platform === "win32") {
+    return `\\\\.\\pipe\\deskrelay-workbuddy-${uid ?? "user"}`;
+  }
+  const tmpDir = options.tmpDir ?? (platform === "darwin" ? "/tmp" : os.tmpdir());
+  return path.posix.join(tmpDir, `deskrelay-workbuddy-${uid ?? "user"}.sock`);
 }
 
 export function resolveWorkBuddyDesktopHookPath(dataDir = resolveChannelDataDir()): string {

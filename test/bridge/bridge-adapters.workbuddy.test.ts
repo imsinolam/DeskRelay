@@ -36,6 +36,10 @@ describe("WorkBuddy Desktop adapter", () => {
       tmpDir: "/tmp/runtime",
       platform: "darwin",
     })).toBe(`/tmp/runtime/wb-${uidHash}/${instanceHash}/sidecar.sock`);
+    expect(resolveWorkBuddySidecarSocketPath({
+      configDir,
+      platform: "win32",
+    })).toBe(`\\\\.\\pipe\\workbuddy-${instanceHash}-sidecar-control`);
   });
 
   test("parses and replaces updated transcript messages by id", () => {

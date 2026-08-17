@@ -39,6 +39,7 @@ import {
   parseDaemonSwitchCommand,
   prefixDaemonAdapterMessage,
   prefixDaemonTaskMessage,
+  resolveDaemonInitialAdapter,
   resolveDaemonSessionStartMode,
   resolveDaemonApprovalShortcut,
   resolveDaemonTaskListScope,
@@ -327,7 +328,7 @@ describe("daemon startup resilience", () => {
   });
 
   test("retries undelivered approvals before handling the inbound message that refreshed WeChat context", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts").replace(/\r\n?/g, "\n");
     const loopStart = source.indexOf(
       "      for (const message of pollResult.messages) {",
     );
@@ -1921,7 +1922,49 @@ describe("deskrelay-daemon helpers", () => {
       initialAdapter: "claude",
       profile: "work",
       openVisible: false,
+      restorePersistedAdapter: true,
+      allowDesktopApplicationLaunch: false,
     });
+  });
+
+  test("idle startup keeps the relay online without restoring the last terminal", () => {
+    const options = parseDaemonCliArgs([
+      "--cwd",
+      "./tmp/project",
+      "--idle-start",
+      "--no-open",
+    ]);
+
+    expect(options).toMatchObject({
+      restorePersistedAdapter: false,
+      openVisible: false,
+      allowDesktopApplicationLaunch: false,
+    });
+    expect(resolveDaemonInitialAdapter(options, "codex")).toBeUndefined();
+  });
+
+  test("explicit adapter wins over idle startup and desktop launch needs explicit opt-in", () => {
+    const options = parseDaemonCliArgs([
+      "--idle-start",
+      "--adapter",
+      "deepseek",
+      "--open-desktop-apps",
+    ]);
+
+    expect(resolveDaemonInitialAdapter(options, "codex")).toBe("deepseek");
+    expect(options.allowDesktopApplicationLaunch).toBe(true);
+  });
+
+  test("daemon runtime disables desktop application launch unless explicitly allowed", () => {
+    expect(buildDaemonRuntimeOptions({
+      adapter: "codex",
+      cwd: "/Users/test/project",
+    }).allowDesktopApplicationLaunch).toBe(false);
+    expect(buildDaemonRuntimeOptions({
+      adapter: "codex",
+      cwd: "/Users/test/project",
+      allowDesktopApplicationLaunch: true,
+    }).allowDesktopApplicationLaunch).toBe(true);
   });
 
   test("macOS visible clients launch through a Terminal command file instead of AppleScript", () => {
@@ -1990,10 +2033,10 @@ describe("deskrelay-daemon helpers", () => {
     }
   });
 
-  test("defaultDaemonSessionStartMode restores desktop owners and starts CLI owners fresh", () => {
+  test("defaultDaemonSessionStartMode restores desktop and harness owners and starts CLI owners fresh", () => {
     expect(defaultDaemonSessionStartMode("codex")).toBe("restore");
     expect(defaultDaemonSessionStartMode("workbuddy")).toBe("restore");
-    expect(defaultDaemonSessionStartMode("deepseek")).toBe("new");
+    expect(defaultDaemonSessionStartMode("deepseek")).toBe("restore");
     expect(defaultDaemonSessionStartMode("claude")).toBe("new");
     expect(defaultDaemonSessionStartMode("tclaude")).toBe("new");
     expect(defaultDaemonSessionStartMode("grok")).toBe("new");

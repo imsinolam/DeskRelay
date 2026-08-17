@@ -442,7 +442,11 @@ export const DAEMON_PROVIDER_IDS = IMPLEMENTED_BRIDGE_ADAPTER_IDS.filter(
 );
 
 export function providerRequiresVisibleClient(kind: BridgeProviderId): boolean {
-  const owner = getBridgeProvider(kind).sessionIntegration.owner;
+  const provider = getBridgeProvider(kind);
+  const owner = provider.sessionIntegration.owner;
+  if (provider.transport === "harness_host") {
+    return false;
+  }
   return owner === "visible_cli_owner" || owner === "shared_service_owner";
 }
 

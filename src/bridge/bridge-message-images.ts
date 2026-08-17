@@ -16,17 +16,49 @@ function cleanReference(value: string): string {
   return value
     .trim()
     .replace(/^<|>$/g, "")
-    .replace(/^['"]|['"]$/g, "")
-    .replace(/^file:\/\//i, "");
+    .replace(/^['"]|['"]$/g, "");
 }
 
 function hasImageExtension(value: string): boolean {
   try {
     const pathname = /^https?:\/\//i.test(value) ? new URL(value).pathname : value;
-    return IMAGE_EXTENSIONS.has(path.extname(pathname).toLowerCase());
+    const extension = /^[A-Za-z]:[\\/]/.test(pathname) || pathname.startsWith("\\")
+      ? path.win32.extname(pathname)
+      : path.posix.extname(pathname);
+    return IMAGE_EXTENSIONS.has(extension.toLowerCase());
   } catch {
     return false;
   }
+}
+
+function decodeLocalFileUrl(value: string): string | null {
+  if (!/^file:\/\//i.test(value)) return value;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "file:") return null;
+    const decodedPath = decodeURIComponent(url.pathname);
+    if (url.hostname) {
+      return `\\\\${url.hostname}${decodedPath.replace(/\//g, "\\")}`;
+    }
+    if (/^\/[A-Za-z]:\//.test(decodedPath)) {
+      return decodedPath.slice(1).replace(/\//g, "\\");
+    }
+    return decodedPath;
+  } catch {
+    return null;
+  }
+}
+
+function localPathApi(value: string, cwd?: string): typeof path.posix | typeof path.win32 {
+  if (/^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\")) {
+    return path.win32;
+  }
+  if (value.startsWith("/")) return path.posix;
+  const candidate = cwd || "";
+  if (/^[A-Za-z]:[\\/]/.test(candidate) || candidate.startsWith("\\")) {
+    return path.win32;
+  }
+  return path.posix;
 }
 
 function resolveImageReference(
@@ -51,15 +83,21 @@ function resolveImageReference(
     }
   }
 
-  try {
-    value = decodeURIComponent(value);
-  } catch {
-    // Keep the original path when it is not URL-encoded.
+  const decodedFileUrl = decodeLocalFileUrl(value);
+  if (!decodedFileUrl) return null;
+  value = decodedFileUrl;
+  if (!/^file:\/\//i.test(rawValue)) {
+    try {
+      value = decodeURIComponent(value);
+    } catch {
+      // Keep the original path when it is not URL-encoded.
+    }
   }
-  const localPath = path.isAbsolute(value)
-    ? path.normalize(value)
+  const pathApi = localPathApi(value, options.cwd);
+  const localPath = pathApi.isAbsolute(value)
+    ? pathApi.normalize(value)
     : options.cwd
-      ? path.resolve(options.cwd, value)
+      ? pathApi.resolve(options.cwd, value)
       : null;
   if (!localPath) return null;
   return {

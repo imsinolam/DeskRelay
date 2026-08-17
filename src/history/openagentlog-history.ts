@@ -73,6 +73,7 @@ export type OpenAgentLogHistoryProviderOptions = {
   requestTimeoutMs?: number;
   failureCooldownMs?: number;
   now?: () => number;
+  platform?: NodeJS.Platform;
 };
 
 function defaultRuntimeFilePath(): string {
@@ -94,6 +95,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function readSecureRuntimeDescriptor(
   runtimeFilePath: string,
+  platform: NodeJS.Platform,
 ): OpenAgentLogRuntimeDescriptor | null {
   let descriptor = -1;
   try {
@@ -113,7 +115,7 @@ function readSecureRuntimeDescriptor(
     if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
       return null;
     }
-    if ((stat.mode & 0o077) !== 0) return null;
+    if (platform !== "win32" && (stat.mode & 0o077) !== 0) return null;
     const raw = fs.readFileSync(descriptor, "utf8");
     const parsed = JSON.parse(raw) as unknown;
     if (!isPlainRecord(parsed)) return null;
@@ -225,6 +227,7 @@ export class OpenAgentLogHistoryProvider {
   private readonly requestTimeoutMs: number;
   private readonly failureCooldownMs: number;
   private readonly now: () => number;
+  private readonly platform: NodeJS.Platform;
   private unavailableUntilMs = 0;
 
   constructor(options: OpenAgentLogHistoryProviderOptions = {}) {
@@ -239,6 +242,7 @@ export class OpenAgentLogHistoryProvider {
       Math.floor(options.failureCooldownMs ?? DEFAULT_FAILURE_COOLDOWN_MS),
     );
     this.now = options.now ?? Date.now;
+    this.platform = options.platform ?? process.platform;
   }
 
   async readPage(
@@ -259,7 +263,7 @@ export class OpenAgentLogHistoryProvider {
     if (this.now() < this.unavailableUntilMs) {
       return this.handleUnavailable(usesOpenAgentLogCursor);
     }
-    const runtime = readSecureRuntimeDescriptor(this.runtimeFilePath);
+    const runtime = readSecureRuntimeDescriptor(this.runtimeFilePath, this.platform);
     if (!runtime) {
       this.markUnavailable();
       return this.handleUnavailable(usesOpenAgentLogCursor);

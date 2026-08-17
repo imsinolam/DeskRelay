@@ -105,9 +105,10 @@ export function buildRemoteCodexClientArgs(
 export function buildRemoteCodexClientEnv(
   endpoint: LocalCompanionEndpoint,
   env: Record<string, string | undefined> = process.env as Record<string, string | undefined>,
+  platform: NodeJS.Platform = process.platform,
 ): Record<string, string> {
   const tokenEnvName = endpoint.remoteAuthTokenEnv ?? CODEX_REMOTE_AUTH_TOKEN_ENV;
-  const nextEnv = buildCliEnvironment("codex", { env });
+  const nextEnv = buildCliEnvironment("codex", { env, platform });
   nextEnv[tokenEnvName] = endpoint.token;
   return nextEnv;
 }

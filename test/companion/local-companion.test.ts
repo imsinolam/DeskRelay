@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import {
   isDirectRunModule,
@@ -35,14 +37,16 @@ describe("local companion reconnect policy", () => {
   });
 
   test("recognizes direct Node execution even when import.meta.main is unavailable", () => {
+    const modulePath = path.resolve("tmp", "DeskRelay", "dist", "companion", "local-companion.js");
+    const otherPath = path.resolve("tmp", "DeskRelay", "test", "companion", "local-companion.test.js");
     expect(isDirectRunModule(
-      "file:///tmp/DeskRelay/dist/companion/local-companion.js",
-      "/tmp/DeskRelay/dist/companion/local-companion.js",
+      pathToFileURL(modulePath).href,
+      modulePath,
       false,
     )).toBe(true);
     expect(isDirectRunModule(
-      "file:///tmp/DeskRelay/dist/companion/local-companion.js",
-      "/tmp/DeskRelay/test/companion/local-companion.test.js",
+      pathToFileURL(modulePath).href,
+      otherPath,
       false,
     )).toBe(false);
     expect(isDirectRunModule("file:///tmp/module.js", undefined, true)).toBe(true);

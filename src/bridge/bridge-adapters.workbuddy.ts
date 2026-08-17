@@ -127,6 +127,7 @@ export function resolveWorkBuddySidecarSocketPath(options: {
     process.env.CODEBUDDY_CONFIG_DIR?.trim() ??
     path.join(os.homedir(), ".workbuddy");
   const platform = options.platform ?? process.platform;
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
   const uid = options.uid ?? (typeof process.getuid === "function" ? process.getuid() : undefined);
   const instance = hashToken(configDir, 12);
   if (platform === "win32") {
@@ -135,14 +136,14 @@ export function resolveWorkBuddySidecarSocketPath(options: {
   if (platform === "linux") {
     const xdg = options.xdgRuntimeDir ?? process.env.XDG_RUNTIME_DIR?.trim();
     if (xdg) {
-      return path.join(xdg, "workbuddy", instance, "sidecar.sock");
+      return pathApi.join(xdg, "workbuddy", instance, "sidecar.sock");
     }
     if (uid !== undefined && fs.existsSync(`/run/user/${uid}`)) {
-      return path.join(`/run/user/${uid}`, "workbuddy", instance, "sidecar.sock");
+      return pathApi.join(`/run/user/${uid}`, "workbuddy", instance, "sidecar.sock");
     }
   }
   const base = uid === undefined ? "wb" : `wb-${hashToken(String(uid), 6)}`;
-  return path.join(options.tmpDir ?? os.tmpdir().trim(), base, instance, "sidecar.sock");
+  return pathApi.join(options.tmpDir ?? os.tmpdir().trim(), base, instance, "sidecar.sock");
 }
 
 function isLoopbackAcpEndpoint(value: string): boolean {
