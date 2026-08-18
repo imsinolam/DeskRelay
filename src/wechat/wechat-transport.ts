@@ -601,14 +601,24 @@ export async function apiFetch(params: {
   body: string;
   token?: string;
   timeoutMs: number;
+  fetchImpl?: typeof fetch;
 }): Promise<string> {
   const base = params.baseUrl.endsWith("/") ? params.baseUrl : `${params.baseUrl}/`;
   const url = new URL(params.endpoint, base).toString();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), params.timeoutMs);
+  let rejectTimeout: (reason?: unknown) => void = () => {};
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    rejectTimeout = reject;
+  });
+  const timer = setTimeout(() => {
+    controller.abort();
+    rejectTimeout(
+      controller.signal.reason ?? new DOMException("The operation was aborted", "AbortError"),
+    );
+  }, params.timeoutMs);
 
-  try {
-    const res = await fetch(url, {
+  const requestPromise = (async () => {
+    const res = await (params.fetchImpl ?? fetch)(url, {
       method: "POST",
       headers: buildHeaders(params.token, params.body),
       body: params.body,
@@ -620,6 +630,10 @@ export async function apiFetch(params: {
     }
 
     return text;
+  })();
+
+  try {
+    return await Promise.race([requestPromise, timeoutPromise]);
   } finally {
     clearTimeout(timer);
   }

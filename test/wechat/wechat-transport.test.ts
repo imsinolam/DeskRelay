@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { createCipheriv } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
-import http from "node:http";
 import path from "node:path";
 
 import {
@@ -78,35 +77,33 @@ describe("wechat upload limits", () => {
     ).toBe(12 * 1024 * 1024);
   });
 
-  test("keeps the request timeout active while reading a stalled response body", async () => {
-    const server = http.createServer((_request, response) => {
-      response.writeHead(200, { "content-type": "application/json" });
-      response.flushHeaders();
-      setTimeout(() => response.end(JSON.stringify({ ret: 0, msgs: [] })), 200);
-    });
-    const port = await new Promise<number>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(0, "127.0.0.1", () => {
-        const address = server.address();
-        if (!address || typeof address === "string") reject(new Error("missing address"));
-        else resolve(address.port);
-      });
-    });
+  test("keeps the request timeout active even when response-body reads ignore abort", async () => {
+    let abortObserved = false;
+    const fetchImpl = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+      init?.signal?.addEventListener("abort", () => {
+        abortObserved = true;
+      }, { once: true });
+      return {
+        ok: true,
+        status: 200,
+        text: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          return JSON.stringify({ ret: 0, msgs: [] });
+        },
+      } as Response;
+    }) as typeof fetch;
 
-    try {
-      const startedAt = Date.now();
-      await expect(apiFetch({
-        baseUrl: `http://127.0.0.1:${port}`,
-        endpoint: "ilink/bot/getupdates",
-        body: "{}",
-        token: "test-token",
-        timeoutMs: 30,
-      })).rejects.toMatchObject({ name: "AbortError" });
-      expect(Date.now() - startedAt).toBeLessThan(150);
-    } finally {
-      server.closeAllConnections?.();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    }
+    const startedAt = Date.now();
+    await expect(apiFetch({
+      baseUrl: "https://wechat.invalid",
+      endpoint: "ilink/bot/getupdates",
+      body: "{}",
+      token: "test-token",
+      timeoutMs: 10,
+      fetchImpl,
+    })).rejects.toMatchObject({ name: "AbortError" });
+    expect(abortObserved).toBe(true);
+    expect(Date.now() - startedAt).toBeLessThan(80);
   });
 
   test("classifies transient fetch failures as retryable network errors", () => {
@@ -269,6 +266,9 @@ describe("wechat upload limits", () => {
 });
 
 describe("wechat inbound media", () => {
+  const demoImageAesKey = Buffer.alloc(16, 0x11).toString("hex");
+  const demoFileAesKey = Buffer.alloc(16, 0x22).toString("hex");
+
   test("extracts image and file descriptors without requiring text", () => {
     const message: WeixinMessage = {
       item_list: [
@@ -277,7 +277,7 @@ describe("wechat inbound media", () => {
           image_item: {
             file_name: "screenshot.png",
             media: {
-              aes_key: "demo-image-aes-key-not-secret",
+              aes_key: demoImageAesKey,
               encrypt_query_param: "img-param",
             },
           },
@@ -288,7 +288,7 @@ describe("wechat inbound media", () => {
             file_name: "report.pdf",
             len: "128",
             media: {
-              aes_key: "demo-file-aes-key-not-secret",
+              aes_key: demoFileAesKey,
               encrypt_query_param: "file-param",
             },
           },
@@ -302,13 +302,13 @@ describe("wechat inbound media", () => {
         expect.objectContaining({
           kind: "image",
           fileName: "screenshot.png",
-          aesKey: "demo-image-aes-key-not-secret",
+          aesKey: demoImageAesKey,
           expectedSizeBytes: undefined,
         }),
         expect.objectContaining({
           kind: "file",
           fileName: "report.pdf",
-          aesKey: "demo-file-aes-key-not-secret",
+          aesKey: demoFileAesKey,
           expectedSizeBytes: 128,
         }),
       ],
@@ -333,7 +333,7 @@ describe("wechat inbound media", () => {
   });
 
   test("decodes inbound AES keys and decrypts media payloads", () => {
-    const key = Buffer.from("demo-image-aes-key-not-secret", "hex");
+    const key = Buffer.alloc(16, 0x11);
     const plaintext = Buffer.from("wechat inbound media");
     const cipher = createCipheriv("aes-128-ecb", key, null);
     const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
