@@ -55,6 +55,22 @@ Get-Command opencode
 
 如果终端提示 `command not found`、`not recognized` 或 DeskRelay 报告 `spawn <命令> ENOENT`，说明命令没有安装，或启动 DeskRelay 的进程没有继承正确的 `PATH`。先在同一终端中直接运行 Agent，确认可用后再启动 DeskRelay。
 
+### 4. 验证局域网移动网页
+
+不配置公网服务器也会有移动网页，但 `deskrelay-setup` 本身不会启动它。进入项目目录运行：
+
+```bash
+deskrelay --idle-start --no-open
+```
+
+本机验证：
+
+```bash
+curl -fsS http://127.0.0.1:4396/health
+```
+
+第一次设置移动密码时，先在 ClawBot 中发送“任务”并进入一个任务，再发送“状态”，从返回的授权链接打开网页。完整步骤见 [5 分钟启用局域网移动网页](局域网移动网页快速开始.md)。
+
 ## 二、Agent 配置矩阵
 
 | Agent | DeskRelay 查找的命令/应用 | 首次准备 | DeskRelay 入口 |
@@ -71,7 +87,7 @@ Get-Command opencode
 
 TClaude、Grok CLI、CodeBuddy、reasonix、WorkBuddy 和 DeepSeek Harness 可能来自组织内部或供应商渠道。DeskRelay 不提供这些工具的安装包，也不应在公开文档中猜测其安装命令；请使用工具自身的官方或组织内说明。
 
-“可以列出任务”不自动等于“电脑端实时同步”。Codex 与 WorkBuddy 使用桌面原生 owner；DeepSeek Harness 复用当前 `dsh web` owner；Claude Code、TClaude 使用 DeskRelay 连接的可见 CLI owner；OpenCode、Grok、CodeBuddy 与 reasonix 使用电脑界面和远程入口共用的共享服务 owner。完整边界见 [README 的会话一致性矩阵](../README.md#支持的-agent-与会话一致性)。
+“可以列出任务”不自动等于“电脑端实时同步”。Codex 与 WorkBuddy 使用桌面原生 owner；DeepSeek Harness 复用当前 `dsh web` owner；Claude Code、TClaude 使用 DeskRelay 连接的可见 CLI owner；OpenCode、Grok、CodeBuddy 与 reasonix 使用电脑界面和远程入口共用的共享服务 owner。完整边界见 [README 的会话一致性矩阵](../../README.md#支持的-agent-与会话一致性)。
 
 ## 三、各 Agent 的安装与启动
 
@@ -128,7 +144,7 @@ deskrelay-claude-start
 deskrelay-bridge-claude
 ```
 
-Claude Code 使用交互式终端和 hooks，同步质量依赖 `node-pty`。如果安装时原生模块编译失败，先按 [问题排查](troubleshooting.md#pty-不可用--回退模式) 修复。
+Claude Code 使用交互式终端和 hooks，同步质量依赖 `node-pty`。如果安装时原生模块编译失败，先按 [问题排查](问题排查.md#pty-不可用--回退模式) 修复。
 
 ### TClaude
 
@@ -361,7 +377,7 @@ NO_PROXY
 - 本机回环地址应保留在 `NO_PROXY` 中；
 - 使用 systemd/LaunchAgent 时，把必要变量放进权限受限的环境文件。
 
-DeskRelay 的完整环境变量见 [运行配置](configuration.md)。
+DeskRelay 的完整环境变量见 [运行配置](运行配置.md)。
 
 ## 六、安装后的最小验收
 

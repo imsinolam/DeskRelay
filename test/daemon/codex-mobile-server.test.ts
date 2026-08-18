@@ -285,6 +285,28 @@ describe("mobile document title", () => {
   });
 });
 
+describe("mobile terminal switcher status", () => {
+  test("hides normal lifecycle states and keeps only attention states", () => {
+    const label = loadMobileAdapterStateLabel();
+
+    expect(label("open")).toBe("");
+    expect(label("idle")).toBe("");
+    expect(label("stopped")).toBe("");
+    expect(label("busy")).toBe("处理中");
+    expect(label("awaiting_approval")).toBe("待审批");
+    expect(label("awaiting_input")).toBe("待输入");
+    expect(label("starting")).toBe("启动中");
+    expect(label("error")).toBe("异常");
+  });
+
+  test("keeps both menu columns on one line in a wider mobile menu", () => {
+    expect(CODEX_MOBILE_CSS).toContain("width: min(300px, calc(100vw - 24px))");
+    expect(CODEX_MOBILE_CSS).toContain(".adapter-menu-item > span:first-child");
+    expect(CODEX_MOBILE_CSS).toContain(".adapter-menu-state { flex: 0 0 auto; white-space: nowrap;");
+    expect(CODEX_MOBILE_JS).toContain("status.hidden = !status.textContent;");
+  });
+});
+
 describe("mobile boot connection states", () => {
   test("distinguishes Relay waiting, connected, and direct LAN startup", () => {
     const resolve = loadMobileBootConnectionStateResolver();
@@ -733,6 +755,14 @@ return updateDocumentTitle;
     update();
     return document.title;
   };
+}
+
+function loadMobileAdapterStateLabel(): (status: string) => string {
+  const start = CODEX_MOBILE_JS.indexOf("  function adapterStateLabel");
+  const end = CODEX_MOBILE_JS.indexOf("\n  function renderAdapterMenu", start);
+  if (start < 0 || end < 0) throw new Error("Mobile adapter-state label helper not found");
+  const source = CODEX_MOBILE_JS.slice(start, end);
+  return new Function(`${source}\nreturn adapterStateLabel;`)() as (status: string) => string;
 }
 
 function loadMobileBootConnectionStateResolver(): (

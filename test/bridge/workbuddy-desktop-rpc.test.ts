@@ -167,6 +167,7 @@ describe("WorkBuddy desktop RPC client", () => {
     try {
       const client = new WorkBuddyDesktopRpcClient({
         socketPath,
+        allowDesktopApplicationLaunch: true,
         callbacks: { onEvent: () => undefined },
         connectTimeoutMs: 500,
         connectPollIntervalMs: 5,
@@ -241,12 +242,42 @@ describe("WorkBuddy desktop RPC client", () => {
     }
   });
 
+  test("does not launch or restart WorkBuddy without explicit user permission", async () => {
+    for (const running of [false, true]) {
+      let launchCount = 0;
+      let restartCount = 0;
+      const client = new WorkBuddyDesktopRpcClient({
+        socketPath: `/tmp/deskrelay-workbuddy-disabled-${running}.sock`,
+        callbacks: { onEvent: () => undefined },
+        allowDesktopApplicationLaunch: false,
+        connectTimeoutMs: 20,
+        connectPollIntervalMs: 1,
+        existingProcessGraceMs: 0,
+        lifecycle: {
+          isRunning: async () => running,
+          launch: async () => {
+            launchCount += 1;
+          },
+          restart: async () => {
+            restartCount += 1;
+          },
+        },
+      });
+
+      await expect(client.connect()).rejects.toThrow("不会自动启动或重启 WorkBuddy");
+      expect(launchCount).toBe(0);
+      expect(restartCount).toBe(0);
+      await client.close();
+    }
+  });
+
   test("bounds a stuck WorkBuddy restart by the overall connection timeout", async () => {
     const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "deskrelay-workbuddy-timeout-"));
     const socketPath = path.join(dir, "bridge.sock");
     try {
       const client = new WorkBuddyDesktopRpcClient({
         socketPath,
+        allowDesktopApplicationLaunch: true,
         callbacks: { onEvent: () => undefined },
         connectTimeoutMs: 50,
         connectPollIntervalMs: 5,

@@ -3526,17 +3526,67 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     if (!this.desktopBootstrapThreadIds.has(threadId)) return true;
     const client = this.desktopIpcClient;
     if (!client) return false;
+
+    // thread/start makes the private metadata app-server the active writer.
+    // Release that writer before asking Codex Desktop to resume the task;
+    // doing this in the opposite order makes Desktop report that the task is
+    // already open in another application and leaves the bootstrap owner stuck.
     try {
-      await client.openAndFollowThread(threadId, { timeoutMs });
       await this.sendRpcRequest(
         "thread/unsubscribe",
         { threadId },
         { allowDesktopBootstrapWrite: true },
-      ).catch(() => undefined);
+      );
+    } catch {
+      return false;
+    }
+
+    try {
+      await client.openAndFollowThread(threadId, { timeoutMs });
       this.desktopBootstrapThreadIds.delete(threadId);
       return true;
     } catch {
-      return false;
+      const desktopState = typeof client.getThreadStateView === "function"
+        ? client.getThreadStateView(threadId)
+        : typeof client.getThreadState === "function"
+          ? client.getThreadState(threadId)
+          : null;
+      if (desktopState) {
+        this.desktopBootstrapThreadIds.delete(threadId);
+        return true;
+      }
+
+      try {
+        const cwd = this.getKnownThreadCwd(threadId);
+        const permissionSettings = this.resolveDesktopPermissionSettings(threadId);
+        const response = await this.sendRpcRequest(
+          "thread/resume",
+          {
+            threadId,
+            cwd,
+            approvalPolicy: permissionSettings.approvalPolicy,
+            approvalsReviewer: permissionSettings.approvalsReviewer,
+            sandbox: permissionSettings.sandbox,
+            excludeTurns: true,
+          },
+          { allowDesktopBootstrapWrite: true },
+        );
+        const resumedThreadId = this.extractThreadIdFromResponse(response);
+        if (!resumedThreadId || resumedThreadId !== threadId) {
+          throw new Error("Codex did not restore the bootstrap task writer.");
+        }
+        this.subscribedThreadIds.add(threadId);
+        return false;
+      } catch (restoreError) {
+        const message = describeUnknownError(restoreError);
+        if (message.includes("active writer")) {
+          // Desktop won the ownership race after the timeout. Do not let the
+          // private app-server compete for the same task again.
+          this.desktopBootstrapThreadIds.delete(threadId);
+          return true;
+        }
+        throw restoreError;
+      }
     }
   }
 
@@ -4802,8 +4852,9 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
         await this.respondToDesktopApprovalResult(pendingRequest, autoResponse.result);
         return;
       } catch {
-        // The desktop owner still has the request. Keep it actionable in the
-        // mobile surfaces instead of treating an unconfirmed decision as done.
+        // The desktop owner can retain the approval even when its decision RPC
+        // times out. Fall through so mobile clients still receive an actionable
+        // approval instead of permanently hiding the request as already seen.
       }
     }
 
@@ -7215,6 +7266,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       options.allowDesktopBootstrapWrite === true &&
       (
         method === "thread/start" ||
+        method === "thread/resume" ||
         method === "thread/unsubscribe" ||
         method === "turn/start" ||
         method === "turn/interrupt"

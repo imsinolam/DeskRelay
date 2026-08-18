@@ -40,6 +40,8 @@ import {
   prefixDaemonAdapterMessage,
   prefixDaemonTaskMessage,
   resolveDaemonInitialAdapter,
+  resolveDaemonDesktopApplicationLaunchPermission,
+  shouldRecreateDesktopOwnerSlotForUserLaunch,
   resolveDaemonSessionStartMode,
   resolveDaemonApprovalShortcut,
   resolveDaemonTaskListScope,
@@ -613,6 +615,11 @@ describe("deskrelay-daemon helpers", () => {
     );
     expect(source.slice(approvalStart, approvalEnd)).toContain(
       'resolveTaskApprovals(pending.threadId, "confirm")',
+    );
+    const approvalSource = source.slice(approvalStart, approvalEnd);
+    expect(approvalSource).toContain("approval_task_auto_confirm_error");
+    expect(approvalSource.indexOf("approval_task_auto_confirm_error")).toBeLessThan(
+      approvalSource.indexOf("approvalNotificationDeliveries.enqueue"),
     );
     expect(completionStart).toBeGreaterThan(-1);
     expect(completionEnd).toBeGreaterThan(completionStart);
@@ -1965,6 +1972,49 @@ describe("deskrelay-daemon helpers", () => {
       cwd: "/Users/test/project",
       allowDesktopApplicationLaunch: true,
     }).allowDesktopApplicationLaunch).toBe(true);
+  });
+
+  test("allows desktop application launch for an explicit web or ClawBot action", () => {
+    expect(resolveDaemonDesktopApplicationLaunchPermission({
+      automaticLaunchEnabled: false,
+      userInitiated: false,
+    })).toBe(false);
+    expect(resolveDaemonDesktopApplicationLaunchPermission({
+      automaticLaunchEnabled: false,
+      userInitiated: true,
+    })).toBe(true);
+    expect(resolveDaemonDesktopApplicationLaunchPermission({
+      automaticLaunchEnabled: true,
+      userInitiated: false,
+    })).toBe(true);
+  });
+
+  test("recreates a failed desktop-owner slot only for an explicit user launch", () => {
+    expect(shouldRecreateDesktopOwnerSlotForUserLaunch({
+      isDesktopOwner: true,
+      userInitiated: true,
+      status: "error",
+    })).toBe(true);
+    expect(shouldRecreateDesktopOwnerSlotForUserLaunch({
+      isDesktopOwner: true,
+      userInitiated: true,
+      status: "stopped",
+    })).toBe(true);
+    expect(shouldRecreateDesktopOwnerSlotForUserLaunch({
+      isDesktopOwner: true,
+      userInitiated: false,
+      status: "error",
+    })).toBe(false);
+    expect(shouldRecreateDesktopOwnerSlotForUserLaunch({
+      isDesktopOwner: true,
+      userInitiated: true,
+      status: "idle",
+    })).toBe(false);
+    expect(shouldRecreateDesktopOwnerSlotForUserLaunch({
+      isDesktopOwner: false,
+      userInitiated: true,
+      status: "error",
+    })).toBe(false);
   });
 
   test("macOS visible clients launch through a Terminal command file instead of AppleScript", () => {

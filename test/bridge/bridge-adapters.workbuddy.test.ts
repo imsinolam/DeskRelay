@@ -116,6 +116,35 @@ describe("WorkBuddy Desktop adapter", () => {
     });
   });
 
+  test("forwards explicit desktop launch permission to the WorkBuddy client", async () => {
+    let allowDesktopApplicationLaunch: boolean | undefined;
+    const dependencies: WorkBuddyAdapterDependencies = {
+      createDesktopClient: (options) => {
+        allowDesktopApplicationLaunch = options.allowDesktopApplicationLaunch;
+        return {
+          connect: async () => undefined,
+          invoke: async () => ({}),
+          close: async () => undefined,
+        };
+      },
+      listSessions: async () => [],
+      readSession: async () => null,
+      readMessages: async () => [],
+      readRunSummary: async () => null,
+      readLocalImage: async () => ({ data: "", mimeType: "image/png" }),
+    };
+    const adapter = new WorkBuddyDesktopAdapter({
+      kind: "workbuddy",
+      command: "workbuddy",
+      cwd: "/repo",
+      allowDesktopApplicationLaunch: true,
+    }, dependencies);
+
+    await adapter.start();
+    expect(allowDesktopApplicationLaunch).toBe(true);
+    await adapter.dispose();
+  });
+
   test("uses the real desktop RPC owner instead of the isolated ACP prompt path", async () => {
     const promptResult = deferred<unknown>();
     let onEvent: ((channel: string, data: unknown) => void) | null = null;

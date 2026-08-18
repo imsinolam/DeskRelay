@@ -31,7 +31,7 @@ On POSIX systems, DeskRelay enforces `0700` on runtime directories and `0600` on
 - The Relay must forward only DeskRelay application APIs and must never create an independent CLI/ACP fallback session.
 - The computer remains the owner of all tasks. If it sleeps, shuts down, or loses the active connection, the public page must report that the computer is offline rather than fall back to a hosted copy.
 
-See [docs/remote-access.md](docs/remote-access.md) for a hardened reference deployment.
+See [docs/架构设计/局域网与公网访问.md](docs/架构设计/局域网与公网访问.md) for a hardened reference deployment.
 
 ## Supported versions
 

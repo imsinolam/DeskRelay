@@ -2931,18 +2931,25 @@ describe("Codex desktop IPC transport", () => {
     }) as any;
     const rpcCalls: Array<{ method: string; params: unknown }> = [];
     const desktopCalls: Array<{ method: string; threadId: string; text?: string }> = [];
+    const handoffEvents: string[] = [];
+    let bootstrapWriterReleased = false;
     adapter.sendRpcRequest = async (method: string, params: unknown) => {
       rpcCalls.push({ method, params });
       if (method === "thread/start") {
+        handoffEvents.push("private:start");
         return { thread: { id: "thread_new" } };
       }
       if (method === "thread/unsubscribe") {
+        handoffEvents.push("private:unsubscribe");
+        bootstrapWriterReleased = true;
         return {};
       }
       throw new Error(`Unexpected RPC method: ${method}`);
     };
     adapter.desktopIpcClient = {
       openAndFollowThread: async (threadId: string) => {
+        handoffEvents.push("desktop:open");
+        expect(bootstrapWriterReleased).toBe(true);
         desktopCalls.push({ method: "open", threadId });
         return {};
       },
@@ -2960,6 +2967,11 @@ describe("Codex desktop IPC transport", () => {
     expect(rpcCalls.map((call) => call.method)).toContain("thread/start");
     expect(rpcCalls.map((call) => call.method)).toContain("thread/unsubscribe");
     expect(rpcCalls.map((call) => call.method)).not.toContain("turn/start");
+    expect(handoffEvents).toEqual([
+      "private:start",
+      "private:unsubscribe",
+      "desktop:open",
+    ]);
     expect(desktopCalls).toEqual([
       { method: "open", threadId: "thread_new" },
       { method: "start", threadId: "thread_new", text: "开始新任务" },
@@ -3009,8 +3021,11 @@ describe("Codex desktop IPC transport", () => {
       params: Record<string, unknown>,
     ) => {
       rpcCalls.push({ method, params });
-      if (method === "thread/start") {
+      if (method === "thread/start" || method === "thread/resume") {
         return { thread: { id: "thread_locked" } };
+      }
+      if (method === "thread/unsubscribe") {
+        return {};
       }
       if (method === "turn/start") {
         return { turn: { id: "turn_locked" } };
@@ -3032,9 +3047,13 @@ describe("Codex desktop IPC transport", () => {
     expect(adapter.desktopBootstrapThreadIds.has("thread_locked")).toBe(true);
     expect(rpcCalls.map((call) => call.method)).toEqual([
       "thread/start",
+      "thread/unsubscribe",
+      "thread/resume",
+      "thread/unsubscribe",
+      "thread/resume",
       "turn/start",
     ]);
-    expect(rpcCalls[1]?.params).toMatchObject({
+    expect(rpcCalls.at(-1)?.params).toMatchObject({
       threadId: "thread_locked",
       input: [{ type: "text", text: "锁屏后也要开始" }],
     });
@@ -4072,6 +4091,136 @@ describe("Codex desktop IPC transport", () => {
       requestId: "997",
       threadId: "thread_1",
     }]);
+  });
+
+  test("uses the cached desktop request as the authoritative pending approval", () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    adapter.desktopIpcClient = {
+      getThreadStateView: () => ({
+        requests: [{
+          id: 995,
+          method: "item/commandExecution/requestApproval",
+          params: {
+            threadId: "thread_1",
+            turnId: "turn_1",
+            reason: "桌面端仍在等待确认",
+            command: "/bin/zsh -lc 'echo live-state'",
+            cwd: process.cwd(),
+            availableDecisions: ["accept", "cancel"],
+          },
+        }],
+        threadRuntimeStatus: {
+          type: "active",
+          activeFlags: ["waitingOnApproval"],
+        },
+      }),
+    };
+
+    expect(adapter.getPendingTaskApprovals("thread_1")).toMatchObject([{
+      requestId: "995",
+      threadId: "thread_1",
+      turnId: "turn_1",
+      summary: "桌面端仍在等待确认",
+    }]);
+  });
+
+  test("does not report an approval as resolved when desktop state is unavailable", async () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    const events: Array<Record<string, unknown>> = [];
+    adapter.setEventSink((event: Record<string, unknown>) => events.push(event));
+    adapter.desktopApprovalSettleTimeoutMs = 1;
+    adapter.desktopIpcClient = {
+      replyToCommandApproval: async () => undefined,
+      getThreadStateView: () => null,
+    };
+    adapter.sharedThreadId = "thread_1";
+    adapter.state.sharedSessionId = "thread_1";
+    adapter.state.sharedThreadId = "thread_1";
+    adapter.state.status = "busy";
+
+    await adapter.handleDesktopRequest(
+      "thread_1",
+      996,
+      "item/commandExecution/requestApproval",
+      {
+        threadId: "thread_1",
+        turnId: "turn_1",
+        reason: "桌面状态暂时不可用",
+        command: "/bin/zsh -lc 'echo unavailable-state'",
+        cwd: process.cwd(),
+        availableDecisions: ["accept", "cancel"],
+      },
+    );
+
+    expect(adapter.getPendingTaskApprovals("thread_1")).toMatchObject([{
+      requestId: "996",
+      threadId: "thread_1",
+      turnId: "turn_1",
+      summary: "桌面状态暂时不可用",
+    }]);
+    expect(events.filter((event) => event.type === "approval_required")).toHaveLength(1);
+  });
+
+  test("does not report an approval as resolved while the desktop request remains", async () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+    }) as any;
+    const events: Array<Record<string, unknown>> = [];
+    const pendingState = {
+      requests: [{
+        id: 996,
+        method: "item/commandExecution/requestApproval",
+        params: {
+          threadId: "thread_1",
+          turnId: "turn_1",
+          reason: "桌面端尚未真正接受",
+          command: "/bin/zsh -lc 'echo still-pending'",
+          cwd: process.cwd(),
+          availableDecisions: ["accept", "cancel"],
+        },
+      }],
+      threadRuntimeStatus: {
+        type: "active",
+        activeFlags: ["waitingOnApproval"],
+      },
+    };
+    adapter.setEventSink((event: Record<string, unknown>) => events.push(event));
+    adapter.desktopApprovalSettleTimeoutMs = 1;
+    adapter.desktopIpcClient = {
+      replyToCommandApproval: async () => undefined,
+      getThreadStateView: () => pendingState,
+    };
+    adapter.sharedThreadId = "thread_1";
+    adapter.state.sharedSessionId = "thread_1";
+    adapter.state.sharedThreadId = "thread_1";
+    adapter.state.status = "busy";
+
+    adapter.handleDesktopThreadStateChanged("thread_1", pendingState, null);
+    await Bun.sleep(10);
+
+    expect(adapter.getPendingTaskApprovals("thread_1")).toMatchObject([{
+      requestId: "996",
+      threadId: "thread_1",
+      turnId: "turn_1",
+      summary: "桌面端尚未真正接受",
+    }]);
+    expect(events.filter((event) => event.type === "approval_required")).toHaveLength(1);
   });
 
   test("resolves one desktop approval request without consuming the next queued approval", async () => {

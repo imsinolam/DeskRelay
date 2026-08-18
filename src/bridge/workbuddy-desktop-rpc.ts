@@ -25,6 +25,10 @@ export type WorkBuddyDesktopRpcCallbacks = {
   onDisconnect?(error?: Error): void;
 };
 
+export type WorkBuddyDesktopRpcClientOptions = WorkBuddyDesktopRpcCallbacks & {
+  allowDesktopApplicationLaunch?: boolean;
+};
+
 export interface WorkBuddyDesktopRpcClientLike {
   connect(): Promise<void>;
   invoke(channel: string, ...args: unknown[]): Promise<unknown>;
@@ -435,6 +439,7 @@ export class WorkBuddyDesktopRpcClient implements WorkBuddyDesktopRpcClientLike 
   private readonly existingProcessGraceMs: number;
   private readonly requestTimeoutMs: number;
   private readonly lifecycle: WorkBuddyDesktopLifecycle;
+  private readonly allowDesktopApplicationLaunch: boolean;
   private socket: net.Socket | null = null;
   private buffer = "";
   private readonly pending = new Map<string, PendingRequest>();
@@ -444,6 +449,7 @@ export class WorkBuddyDesktopRpcClient implements WorkBuddyDesktopRpcClientLike 
     socketPath?: string;
     hookPath?: string;
     callbacks: WorkBuddyDesktopRpcCallbacks;
+    allowDesktopApplicationLaunch?: boolean;
     connectTimeoutMs?: number;
     connectPollIntervalMs?: number;
     existingProcessGraceMs?: number;
@@ -453,6 +459,8 @@ export class WorkBuddyDesktopRpcClient implements WorkBuddyDesktopRpcClientLike 
     this.socketPath = options.socketPath ?? resolveWorkBuddyDesktopSocketPath();
     this.hookPath = options.hookPath;
     this.callbacks = options.callbacks;
+    this.allowDesktopApplicationLaunch =
+      options.allowDesktopApplicationLaunch === true;
     this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
     this.connectPollIntervalMs = options.connectPollIntervalMs ?? DEFAULT_CONNECT_POLL_INTERVAL_MS;
     this.existingProcessGraceMs = options.existingProcessGraceMs ?? DEFAULT_EXISTING_PROCESS_GRACE_MS;
@@ -477,6 +485,11 @@ export class WorkBuddyDesktopRpcClient implements WorkBuddyDesktopRpcClientLike 
         await this.lifecycle.cleanup?.();
         return;
       }
+    }
+    if (!this.allowDesktopApplicationLaunch) {
+      throw new Error(
+        "DeskRelay 后台不会自动启动或重启 WorkBuddy；请从网页或 ClawBot 明确选择 WorkBuddy 后重试。",
+      );
     }
     const launchOptions = {
       socketPath: this.socketPath,

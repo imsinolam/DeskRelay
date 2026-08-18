@@ -662,22 +662,23 @@ svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.75; stro
 .menu-button { display: none; }
 .topbar-copy { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }
 .workspace-area { position: relative; flex: 0 0 auto; }
-.workspace-switcher { min-height: 32px; display: flex; align-items: center; gap: 5px; padding: 0 7px; border: 0; border-radius: 8px; background: transparent; color: var(--muted-strong); font: inherit; cursor: pointer; }
+.workspace-switcher { min-height: 32px; max-width: min(420px, calc(100vw - 96px)); display: flex; align-items: center; gap: 5px; padding: 0 7px; border: 0; border-radius: 8px; background: transparent; color: var(--muted-strong); font: inherit; white-space: nowrap; cursor: pointer; }
 .workspace-switcher:hover { background: var(--surface-hover); color: var(--text); }
-.workspace-product { color: var(--text); font-size: 16px; font-weight: 620; letter-spacing: -0.015em; }
-.workspace-divider { color: var(--muted); font-size: 13px; }
-.workspace-adapter { font-size: 13px; font-weight: 540; }
+.workspace-product { flex: 0 0 auto; color: var(--text); font-size: 16px; font-weight: 620; letter-spacing: -0.015em; white-space: nowrap; }
+.workspace-divider { flex: 0 0 auto; color: var(--muted); font-size: 13px; white-space: nowrap; }
+.workspace-adapter { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 540; }
 .workspace-switch-progress { width: 12px; height: 12px; flex: 0 0 auto; margin-left: 2px; border: 1.5px solid var(--border-strong); border-top-color: var(--green); border-radius: 50%; animation: switch-spin .8s linear infinite; }
 .workspace-switcher svg { width: 13px; height: 13px; margin-left: 1px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 .workspace-switcher[aria-expanded="true"] svg { transform: rotate(180deg); }
 .workspace-switcher.is-switching > svg { display: none; }
 @keyframes switch-spin { to { transform: rotate(360deg); } }
-.workspace-menu { position: absolute; top: calc(100% + 7px); left: 0; min-width: min(220px, calc(100vw - 32px)); padding: 4px; border: 1px solid var(--border); border-radius: 12px; background: var(--page); box-shadow: var(--shadow); z-index: 24; }
+.workspace-menu { position: absolute; top: calc(100% + 7px); left: 0; width: min(300px, calc(100vw - 24px)); min-width: min(300px, calc(100vw - 24px)); padding: 4px; border: 1px solid var(--border); border-radius: 12px; background: var(--page); box-shadow: var(--shadow); z-index: 24; }
 .adapter-menu { display: block; }
 .adapter-menu-item { width: 100%; min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.adapter-menu-item > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .adapter-menu-item:hover { background: var(--surface-hover); }
 .adapter-menu-item.is-active { font-weight: 620; }
-.adapter-menu-state { color: var(--muted); font-size: 11px; font-weight: 430; }
+.adapter-menu-state { flex: 0 0 auto; white-space: nowrap; color: var(--muted); font-size: 11px; font-weight: 430; }
 .workspace-menu-divider { height: 1px; margin: 4px 6px; background: var(--border); }
 .workspace-menu-item { width: 100%; min-height: 34px; display: flex; align-items: center; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; text-decoration: none; cursor: pointer; }
 .workspace-menu-item:hover { background: var(--surface-hover); }
@@ -2770,9 +2771,6 @@ export const CODEX_MOBILE_JS = String.raw`
     if (status === "awaiting_approval") return "待审批";
     if (status === "awaiting_input") return "待输入";
     if (status === "error") return "异常";
-    if (status === "open") return "已打开";
-    if (status === "idle") return "已连接";
-    if (status === "stopped") return "未打开";
     if (status === "starting") return "启动中";
     return "";
   }
@@ -2800,10 +2798,11 @@ export const CODEX_MOBILE_JS = String.raw`
       status.className = "adapter-menu-state";
       var adapterStatus = adapterStateLabel(adapter.status);
       status.textContent = state.switchingAdapter && adapter.id === state.switchingAdapterId
-        ? "目标"
+        ? "切换中"
         : adapter.id === state.currentAdapter
           ? "当前" + (adapterStatus ? " · " + adapterStatus : "")
           : adapterStatus;
+      status.hidden = !status.textContent;
       button.appendChild(label);
       button.appendChild(status);
       button.addEventListener("click", function () {

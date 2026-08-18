@@ -22,7 +22,7 @@ import { selectAcpPermissionOption } from "./bridge-adapters.acp.ts";
 import { nowIso, truncatePreview } from "./bridge-utils.ts";
 import {
   WorkBuddyDesktopRpcClient,
-  type WorkBuddyDesktopRpcCallbacks,
+  type WorkBuddyDesktopRpcClientOptions,
   type WorkBuddyDesktopRpcClientLike,
 } from "./workbuddy-desktop-rpc.ts";
 
@@ -82,7 +82,7 @@ export type WorkBuddyAcpClientLike = {
 };
 
 export type WorkBuddyAdapterDependencies = {
-  createDesktopClient(callbacks: WorkBuddyDesktopRpcCallbacks): WorkBuddyDesktopRpcClientLike;
+  createDesktopClient(options: WorkBuddyDesktopRpcClientOptions): WorkBuddyDesktopRpcClientLike;
   listSessions(cwd: string | undefined, limit: number): Promise<WorkBuddySessionRow[]>;
   readSession(sessionId: string): Promise<WorkBuddySessionRow | null>;
   readMessages(cwd: string, sessionId: string): Promise<BridgeSessionMessage[]>;
@@ -738,7 +738,10 @@ class WorkBuddyAcpHttpClient implements WorkBuddyAcpClientLike {
 
 function defaultDependencies(): WorkBuddyAdapterDependencies {
   return {
-    createDesktopClient: (callbacks) => new WorkBuddyDesktopRpcClient({ callbacks }),
+    createDesktopClient: (options) => new WorkBuddyDesktopRpcClient({
+      callbacks: options,
+      allowDesktopApplicationLaunch: options.allowDesktopApplicationLaunch,
+    }),
     listSessions: listWorkBuddyDesktopSessions,
     readSession: readWorkBuddyDesktopSession,
     readMessages: readWorkBuddyDesktopMessages,
@@ -831,6 +834,8 @@ export class WorkBuddyDesktopAdapter implements BridgeAdapter {
     if (this.client) return;
     this.setStatus("starting", "正在连接 WorkBuddy Desktop。");
     const client = this.dependencies.createDesktopClient({
+      allowDesktopApplicationLaunch:
+        this.options.allowDesktopApplicationLaunch === true,
       onEvent: (channel, data) => this.handleDesktopEvent(channel, data),
       onDisconnect: (error) => {
         if (this.client !== client) return;

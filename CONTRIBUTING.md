@@ -4,12 +4,14 @@
 
 ## Before You Start
 
+- 所有 Agent 必须先阅读 [多 Agent 协作规范](docs/开发协作/多Agent协作规范.md)，再开始修改。
+- 文档入口见 [DeskRelay 文档导航](docs/README.md)。
 - 先阅读 [README.md](README.md)，确认当前推荐的使用方式。
-- Agent 前置安装见 [docs/agent-setup.md](docs/agent-setup.md)。
-- 运行配置见 [docs/configuration.md](docs/configuration.md)。
-- 公网 Relay 部署见 [docs/remote-access.md](docs/remote-access.md)。
-- 常见问题和已知限制见 [docs/troubleshooting.md](docs/troubleshooting.md)。
-- 源码运行、测试和打包说明见 [docs/development.md](docs/development.md)。
+- Agent 前置安装见 [docs/使用指南/Agent安装与配置.md](docs/使用指南/Agent安装与配置.md)。
+- 运行配置见 [docs/使用指南/运行配置.md](docs/使用指南/运行配置.md)。
+- 公网 Relay 部署见 [docs/架构设计/局域网与公网访问.md](docs/架构设计/局域网与公网访问.md)。
+- 常见问题和已知限制见 [docs/使用指南/问题排查.md](docs/使用指南/问题排查.md)。
+- 源码运行、测试和打包说明见 [docs/开发协作/开发与测试.md](docs/开发协作/开发与测试.md)。
 
 ## Fork and Pull Request Workflow
 
@@ -133,7 +135,7 @@ npm run opencode:start
 - 完成后提交本地 commit，并报告分支、SHA、改动文件和验证结果；
 - 不推送、不合并 `main`、不改正式版本号、不创建 tag、不发布 npm、不部署正式环境。
 
-只有被用户明确指定的发布 Agent 可以汇总这些 commit、准备版本号和版本说明，并执行正式发版。完整规范见 [docs/agent-release-workflow.md](docs/agent-release-workflow.md)。
+只有被用户明确指定的发布 Agent 可以汇总这些 commit、准备版本号和版本说明，并执行正式发版。完整规范见 [docs/开发协作/多Agent协作规范.md](docs/开发协作/多Agent协作规范.md)。
 
 ## Commit Messages
 
@@ -251,6 +253,6 @@ npm run privacy:check:history
 
 发布由唯一的发布 Agent 处理。普通开发 Agent 和 PR 可以修改源码、测试和文档，但不能改正式版本号、创建 tag、执行 `npm publish`、部署正式环境或推送维护者仓库。
 
-发布 Agent 必须从实际 Git diff、候选 commit 和验证结果整理说明。中文版本记录是面向用户的主说明，应使用普通、清晰的中文描述用户能感知的变化，不写类名、字段名、文件路径、提交 SHA 和测试命令。技术证据保留在 commit body 和发布验收报告中。模板见 [docs/releases/TEMPLATE_CN.md](docs/releases/TEMPLATE_CN.md)。
+发布 Agent 必须从实际 Git diff、候选 commit 和验证结果整理说明。中文版本记录是面向用户的主说明，应使用普通、清晰的中文描述用户能感知的变化，不写类名、字段名、文件路径、提交 SHA 和测试命令。技术证据保留在 commit body 和发布验收报告中。模板见 [docs/发布/版本记录/中文版本说明模板.md](docs/发布/版本记录/中文版本说明模板.md)。
 
-GitHub 的公开 commit、push、tag 和远端验真只能在专用发布服务器完成，不能从维护者 Mac 直接推送，也不能在服务器失败后自动回退为本机直推。完整流程见 [docs/agent-release-workflow.md](docs/agent-release-workflow.md) 和 [docs/publishing.md](docs/publishing.md)。
+GitHub 的公开 commit、push、tag 和远端验真只能在专用发布服务器完成，不能从维护者 Mac 直接推送，也不能在服务器失败后自动回退为本机直推。完整流程见 [docs/开发协作/多Agent协作规范.md](docs/开发协作/多Agent协作规范.md) 和 [docs/发布/对外发布操作手册.md](docs/发布/对外发布操作手册.md)。

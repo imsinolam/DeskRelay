@@ -1,5 +1,8 @@
 # Repository Guidelines
 
+## Required Reading For Every Agent
+Before modifying this repository, read `docs/开发协作/多Agent协作规范.md`. It defines mandatory worktree isolation, commit handoff, dirty-worktree classification, release ownership, and post-release cleanup. Also read `docs/开发协作/任务职责与分工.md` when the task may overlap another long-running Agent.
+
 ## Project Mental Model
 DeskRelay extends real local coding-agent sessions to WeChat, LAN web, and an optional public application relay without creating a forked conversation. The only public npm package is `deskrelay`; do not reintroduce legacy package names or command aliases.
 
@@ -21,7 +24,8 @@ Runtime data lives under `~/.deskrelay` by default. Version 2.0 copy-migrates mi
 - `bin/*.mjs`: published CLI wrappers. These are tracked source files, not generated output.
 - `scripts`: release, safety, snapshot, and packaging helpers, especially `check-public-safety.mjs`, `create-public-snapshot.mjs`, and `smoke-global-install.mjs`.
 - `test/<area>` mirrors the runtime areas: `bridge`, `companion`, `daemon`, and `wechat`.
-- `docs/releases`: release notes and the release index. Keep English and Chinese notes aligned when preparing a release.
+- `docs/README.md`: human-friendly documentation entrypoint. User, architecture, collaboration, release, and website documents live in Chinese-named subdirectories.
+- `docs/发布/版本记录`: release notes and the release index. Chinese notes are primary; keep matching `-英文.md` notes aligned when preparing a release.
 
 ## Runtime State And Files
 Default active state is in `~/.deskrelay`:
@@ -137,7 +141,7 @@ A release Agent is the only role allowed to integrate completed commits, create 
 
 The release Agent must inventory every worktree, branch, dirty file, and candidate commit; integrate by explicit SHA in an isolated release worktree; rerun validation after conflicts; and never publish an uncommitted shared working tree. GitHub fetch, public commit, push, tag, and remote verification must still run on the configured publishing server. There is no local-push fallback.
 
-Chinese release notes are the user-facing source of truth. Write them in plain, non-technical Chinese: describe what users can now do, what visible problem was fixed, whether any action is required, and what limitations remain. Keep class names, fields, file paths, commit SHAs, test commands, and implementation details in the release Agent's technical report or commit body, not in the public change record. Follow `docs/agent-release-workflow.md`, `docs/publishing.md`, and `docs/releases/TEMPLATE_CN.md`.
+Chinese release notes are the user-facing source of truth. Write them in plain, non-technical Chinese: describe what users can now do, what visible problem was fixed, whether any action is required, and what limitations remain. Keep class names, fields, file paths, commit SHAs, test commands, and implementation details in the release Agent's technical report or commit body, not in the public change record. Follow `docs/开发协作/多Agent协作规范.md`, `docs/发布/对外发布操作手册.md`, and `docs/发布/版本记录/中文版本说明模板.md`.
 
 ## Release Process
 - Keep README focused on product relationships and the shortest successful setup; move command matrices and advanced configuration into `docs/`.
@@ -209,7 +213,7 @@ Prefer surgical fixes backed by focused tests. Avoid broad rewrites of adapter f
 - **AI 生成的图片必须作为统一消息内容同步到网页和 ClawBot，不能只保留文字或依赖某个终端专属的图片打开入口。** 用户会在手机上延续同一个 Agent 任务；如果图片只存在于 Grok/Codex 等桌面终端的工具结果里，网页就会缺少关键结果，微信也只收到不完整的文字，因此各 Agent 的原生图片记录应先归一为公共消息媒体，网页用受鉴权的不透明地址展示，ClawBot 再按当前轮次去重发送真实图片消息。
 - **移动端轮询超长 Codex 任务时必须只读 rollout 文件尾部和已缓存的桌面状态，历史专用请求还必须完全跳过桌面实时状态合并，不能为了补消息主动调用 `followThread()` 或完整 `thread/read`。** 实测 47 MB 会话中，完整桌面订阅会让守护进程瞬时占用约 95% CPU、3.2 GB 内存；而尾部读取实时消息、运行时长和进展分别只需约 118 ms、5 ms 和 10 ms，历史专用请求跳过实时合并后可直接复用约 150 ms 的原生 40 条尾读结果，这直接决定移动网页在有无 OpenAgentLog 时都能快速显示正文且不拖慢电脑端。
 - **reasonix 必须使用官方 `serve -resume <原 transcript>` 直接继续原任务，不能复制 transcript 到 DeskRelay 状态目录。** 复制历史会产生第二份可写记录，即使初始内容一致也会在后续消息中分叉；直接恢复原文件并让官方 Web UI 与远程入口连接同一个 serve owner，才能保证电脑和手机看到同一任务。
-- **Codex 后台审批监控必须对所有 `active` 任务保持 `summary` 订阅，并以 Desktop summary 中仍存在的实时 `requests` 作为审批真相。** `waitingOnApproval` 和待审批请求本身来自 Desktop summary；如果先依赖状态标记再决定订阅会形成循环依赖，而审批 RPC 返回或自动免审尝试也不等于桌面 owner 已真正接受。只有对应 request 从 summary 消失后才能移除卡片并记录成功；request 仍存在或确认超时时，列表、页头、任务正文和 ClawBot 都必须继续显示同一项可操作审批，这对避免任务无入口地永久卡住很重要。
+- **Codex 后台审批监控必须对所有 `active` 任务保持 `summary` 订阅，并以 Desktop summary 中的实时 `requests` 作为网页与 ClawBot 的审批真相。** `waitingOnApproval` 和待审批请求本身来自 Desktop summary；如果先依赖这个标记再决定订阅，就会形成循环依赖，而审批 RPC 返回成功也不等于桌面 owner 已真正接受，只有对应 request 从 summary 消失后才能记录绿色结果并移除卡片。实时 request 仍存在时必须覆盖本地旧状态、继续展示并通知；`summary` 只保留状态与请求，不等于移动正文读取时的完整 follow，因此这样既能避免超长会话的大内存问题，也不会让“本任务免审”因假成功或传输异常卡死任务。
 - **WorkBuddy 的远程消息必须进入桌面主进程实际持有的 app-server，并通过 `session:load`、`session:sendMessage`、`session:cancel`、`session:resolvePermission`、`session:rejectPermission` 操作，禁止回退到独立 ACP；普通方式启动且缺少 hook 时应由 DeskRelay 自动正常重启接入，并清理失去父进程的旧 app-server，不能要求用户手动退出。** 即使独立 ACP 复用了同一个 sessionId 和数据库，它仍是另一个 live owner，消息能运行却不会出现在 WorkBuddy 桌面界面，最终造成上下文与聊天记录隐藏分叉；而 Electron 单实例也无法把后加的 `NODE_OPTIONS` 注入既有主进程，只有自动重启并确保只保留一个 app-server owner，才能让用户消息、运行状态、审批和回复同步到桌面、网页和 ClawBot。
 - **macOS 上供 WorkBuddy 与 DeskRelay 共用的 Unix socket 必须使用稳定的 `/tmp/deskrelay-workbuddy-<uid>.sock`，不能分别依赖各进程的 `os.tmpdir()`。** GUI 应用与 LaunchAgent 可能解析出不同的 `/var/folders/...` 临时目录，导致 socket 明明存在却被误判为“桌面尚未接入”；固定本机私有 socket 路径并设置 `0600` 权限，才能让重启后的守护进程可靠重连且不开放网络端口。
 - **新增 `BridgeAdapter` 可选能力时必须同步检查并转发所有 RuntimeHost 包装层，不能只改 adapter 和调用方。** Daemon 实际持有的是 `LegacyAdapterRuntime`；如果包装层漏绑新方法，源码类型仍可通过且 adapter 单测也会成功，但运行时能力会悄悄变成 `undefined`，导致加速历史无法补图片等只在真实部署出现的问题，因此要为“缺失时保持 undefined、存在时保持 this 绑定并正确转发”各写回归断言。
@@ -233,10 +237,13 @@ Prefer surgical fixes backed by focused tests. Avoid broad rewrites of adapter f
 - **DeepSeek Harness 网页 Host 的 `/api/events.mux` 必须按 WebSocket 下行连接，不能当作普通 HTTP SSE 读取。** 真实 `dsh web` 对 HTTP 请求会返回 426，导致消息仍可由历史轮询恢复但审批永远收不到；使用 `ws://127.0.0.1:<port>/api/events.mux` 并保留历史补偿，才能同时覆盖实时审批和断线完成恢复。
 - **微信长轮询和入站附件下载的超时必须覆盖完整响应体读取，不能在只收到 HTTP 响应头后就清除 AbortController 计时器。** `fetch()` 会在响应头到达时提前 resolve，若此时关闭计时器而 `res.text()` / `res.arrayBuffer()` 卡住，daemon 进程与网页健康检查仍显示在线，但 ClawBot 入站轮询会无限停住且没有错误日志；把计时器保留到响应体完成并用“响应头已到、响应体停滞”的本地服务器回归测试验证，才能保证最迟在超时后重新轮询而不是静默漏消息。
 - **后台 DeskRelay daemon 的在线状态与某个 Agent Host 的运行状态必须分开判断。** `dsh web` 只代表 DeepSeek Harness owner 在本机可用；公网网页还依赖 DeskRelay daemon 主动建立 Relay 连接，因此排障时要分别检查 Harness 端口、本机 `/health` 和公网 `deviceOnline`，不能看到 Harness 进程就断言移动端应当在线。
-- **长期后台 daemon 默认只能连接已经存在的桌面应用，不能自行拉起 ChatGPT，也不应在启动时强制恢复上次终端。** 自动恢复 Codex 会把单个 slot 的异常放大成抢焦点和保活重启循环；使用 `--idle-start --no-open` 先保持微信、网页和 Relay 在线，只有显式 `--open-desktop-apps` 才允许启动桌面应用，才能让具体 Agent 故障与 DeskRelay 主链路解耦。
+- **长期后台 daemon 的启动、自动恢复和健康重试不能自行拉起桌面应用，但用户明确点击网页终端、发送 ClawBot 切换命令或选择具体任务时可以按需打开。** 自动恢复 Codex/WorkBuddy 会把单个 slot 的异常放大成抢焦点和保活重启循环；使用 `--idle-start --no-open` 先保持微信、网页和 Relay 在线，把“后台自动拉起”与“用户主动打开”分开，只有需要启动阶段自动打开时才使用 `--open-desktop-apps`。
 - **Harness Host 属于已经存在的共享 owner，不需要再打开 companion 终端，默认切换应恢复其真实任务而不是新建任务。** 把 `harness_host` 当成普通 `shared_service_owner` 会多开无用终端并把切换判为失败；创建 DeepSeek slot 时直接连接 `dsh web`、使用 restore 模式，才能继续电脑上正在运行的同一任务。
 - **Codex 桌面 IPC 模式的 metadata app-server 必须优先使用当前 ChatGPT/Codex.app 包内自带的 `Contents/Resources/codex`，只有内置文件不可用或用户显式指定命令时才回退 PATH。** LaunchAgent 的静态 PATH 可能仍指向旧 nvm 或 WorkBuddy 副本，即使桌面应用已经更新；跟随应用包内二进制才能让协议版本同步更新，并避免再次出现桌面端与守护进程运行不同 Codex 版本。
 - **已经由 `KeepAlive` 托管的 DeskRelay daemon 不能再让基于公网 `deviceOnline` 的第二个 watchdog 拥有强制重启权。** 公网 Relay 的短时离线不等于本机 daemon 损坏，双重监督会把网络抖动放大成 daemon、app-server 和桌面连接重启；公网健康只应用于告警，进程存活交给唯一的 LaunchAgent owner。
 - **Codex 桌面模式的独立 app-server 是 metadata 辅助通道，不是桌面任务 owner；它可以与桌面 app-server 通过 SQLite WAL 并存，运行期退出时只能重启或降级自身，不能据此重启 ChatGPT 或整个 daemon。** 现场同时打开 `state_5.sqlite` 的两个 app-server 已稳定共存，旧日志中的 `code 0` 又常与 LaunchAgent 停止信号同时出现；把它误判成 SQLite 单写者冲突会错误删除任务列表、历史、重命名和新建任务所依赖的 RPC 通道，而短暂关闭宽限与独立恢复才能消除假 `fatal_error`。恢复期间还必须把每次 RPC 连接绑定到启动它的 helper，并且只能关闭该次尝试自己的 socket；否则旧连接循环会误关已经恢复的新 socket，造成约十秒后的二次 helper 重启。
 
 - **跨平台实现与测试必须按目标操作系统显式选择路径 API、命令启动器、IPC 类型和权限模型，不能让当前宿主平台的默认行为参与模拟。** Windows 的长路径与 8.3 短路径应先规范化或用 `realpath` 比较，`.cmd`/`.bat` 应通过 `cmd.exe` 启动，Unix Socket 与 Named Pipe 要分开覆盖，敏感文件在 Windows 依赖 ACL 而不是 POSIX mode；否则同一功能会在真实 Windows Runner 上被字符串、入口或权限语义误判，造成整条 CI 持续标红。
+- **终端切换菜单只显示需要用户处理的状态，正常的“已打开 / 已连接 / 未打开”不应持续占据每一行。** “已打开”只是检测到进程存在，“已连接”才表示 DeskRelay 已接入真实任务 owner；这一区别适合内部诊断，但普通用户只需要看到“当前、切换中、处理中、待审批、待输入、启动中、异常”，否则重复状态会增加噪声并挤压终端名称。
+- **所有会进入公开仓库或 npm 包的职责文档都必须使用基础设施角色名，不能写真实公网 IP 或本地任务 ID。** 即使源码本身没有密钥，服务器地址和内部任务标识仍会暴露个人基础设施与使用轨迹；公开文档应写“专用发布服务器 / 正式公网 Relay”等角色名，真实值只留在本地私有配置中。
+- **Codex 新任务从私有 app-server 交接给桌面端时，必须先 `thread/unsubscribe` 释放 active writer，再让 Desktop `thread/resume`；顺序不能反过来。** `thread/start` 会让创建任务的 app-server 持有唯一 writer，若先打开桌面任务，Desktop 会持续报“已在另一个应用中打开”，而原实现又因打开失败跳过 unsubscribe，形成永久占用；桌面不可用时再显式恢复 bootstrap writer，才能兼顾唯一 owner 与锁屏继续任务。

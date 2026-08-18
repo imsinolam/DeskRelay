@@ -1616,6 +1616,23 @@ export function shouldQueueCodexDaemonInbound(_params: {
   return false;
 }
 
+export function resolveDaemonDesktopApplicationLaunchPermission(params: {
+  automaticLaunchEnabled: boolean;
+  userInitiated: boolean;
+}): boolean {
+  return params.automaticLaunchEnabled || params.userInitiated;
+}
+
+export function shouldRecreateDesktopOwnerSlotForUserLaunch(params: {
+  isDesktopOwner: boolean;
+  userInitiated: boolean;
+  status: BridgeWorkerStatus;
+}): boolean {
+  return params.isDesktopOwner &&
+    params.userInitiated &&
+    (params.status === "error" || params.status === "stopped");
+}
+
 export function buildDaemonRuntimeOptions(params: {
   adapter: DaemonAdapterKind;
   cwd: string;
@@ -2456,8 +2473,8 @@ class DeskRelayDaemon {
   private readonly deferredInputStore: CodexDeferredInputStore;
   private readonly mobileMessageImageStore: MobileMessageImageStore;
   private readonly wechatImageDrafts = new WechatImageDraftCollector();
-  private readonly mobileProviderInstallManager = new MobileProviderInstallManager();
   private readonly allowDesktopApplicationLaunch: boolean;
+  private readonly mobileProviderInstallManager = new MobileProviderInstallManager();
   private readonly slots = new Map<DaemonAdapterKind, DaemonSlot>();
   private approvalNotificationOrder = 0;
   private globalTaskListSnapshot: GlobalTaskSnapshot | null = null;
@@ -3031,6 +3048,7 @@ class DeskRelayDaemon {
           openVisible: request.openVisible ?? true,
           sessionStartMode: request.sessionStartMode,
           reuseExistingVisible: request.reuseExistingVisible ?? true,
+          userInitiated: true,
         });
     }
   }
@@ -3044,6 +3062,7 @@ class DeskRelayDaemon {
       sessionStartMode?: BridgeSessionStartMode;
       reuseExistingVisible?: boolean;
       activate?: boolean;
+      userInitiated?: boolean;
     } = {},
   ): Promise<{
     activeAdapter: DaemonAdapterKind;
@@ -3057,6 +3076,17 @@ class DeskRelayDaemon {
     const previousActiveAdapter = this.activeAdapter ?? undefined;
     let slot = this.slots.get(adapter);
     let created = false;
+    if (slot && shouldRecreateDesktopOwnerSlotForUserLaunch({
+      isDesktopOwner: providerUsesDesktopOwner(adapter),
+      userInitiated: options.userInitiated === true,
+      status: slot.runtime.getState().status,
+    })) {
+      appendDaemonLog(
+        `desktop_slot_reconnect_requested: adapter=${adapter} source=user status=${slot.runtime.getState().status}`,
+      );
+      await this.disposeSlotForUserReconnect(slot);
+      slot = undefined;
+    }
     if (!slot) {
       const createSessionStartMode =
         options.sessionStartMode ??
@@ -3067,6 +3097,11 @@ class DeskRelayDaemon {
       slot = await this.createSlot(adapter, {
         profile: options.profile ?? this.profile,
         sessionStartMode: createSessionStartMode,
+        allowDesktopApplicationLaunch:
+          resolveDaemonDesktopApplicationLaunchPermission({
+            automaticLaunchEnabled: this.allowDesktopApplicationLaunch,
+            userInitiated: options.userInitiated === true,
+          }),
       });
       this.slots.set(adapter, slot);
       created = true;
@@ -3185,6 +3220,35 @@ class DeskRelayDaemon {
     };
   }
 
+  private async disposeSlotForUserReconnect(slot: DaemonSlot): Promise<void> {
+    for (const timer of slot.deferredDrainRetryTimers.values()) {
+      clearTimeout(timer);
+    }
+    slot.deferredDrainRetryTimers.clear();
+    try {
+      await slot.outputBatcher.flushNow();
+    } catch {
+      // Best effort flush before reconnecting the desktop owner.
+    }
+    try {
+      await slot.runtime.dispose();
+    } catch (error) {
+      appendDaemonLog(
+        `desktop_slot_reconnect_dispose_error: adapter=${slot.adapter} error=${truncatePreview(error instanceof Error ? error.message : String(error), 300)}`,
+      );
+    } finally {
+      slot.controller.clearLocalClientEndpoint();
+      this.slots.delete(slot.adapter);
+      if (this.activeAdapter === slot.adapter) {
+        this.activeAdapter = null;
+      }
+      if (slot.adapter === "codex" && this.codexTaskMonitorTimer) {
+        clearTimeout(this.codexTaskMonitorTimer);
+        this.codexTaskMonitorTimer = null;
+      }
+    }
+  }
+
   private persistTaskApprovalAutoApprover(slot: DaemonSlot): void {
     this.stateStore.setTaskApprovalAutoApproveIdentities(
       slot.adapter,
@@ -3221,7 +3285,11 @@ class DeskRelayDaemon {
 
   private async createSlot(
     adapter: DaemonAdapterKind,
-    options: { profile?: string; sessionStartMode?: BridgeSessionStartMode },
+    options: {
+      profile?: string;
+      sessionStartMode?: BridgeSessionStartMode;
+      allowDesktopApplicationLaunch?: boolean;
+    },
   ): Promise<DaemonSlot> {
     clearLocalCompanionEndpoint(this.cwd, undefined, { adapter });
     const restoredWechatThreadId = adapter === "codex"
@@ -3236,7 +3304,8 @@ class DeskRelayDaemon {
       profile: options.profile,
       sessionStartMode: options.sessionStartMode,
       initialSharedSessionId,
-      allowDesktopApplicationLaunch: this.allowDesktopApplicationLaunch,
+      allowDesktopApplicationLaunch:
+        options.allowDesktopApplicationLaunch === true,
     }));
     const controller = new BridgeController(runtime, this.cwd);
     const deferredInboundMessages = new CodexInboundTaskQueue<DeferredInboundMessage>();
@@ -3853,6 +3922,7 @@ class DeskRelayDaemon {
         result = await this.ensureSlot(switchAdapter, {
           openVisible: true,
           reuseExistingVisible: true,
+          userInitiated: true,
         });
       } catch (error) {
         const raw = error instanceof Error ? error.message : String(error);
@@ -5348,10 +5418,14 @@ class DeskRelayDaemon {
       );
     } finally {
       this.codexTaskMonitorRunning = false;
-      if (!this.shutdownPromise) {
+      const currentSlot = this.slots.get("codex");
+      if (!this.shutdownPromise && currentSlot) {
         this.codexTaskMonitorTimer = setTimeout(() => {
           this.codexTaskMonitorTimer = null;
-          void this.runCodexTaskMonitor(slot);
+          const nextSlot = this.slots.get("codex");
+          if (nextSlot) {
+            void this.runCodexTaskMonitor(nextSlot);
+          }
         }, CODEX_TASK_MONITOR_INTERVAL_MS);
         this.codexTaskMonitorTimer.unref?.();
       }
@@ -5458,6 +5532,7 @@ class DeskRelayDaemon {
       openVisible: true,
       reuseExistingVisible: true,
       activate: false,
+      userInitiated: true,
     });
     const detail = formatDaemonSwitchResultDetail(result);
     if (!result.activated) {
@@ -6781,6 +6856,7 @@ class DeskRelayDaemon {
           reuseExistingVisible: true,
           sessionStartMode: "restore",
           activate: false,
+          userInitiated: true,
         });
         if (!result.activated) {
           throw new Error(result.activationReason ?? `${formatDaemonAdapterLabel(adapter)} 不可用。`);

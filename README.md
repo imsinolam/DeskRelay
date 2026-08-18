@@ -42,11 +42,13 @@ deskrelay --adapter codex
 # 常驻后台、不自动恢复终端或打开桌面应用：deskrelay --idle-start --no-open
 ```
 
-完成微信扫码后，向 ClawBot 发送“任务”即可选择电脑上的真实任务；启动后显示的移动网页链接可在手机浏览器打开。后台 daemon 默认不会自动启动 ChatGPT；只有显式传入 `--open-desktop-apps` 才会允许。
+完成微信扫码后，向 ClawBot 发送“任务”即可选择电脑上的真实任务。即使没有公网服务器，daemon 也会自动启动局域网移动网页；第一次使用请先进入一个任务，再发送“状态”，从 ClawBot 返回的授权链接进入并设置移动访问密码。终端打印的基础地址不用于首次设置密码。
+
+后台启动和自动恢复不会自行打开 ChatGPT 或 WorkBuddy；用户在网页或 ClawBot 中明确选择桌面终端或任务时，仍可按需打开对应应用。只有需要在 daemon 启动阶段自动打开桌面应用时，才传入 `--open-desktop-apps`。完整步骤见 [5 分钟启用局域网移动网页](docs/使用指南/局域网移动网页快速开始.md)。
 
 不要把扫码结果、setup 链接、移动密码、`~/.deskrelay` 或任务截图提交到 issue。
 
-详细的 Agent 前置安装、PATH 检查和单 Agent 调试命令见 [Agent 安装与配置](docs/agent-setup.md)。
+详细的 Agent 前置安装、PATH 检查和单 Agent 调试命令见 [Agent 安装与配置](docs/使用指南/Agent安装与配置.md)。
 
 ## 支持的 Agent 与会话一致性
 
@@ -80,25 +82,29 @@ DeskRelay 的目标是让所有正式 Agent 最终都满足“继续原任务、
 
 公网模式是**应用层任务中继**：只传输 DeskRelay 所需的消息、状态、审批和附件，不提供任意 TCP/HTTP 转发，也不把本机监听端口直接发布到公网。
 
-服务器部署、HTTPS、设备配对和安全配置见 [移动网页与公网访问](docs/remote-access.md)。
+没有服务器时按 [局域网移动网页快速开始](docs/使用指南/局域网移动网页快速开始.md) 操作；需要公网网页时，可把 [公网 Relay Agent 配置与验收](docs/使用指南/公网Relay配置与验收.md) 直接交给用户的 Agent 执行。原理与安全边界见 [局域网与公网访问](docs/架构设计/局域网与公网访问.md)。
 
 ## DeskRelay 2.0 更名说明
 
 2.0 是破坏性品牌迁移：npm 包统一为 `deskrelay`，公开命令统一为 `deskrelay-*`，活动数据目录统一为 `~/.deskrelay`，环境变量统一使用 `DESKRELAY_*`。
 
-旧命令不再发布。首次启动 2.0 时会从旧数据目录一次性复制可迁移的登录和任务状态；旧目录不会继续作为活动目录。完整迁移表见 [运行配置](docs/configuration.md#从-1x-迁移到-20)。
+旧命令不再发布。首次启动 2.0 时会从旧数据目录一次性复制可迁移的登录和任务状态；旧目录不会继续作为活动目录。完整迁移表见 [运行配置](docs/使用指南/运行配置.md#从-1x-迁移到-20)。
 
 ## 文档
 
-- [项目定位](docs/about.md)
-- [Agent 安装与配置](docs/agent-setup.md)
-- [架构与数据流](docs/architecture.md)
-- [运行配置与 2.0 迁移](docs/configuration.md)
-- [局域网与公网 Relay](docs/remote-access.md)
-- [问题排查](docs/troubleshooting.md)
-- [开发与测试](docs/development.md)
+- [完整文档导航](docs/README.md)
+- [多 Agent 协作规范](docs/开发协作/多Agent协作规范.md)
+- [项目定位](docs/使用指南/项目介绍.md)
+- [Agent 安装与配置](docs/使用指南/Agent安装与配置.md)
+- [架构与数据流](docs/架构设计/架构与数据流.md)
+- [运行配置与 2.0 迁移](docs/使用指南/运行配置.md)
+- [局域网移动网页快速开始](docs/使用指南/局域网移动网页快速开始.md)
+- [局域网与公网访问](docs/架构设计/局域网与公网访问.md)
+- [公网 Relay Agent 配置与验收](docs/使用指南/公网Relay配置与验收.md)
+- [问题排查](docs/使用指南/问题排查.md)
+- [开发与测试](docs/开发协作/开发与测试.md)
 - [安全说明](SECURITY.md)
-- [对外发布](docs/publishing.md)
+- [对外发布](docs/发布/对外发布操作手册.md)
 
 ## 安全边界
 
