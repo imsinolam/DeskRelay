@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -292,6 +293,80 @@ export function normalizeDeepSeekHarnessBaseUrl(
     throw new Error("DeepSeek Harness URL must not contain an application path.");
   }
   return `${url.protocol}//${url.host}`;
+}
+
+type DeepSeekHarnessEndpointDiscovery = {
+  platform?: NodeJS.Platform;
+  readProcessList?: () => string;
+  readListeners?: (pid: number) => string;
+};
+
+function readDeepSeekDesktopProcessList(): string {
+  try {
+    return execFileSync("/bin/ps", ["-axo", "pid=,command="], {
+      encoding: "utf8",
+      timeout: 2_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return "";
+  }
+}
+
+function readDeepSeekDesktopListeners(pid: number): string {
+  try {
+    return execFileSync(
+      "/usr/sbin/lsof",
+      ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-Fn"],
+      {
+        encoding: "utf8",
+        timeout: 2_000,
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
+  } catch {
+    return "";
+  }
+}
+
+function discoverDeepSeekDesktopHarnessBaseUrl(
+  discovery: DeepSeekHarnessEndpointDiscovery = {},
+): string | null {
+  if ((discovery.platform ?? process.platform) !== "darwin") {
+    return null;
+  }
+  const processList = (discovery.readProcessList ?? readDeepSeekDesktopProcessList)();
+  const desktopPids = processList.split(/\r?\n/).flatMap((line) => {
+    const match = line.match(/^\s*(\d+)\s+(.+)$/);
+    if (!match?.[1] || !match[2]) return [];
+    return match[2].trim() ===
+        "/Applications/DSH Desktop.app/Contents/MacOS/DSH Desktop"
+      ? [Number(match[1])]
+      : [];
+  }).filter((pid) => Number.isSafeInteger(pid) && pid > 0);
+  const readListeners = discovery.readListeners ?? readDeepSeekDesktopListeners;
+  for (const pid of desktopPids) {
+    const listenerOutput = readListeners(pid);
+    const match = listenerOutput.match(
+      /^n(?:127(?:\.\d{1,3}){3}|\[?::1\]?):([1-9]\d{0,4})$/m,
+    );
+    const port = match?.[1] ? Number(match[1]) : 0;
+    if (port > 0 && port <= 65_535) {
+      return `http://127.0.0.1:${port}`;
+    }
+  }
+  return null;
+}
+
+export function resolveDeepSeekHarnessBaseUrl(
+  value = process.env[DEEPSEEK_HARNESS_URL_ENV],
+  discovery: DeepSeekHarnessEndpointDiscovery = {},
+): string {
+  if (value?.trim()) {
+    return normalizeDeepSeekHarnessBaseUrl(value);
+  }
+  return discoverDeepSeekDesktopHarnessBaseUrl(discovery) ??
+    DEFAULT_DEEPSEEK_HARNESS_URL;
 }
 
 export class DeepSeekHarnessHttpClient implements DeepSeekHarnessClientLike {
@@ -603,7 +678,7 @@ function sessionCandidate(
 
 export async function listDeepSeekHarnessSessions(
   limit = 100,
-  baseUrl = normalizeDeepSeekHarnessBaseUrl(),
+  baseUrl = resolveDeepSeekHarnessBaseUrl(),
 ): Promise<BridgeResumeSessionCandidate[]> {
   const client = new DeepSeekHarnessHttpClient(baseUrl);
   return (await client.listSessions()).slice(0, Math.max(0, limit)).map((item) =>
@@ -718,12 +793,17 @@ export class DeepSeekHarnessAdapter implements BridgeAdapter {
 
   constructor(
     options: AdapterOptions,
-    dependencies: DeepSeekHarnessAdapterDependencies = {
-      createClient: (baseUrl) => new DeepSeekHarnessHttpClient(baseUrl),
-    },
+    dependencies?: DeepSeekHarnessAdapterDependencies,
   ) {
     this.options = options;
-    this.client = dependencies.createClient(normalizeDeepSeekHarnessBaseUrl());
+    const resolvedDependencies = dependencies ?? {
+      createClient: (baseUrl: string) => new DeepSeekHarnessHttpClient(baseUrl),
+    };
+    this.client = resolvedDependencies.createClient(
+      dependencies
+        ? normalizeDeepSeekHarnessBaseUrl()
+        : resolveDeepSeekHarnessBaseUrl(),
+    );
     const initialSessionId = options.sessionStartMode === "new"
       ? undefined
       : options.initialSharedSessionId ?? options.initialSharedThreadId;
@@ -775,7 +855,7 @@ export class DeepSeekHarnessAdapter implements BridgeAdapter {
       this.muxAbortController = new AbortController();
       this.muxTask = this.runMuxLoop(this.muxAbortController.signal);
     } catch (error) {
-      this.setStatus("error", "无法连接 DeepSeek Harness，请确认 dsh web 正在本机运行。");
+      this.setStatus("error", "无法连接 DeepSeek Harness，请确认 DSH Desktop 或 dsh web 正在本机运行。");
       throw error;
     }
   }

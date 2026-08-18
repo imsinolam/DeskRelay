@@ -188,6 +188,8 @@ import {
 } from "./daemon-state.ts";
 import {
   CodexCompletionDeliveryQueue,
+  formatCodexCompletionBacklogSummary,
+  selectCodexCompletionBacklogBatch,
   type CodexCompletionDeliveryResult,
 } from "./codex-completion-delivery.ts";
 import {
@@ -230,6 +232,8 @@ import {
   resolveGlobalTaskCandidate,
   resolveGlobalTaskTargetedMessage,
   searchGlobalTaskCandidates,
+  prioritizeGlobalTaskAdapterCoverage,
+  selectRunningGlobalTaskAdapters,
   updateGlobalTaskSnapshot,
   type GlobalTaskCandidate,
   type GlobalTaskSnapshot,
@@ -1654,6 +1658,18 @@ export function buildDaemonRuntimeOptions(params: {
     initialSharedSessionId,
     initialSharedThreadId: initialSharedSessionId,
   };
+}
+
+export function buildDaemonTaskCatalogRuntimeOptions(params: {
+  adapter: DaemonAdapterKind;
+  cwd: string;
+  profile?: string;
+}): AdapterOptions {
+  return buildDaemonRuntimeOptions({
+    ...params,
+    sessionStartMode: "new",
+    allowDesktopApplicationLaunch: false,
+  });
 }
 
 export function formatDaemonRestartNotice(restored: boolean): string {
@@ -3829,6 +3845,7 @@ class DeskRelayDaemon {
               threadId: event.threadId as string,
               turnId: event.turnId,
               outcome: event.outcome,
+              completedAt: event.timestamp,
               startedAtMs:
                 activeTask?.startedAt ?? observation?.runningSinceMs ?? Date.now(),
               inputPreview: activeTask?.inputPreview,
@@ -3994,6 +4011,10 @@ class DeskRelayDaemon {
       return;
     }
 
+    if (await this.handleGlobalTaskInputWithoutActiveSlot(message)) {
+      return;
+    }
+
     const slot = this.getActiveSlot();
     if (!slot) {
       await this.queueWechatMessage(message.senderId, formatNoActiveAdapterMessage());
@@ -4096,7 +4117,8 @@ class DeskRelayDaemon {
     if (!command && isExplicitGlobalTaskListRequest(message.text)) {
       try {
         const snapshot = this.globalTaskListSnapshot ?? buildGlobalTaskSnapshot(
-          await this.listGlobalTaskCandidates(),
+          await this.listWechatGlobalTaskCandidates(),
+          { preserveOrder: true },
         );
         const compactTarget = resolveCompactGlobalTaskSearchTarget(
           message.text,
@@ -4222,6 +4244,96 @@ class DeskRelayDaemon {
     }
 
     await this.dispatchInboundWechatText(message, slot);
+  }
+
+  private async handleGlobalTaskInputWithoutActiveSlot(
+    message: InboundWechatMessage,
+  ): Promise<boolean> {
+    if (this.getActiveSlot()) {
+      return false;
+    }
+
+    const targeted = this.activeTaskListScope === "global" &&
+        this.globalTaskListSnapshot
+      ? resolveGlobalTaskTargetedMessage({
+          text: message.text,
+          snapshot: this.globalTaskListSnapshot,
+        })
+      : null;
+    if (targeted) {
+      try {
+        await this.handleGlobalTaskTargetedMessage(message, targeted);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        appendDaemonLog(
+          `global_task_targeted_send_error: adapter=${targeted.candidate.adapter} thread=${targeted.candidate.sessionId} error=${truncatePreview(detail, 400)}`,
+        );
+        await this.queueWechatMessage(message.senderId, detail, "inbound_error");
+      }
+      return true;
+    }
+
+    const taskListScope = resolveDaemonTaskListScope({
+      text: message.text,
+      activeScope: this.activeTaskListScope,
+    });
+    let command = resolveDaemonWechatCommand({
+      adapter: "codex",
+      text: message.text,
+      awaitingBareTaskSelection: Boolean(this.globalTaskListSnapshot),
+      hasPendingConfirmation: false,
+      hasPendingUserInput: false,
+    });
+    if (!command && isExplicitGlobalTaskListRequest(message.text)) {
+      try {
+        const snapshot = this.globalTaskListSnapshot ?? buildGlobalTaskSnapshot(
+          await this.listWechatGlobalTaskCandidates(),
+          { preserveOrder: true },
+        );
+        const compactTarget = resolveCompactGlobalTaskSearchTarget(
+          message.text,
+          snapshot,
+        );
+        if (compactTarget) {
+          this.globalTaskListSnapshot = snapshot;
+          command = { type: "resume", target: compactTarget };
+        }
+      } catch (error) {
+        appendDaemonLog(
+          `global_compact_task_search_error: error=${truncatePreview(error instanceof Error ? error.message : String(error), 400)}`,
+        );
+      }
+    }
+    if (!command) {
+      const numericReply = resolveDaemonBareNumericReply({
+        text: message.text,
+        taskListScope,
+        globalSnapshot: this.globalTaskListSnapshot,
+        adapterSnapshot: null,
+      });
+      if (numericReply?.type === "resume") {
+        command = numericReply;
+      } else if (numericReply?.type === "clarify") {
+        await this.queueWechatMessage(
+          message.senderId,
+          `我不确定数字“${numericReply.number}”对应哪个选项，没有把它发给模型。\n` +
+            "选择任务：先发送“任务”，再回复序号。",
+        );
+        return true;
+      }
+    }
+    if (
+      taskListScope !== "global" ||
+      !command ||
+      (command.type !== "resume" && command.type !== "resume_page")
+    ) {
+      return false;
+    }
+    await this.handleGlobalTaskCommand(message, {
+      ...command,
+      taskListScope: "global",
+    });
+    return true;
   }
 
   private async handleDaemonTaskTargetedMessage(
@@ -5409,6 +5521,7 @@ class DeskRelayDaemon {
           threadId: candidate.sessionId,
           title: candidate.title,
           outcome: completion.outcome,
+          completedAt: candidate.lastUpdatedAt,
           startedAtMs: completion.startedAtMs,
         }));
       }
@@ -6293,6 +6406,7 @@ class DeskRelayDaemon {
       turnId?: string;
       title?: string;
       outcome: BridgeTaskOutcome | undefined;
+      completedAt?: string;
       startedAtMs: number;
       inputPreview?: string;
     },
@@ -6374,8 +6488,10 @@ class DeskRelayDaemon {
       activeTaskPreview: params.inputPreview,
       messages: sessionMessages,
     });
+    const completionTitle =
+      params.title ?? candidate?.title ?? `任务 ${params.threadId.slice(0, 8)}`;
     const texts = formatCodexTaskCompletionMessages({
-      title: params.title ?? candidate?.title ?? `任务 ${params.threadId.slice(0, 8)}`,
+      title: completionTitle,
       taskNumber: slot.taskNumberByThreadId.get(params.threadId),
       outcome: params.outcome,
       durationMs: resolveCodexTaskCompletionDurationMs({
@@ -6392,6 +6508,10 @@ class DeskRelayDaemon {
       key: notificationKey,
       threadId: params.threadId,
       ...(resolvedTurnId ? { turnId: resolvedTurnId } : {}),
+      title: completionTitle,
+      completedAt: params.completedAt ?? candidate?.lastUpdatedAt ?? nowIso(),
+      ...(url ? { url } : {}),
+      ...(params.outcome ? { outcome: params.outcome } : {}),
       texts,
     });
     if (enqueueResult.status === "delivered") {
@@ -6786,8 +6906,25 @@ class DeskRelayDaemon {
     ) ?? null;
   }
 
-  private async listGlobalTaskCandidates(): Promise<GlobalTaskCandidate[]> {
-    const groups = await Promise.all(DAEMON_ADAPTERS.map(async (adapter) => {
+  private async listWechatGlobalTaskCandidates(): Promise<GlobalTaskCandidate[]> {
+    const adapters = selectRunningGlobalTaskAdapters({
+      connectedAdapters: this.slots.keys(),
+      openAdapters: readOpenMobileAdapters(this.cwd),
+    });
+    appendDaemonLog(
+      `wechat_global_task_adapters: adapters=${adapters.join(",") || "none"}`,
+    );
+    return prioritizeGlobalTaskAdapterCoverage(
+      await this.listGlobalTaskCandidates(adapters),
+      CODEX_TASK_LIST_PAGE_SIZE,
+    );
+  }
+
+  private async listGlobalTaskCandidates(
+    adapters: readonly DaemonAdapterKind[] = DAEMON_ADAPTERS,
+  ): Promise<GlobalTaskCandidate[]> {
+    const adapterSet = new Set(adapters);
+    const groups = await Promise.all(adapters.map(async (adapter) => {
       try {
         const slot = this.slots.get(adapter);
         let candidates: BridgeResumeSessionCandidate[];
@@ -6796,12 +6933,12 @@ class DeskRelayDaemon {
             ? await this.getCodexTaskCandidates(slot)
             : await slot.runtime.listResumeSessions(100);
         } else if (adapter === "codex") {
-          const runtime = createRuntimeHost(buildDaemonRuntimeOptions({
+          // Task enumeration is read-only: catalog runtime uses a fresh session and
+          // never launches the desktop app, so the desktop UI is not moved.
+          const runtime = createRuntimeHost(buildDaemonTaskCatalogRuntimeOptions({
             adapter,
             cwd: this.cwd,
             profile: this.profile,
-            sessionStartMode: "restore",
-            initialSharedSessionId: this.stateStore.getAdapterSessionId(adapter),
           }));
           runtime.setEventSink(() => undefined);
           try {
@@ -6829,6 +6966,7 @@ class DeskRelayDaemon {
       `${candidate.adapter}\u0000${candidate.sessionId}`
     )));
     for (const completion of this.stateStore.getRecentTaskCompletions()) {
+      if (!adapterSet.has(completion.adapter)) continue;
       const identity = `${completion.adapter}\u0000${completion.threadId}`;
       if (identities.has(identity)) continue;
       candidates.push({
@@ -6926,11 +7064,12 @@ class DeskRelayDaemon {
     const preserveSnapshot = command.preserveTaskSnapshot === true || Boolean(command.target);
     const latestCandidates = preserveSnapshot && this.globalTaskListSnapshot
       ? this.globalTaskListSnapshot.candidates
-      : await this.listGlobalTaskCandidates();
+      : await this.listWechatGlobalTaskCandidates();
     const snapshot = updateGlobalTaskSnapshot({
       current: this.globalTaskListSnapshot,
       latestCandidates,
       refresh: !preserveSnapshot || !this.globalTaskListSnapshot,
+      preserveLatestOrder: true,
     });
     this.globalTaskListSnapshot = snapshot;
     this.activeTaskListScope = "global";
@@ -6947,6 +7086,9 @@ class DeskRelayDaemon {
       await this.queueWechatMessage(
         message.senderId,
         formatGlobalTaskList({ snapshot, startIndex: pageStart, pageSize }),
+      );
+      appendDaemonLog(
+        `wechat_global_task_list_sent: adapters=${[...new Set(snapshot.candidates.map((candidate) => candidate.adapter))].join(",") || "none"} candidates=${snapshot.candidates.length} page_start=${pageStart} page_size=${pageSize}`,
       );
       return;
     }
@@ -7587,6 +7729,32 @@ class DeskRelayDaemon {
   private async retryPendingCodexCompletionNotifications(
     senderId: string,
   ): Promise<void> {
+    const backlog = selectCodexCompletionBacklogBatch(
+      this.codexCompletionDeliveries.getPending(),
+    );
+    if (backlog.length > 0) {
+      const summarySent = await this.queueWechatMessage(
+        senderId,
+        formatCodexCompletionBacklogSummary(backlog),
+        "mobile_link",
+      );
+      if (!summarySent) {
+        appendDaemonLog(
+          `codex_completion_backlog_pending: completions=${backlog.length} reason=wechat_unavailable`,
+        );
+        return;
+      }
+      const acknowledged = this.codexCompletionDeliveries.acknowledge(
+        backlog.map((delivery) => delivery.key),
+      );
+      for (const delivery of acknowledged) {
+        this.clearCodexFinalReplyCache(delivery.threadId, delivery.turnId);
+      }
+      appendDaemonLog(
+        `codex_completion_backlog_summarized: completions=${acknowledged.length} tasks=${new Set(acknowledged.map((delivery) => delivery.threadId)).size}`,
+      );
+    }
+
     for (const pending of this.codexCompletionDeliveries.getPending()) {
       const result = await this.deliverCodexCompletionNotification(
         pending.key,

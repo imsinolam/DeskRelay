@@ -5772,6 +5772,27 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     }
 
     await client.openThread(normalizedThreadId);
+    this.selectDesktopThread(normalizedThreadId, options);
+  }
+
+  private async restoreDesktopThreadInBackground(threadId: string): Promise<void> {
+    const normalizedThreadId = threadId.trim();
+    if (!normalizedThreadId) {
+      throw new Error("请选择一个 Codex 任务。");
+    }
+    const client = this.desktopIpcClient;
+    if (!client) {
+      throw new Error("无法连接 Codex 桌面端，请确认应用正在运行。");
+    }
+
+    await client.followThread(normalizedThreadId, { retention: "summary" });
+    this.selectDesktopThread(normalizedThreadId, { startup: true });
+  }
+
+  private selectDesktopThread(
+    normalizedThreadId: string,
+    options: { startup?: boolean } = {},
+  ): void {
     this.subscribedThreadIds.add(normalizedThreadId);
     this.sessionFilePath = null;
     this.sessionReadOffset = 0;
@@ -6444,7 +6465,11 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
     this.resumeThreadId = null;
 
     try {
-      await this.resumeSharedThread(threadId, { startup: true });
+      if (this.usesDesktopTransport()) {
+        await this.restoreDesktopThreadInBackground(threadId);
+      } else {
+        await this.resumeSharedThread(threadId, { startup: true });
+      }
     } catch (error) {
       this.updateSharedThread(null);
       this.emit({

@@ -6,10 +6,13 @@ import {
   formatGlobalTaskList,
   globalTaskIdentityKey,
   paginateGlobalTaskSnapshot,
+  prioritizeGlobalTaskAdapterCoverage,
   resolveCompactGlobalTaskSearchTarget,
   resolveGlobalTaskCandidate,
   resolveGlobalTaskTargetedMessage,
   shouldShowGlobalTaskAdapterLabels,
+  selectRunningGlobalTaskAdapters,
+  sortGlobalTaskCandidates,
   updateGlobalTaskSnapshot,
   type GlobalTaskCandidate,
 } from "../../src/daemon/global-task-index.ts";
@@ -24,6 +27,61 @@ function candidate(
 }
 
 describe("global task index", () => {
+  test("limits the ClawBot aggregate to terminals that are connected or visibly running", () => {
+    expect(selectRunningGlobalTaskAdapters({
+      connectedAdapters: ["deepseek", "codex"],
+      openAdapters: ["workbuddy", "codebuddy", "deepseek"],
+    })).toEqual(["codex", "codebuddy", "workbuddy", "deepseek"]);
+  });
+
+  test("prioritizes an active task over a newer idle task from the same terminal", () => {
+    const activeDeepSeek = candidate(
+      "deepseek",
+      "deepseek-active",
+      "US中转服务器",
+      "2026-08-08T08:00:00.000Z",
+    );
+    activeDeepSeek.runtimeStatus = { type: "active", activeFlags: [] };
+    const ordered = prioritizeGlobalTaskAdapterCoverage(
+      sortGlobalTaskCandidates([
+        candidate("deepseek", "deepseek-idle", "DeepSeek 最近已完成", "2026-08-08T10:00:00.000Z"),
+        activeDeepSeek,
+        candidate("codex", "codex-1", "Codex 任务", "2026-08-08T09:00:00.000Z"),
+        candidate("workbuddy", "workbuddy-1", "WorkBuddy 任务", "2026-08-08T07:00:00.000Z"),
+      ]),
+      3,
+    );
+
+    expect(ordered.slice(0, 3).map((item) => item.sessionId)).toContain("deepseek-active");
+    expect(ordered.slice(0, 3).map((item) => item.sessionId)).not.toContain("deepseek-idle");
+  });
+
+  test("keeps every running terminal represented on the default ClawBot page", () => {
+    const candidates = [
+      ...Array.from({ length: 12 }, (_, index) => candidate(
+        "codex",
+        `codex-${index}`,
+        `Codex ${index}`,
+        new Date(Date.parse("2026-08-08T12:00:00.000Z") - index * 1_000).toISOString(),
+      )),
+      candidate("deepseek", "deepseek-1", "DeepSeek 最近任务", "2026-08-08T08:00:00.000Z"),
+      candidate("workbuddy", "workbuddy-1", "WorkBuddy 最近任务", "2026-08-08T07:00:00.000Z"),
+    ];
+
+    const ordered = prioritizeGlobalTaskAdapterCoverage(
+      sortGlobalTaskCandidates(candidates),
+      10,
+    );
+    const snapshot = buildGlobalTaskSnapshot(ordered, { preserveOrder: true });
+    const firstPageAdapters = new Set(
+      paginateGlobalTaskSnapshot(snapshot, { startIndex: 0, pageSize: 10 })
+        .candidates.map((entry) => entry.adapter),
+    );
+
+    expect(firstPageAdapters).toEqual(new Set(["codex", "deepseek", "workbuddy"]));
+    expect(snapshot.candidates[0]?.adapter).toBe("codex");
+  });
+
   test("sorts all adapters by lastUpdatedAt and shows terminal labels", () => {
     const snapshot = buildGlobalTaskSnapshot([
       candidate("claude", "claude-1", "Claude 较旧任务", "2026-08-08T08:00:00.000Z"),
@@ -37,6 +95,7 @@ describe("global task index", () => {
       "claude:claude-1",
     ]);
     const output = formatGlobalTaskList({ snapshot, startIndex: 0, pageSize: 10 });
+    expect(output).toContain("运行终端最近任务");
     expect(output).not.toContain("────────");
     expect(output).toContain("1. [Codex] Codex 最新任务");
     expect(output).toContain("2. [WorkBuddy] WorkBuddy 中间任务");

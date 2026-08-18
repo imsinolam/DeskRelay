@@ -10,6 +10,7 @@ import {
   DeepSeekHarnessHttpClient,
   mapDeepSeekHarnessHistoryEvents,
   normalizeDeepSeekHarnessBaseUrl,
+  resolveDeepSeekHarnessBaseUrl,
   type DeepSeekHarnessClientLike,
   type DeepSeekHarnessEnvelope,
   type DeepSeekHarnessHistoryEntry,
@@ -147,6 +148,37 @@ function createFakeClient(queue: AsyncEnvelopeQueue) {
 async function nextTurn(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
+
+describe("DeepSeek Harness endpoint discovery", () => {
+  test("prefers the live DSH Desktop Host over a separate dsh web Host", () => {
+    expect(resolveDeepSeekHarnessBaseUrl(undefined, {
+      platform: "darwin",
+      readProcessList: () =>
+        "92652 /Applications/DSH Desktop.app/Contents/MacOS/DSH Desktop\n" +
+        "92749 /Applications/DSH Desktop.app/Contents/Frameworks/DSH Desktop Helper.app/Contents/MacOS/DSH Desktop Helper",
+      readListeners: (pid) => pid === 92652
+        ? "p92652\nf39\nn127.0.0.1:58208\n"
+        : "",
+    })).toBe("http://127.0.0.1:58208");
+  });
+
+  test("keeps an explicit loopback Harness URL authoritative", () => {
+    expect(resolveDeepSeekHarnessBaseUrl("http://127.0.0.1:3080", {
+      platform: "darwin",
+      readProcessList: () =>
+        "92652 /Applications/DSH Desktop.app/Contents/MacOS/DSH Desktop",
+      readListeners: () => "n127.0.0.1:58208",
+    })).toBe("http://127.0.0.1:3080");
+  });
+
+  test("falls back to dsh web when DSH Desktop is not running", () => {
+    expect(resolveDeepSeekHarnessBaseUrl(undefined, {
+      platform: "darwin",
+      readProcessList: () => "57127 node /usr/local/bin/dsh web",
+      readListeners: () => "",
+    })).toBe("http://127.0.0.1:3080");
+  });
+});
 
 describe("DeepSeek Harness adapter", () => {
   test("uses the Harness WebSocket event stream instead of the HTTP endpoint", async () => {

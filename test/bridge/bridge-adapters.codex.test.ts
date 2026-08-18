@@ -2796,6 +2796,40 @@ describe("Codex desktop IPC transport", () => {
     expect(adapter.getState().status).toBe("idle");
   });
 
+  test("restores the remembered desktop task in the background without changing Codex focus", async () => {
+    const adapter = new CodexPtyAdapter({
+      kind: "codex",
+      command: "codex",
+      cwd: process.cwd(),
+      renderMode: "headless",
+      codexTransport: "desktop",
+      sessionStartMode: "restore",
+      initialSharedSessionId: "thread_remembered",
+    }) as any;
+    const opened: string[] = [];
+    const followed: Array<{ threadId: string; retention?: string }> = [];
+    adapter.desktopIpcClient = {
+      openThread: async (threadId: string) => {
+        opened.push(threadId);
+      },
+      followThread: async (
+        threadId: string,
+        options?: { retention?: string },
+      ) => {
+        followed.push({ threadId, retention: options?.retention });
+      },
+    };
+
+    await adapter.restoreInitialSharedThreadIfNeeded();
+
+    expect(opened).toEqual([]);
+    expect(followed).toEqual([{
+      threadId: "thread_remembered",
+      retention: "summary",
+    }]);
+    expect(adapter.getState().sharedThreadId).toBe("thread_remembered");
+  });
+
   test("never falls back to mutating the independent app-server", async () => {
     const adapter = new CodexPtyAdapter({
       kind: "codex",

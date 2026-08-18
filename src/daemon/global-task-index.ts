@@ -1,4 +1,5 @@
 import {
+  DAEMON_PROVIDER_IDS,
   getBridgeProvider,
   type DaemonAdapterKind,
 } from "../bridge/bridge-providers.ts";
@@ -49,6 +50,19 @@ export function globalTaskIdentityKey(
   return `${adapter}\u0000${sessionId}`;
 }
 
+export function selectRunningGlobalTaskAdapters(params: {
+  connectedAdapters: Iterable<DaemonAdapterKind>;
+  openAdapters: Iterable<DaemonAdapterKind>;
+}): DaemonAdapterKind[] {
+  const running = new Set<DaemonAdapterKind>([
+    ...params.connectedAdapters,
+    ...params.openAdapters,
+  ]);
+  return DAEMON_PROVIDER_IDS.filter((adapter) => (
+    running.has(adapter) && getBridgeProvider(adapter).capabilities.sessions
+  ));
+}
+
 export function sortGlobalTaskCandidates(
   candidates: GlobalTaskCandidate[],
 ): GlobalTaskCandidate[] {
@@ -61,8 +75,56 @@ export function sortGlobalTaskCandidates(
   });
 }
 
+export function prioritizeGlobalTaskAdapterCoverage(
+  sortedCandidates: GlobalTaskCandidate[],
+  pageSize: number,
+): GlobalTaskCandidate[] {
+  const coverageSize = Math.max(1, pageSize);
+  const selected = new Set<string>();
+  const select = (candidate: GlobalTaskCandidate): void => {
+    if (selected.size >= coverageSize) return;
+    selected.add(globalTaskIdentityKey(candidate.adapter, candidate.sessionId));
+  };
+
+  // A running task is more actionable than a newer idle task. Keep all running
+  // tasks visible before filling the page with one representative per terminal.
+  for (const candidate of sortedCandidates) {
+    if (candidate.runtimeStatus?.type === "active") {
+      select(candidate);
+    }
+  }
+
+  const representedAdapters = new Set(
+    sortedCandidates
+      .filter((candidate) => selected.has(
+        globalTaskIdentityKey(candidate.adapter, candidate.sessionId),
+      ))
+      .map((candidate) => candidate.adapter),
+  );
+  for (const candidate of sortedCandidates) {
+    if (selected.size >= coverageSize) break;
+    if (representedAdapters.has(candidate.adapter)) continue;
+    select(candidate);
+    representedAdapters.add(candidate.adapter);
+  }
+  for (const candidate of sortedCandidates) {
+    if (selected.size >= coverageSize) break;
+    select(candidate);
+  }
+
+  return [
+    ...sortedCandidates.filter((candidate) => selected.has(
+      globalTaskIdentityKey(candidate.adapter, candidate.sessionId),
+    )),
+    ...sortedCandidates.filter((candidate) => !selected.has(
+      globalTaskIdentityKey(candidate.adapter, candidate.sessionId),
+    )),
+  ];
+}
+
 export function buildGlobalTaskSnapshot(
   candidates: GlobalTaskCandidate[],
+  options: { preserveOrder?: boolean } = {},
 ): GlobalTaskSnapshot {
   const unique = new Map<string, GlobalTaskCandidate>();
   for (const candidate of candidates) {
@@ -72,11 +134,13 @@ export function buildGlobalTaskSnapshot(
       unique.set(key, candidate);
     }
   }
-  const sorted = sortGlobalTaskCandidates([...unique.values()]);
+  const ordered = options.preserveOrder
+    ? [...unique.values()]
+    : sortGlobalTaskCandidates([...unique.values()]);
   return {
-    candidates: sorted,
+    candidates: ordered,
     numberByIdentity: new Map(
-      sorted.map((candidate, index) => [
+      ordered.map((candidate, index) => [
         globalTaskIdentityKey(candidate.adapter, candidate.sessionId),
         index + 1,
       ]),
@@ -88,9 +152,12 @@ export function updateGlobalTaskSnapshot(params: {
   current?: GlobalTaskSnapshot | null;
   latestCandidates: GlobalTaskCandidate[];
   refresh: boolean;
+  preserveLatestOrder?: boolean;
 }): GlobalTaskSnapshot {
   if (params.refresh || !params.current) {
-    return buildGlobalTaskSnapshot(params.latestCandidates);
+    return buildGlobalTaskSnapshot(params.latestCandidates, {
+      preserveOrder: params.preserveLatestOrder,
+    });
   }
   const latestByIdentity = new Map(
     params.latestCandidates.map((candidate) => [
@@ -241,19 +308,20 @@ export function formatGlobalTaskList(params: {
   if (page.candidates.length === 0) {
     return page.hasPrevious
       ? "没有更多任务。\n发送“上一页”返回。"
-      : "没有找到可继续的 Agent 任务。";
+      : "没有找到正在运行终端的可继续任务。";
   }
   const actions = [
     "回复序号进入任务",
     "发送“数字：内容”（如：6：继续处理）可直接发给指定任务",
-    "发送“任务：关键词”搜索全部终端",
-    "发送“任务”刷新全终端列表",
+    "发送“任务：关键词”搜索运行中的终端",
+    "发送“任务”刷新运行终端列表",
   ];
   if (page.hasMore) actions.push("发送“下一页”查看更多，可用“下一页20”指定条数");
   if (page.hasPrevious) actions.push("发送“上一页”返回");
   const showAdapterLabels = shouldShowGlobalTaskAdapterLabels(page.candidates);
   return [
-    "全部终端最近任务",
+    "运行终端最近任务",
+    "每个运行终端优先显示最近一条，其余按更新时间补足。",
     ...page.candidates.map((candidate, index) => {
       const adapterLabel = showAdapterLabels
         ? `[${getBridgeProvider(candidate.adapter).label}] `

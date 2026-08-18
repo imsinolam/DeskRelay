@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import {
   CodexCompletionDeliveryQueue,
+  formatCodexCompletionBacklogSummary,
+  selectCodexCompletionBacklogBatch,
   type CodexCompletionDeliveryState,
 } from "../../src/daemon/codex-completion-delivery.ts";
 
@@ -133,6 +135,84 @@ describe("Codex completion delivery queue", () => {
     expect(enqueue.status).toBe("delivered");
     expect(result.status).toBe("delivered");
     expect(called).toBe(false);
+  });
+
+  test("selects fully unsent completions for one backlog summary", async () => {
+    const queue = buildQueue();
+    for (let index = 1; index <= 4; index += 1) {
+      queue.enqueue({
+        key: `thread-${index}:turn`,
+        threadId: `thread-${index}`,
+        title: `任务 ${index}`,
+        completedAt: `2026-08-08T0${index}:00:00.000Z`,
+        url: `https://deskrelay.example/t/${index}`,
+        texts: [`完成 ${index}`],
+      });
+    }
+    await queue.deliver("thread-1:turn", async () => 0);
+    const state = queue.snapshot();
+    state.pending[0]!.nextTextIndex = 1;
+
+    expect(selectCodexCompletionBacklogBatch(state.pending, 3).map((item) => item.key))
+      .toEqual(["thread-2:turn", "thread-3:turn", "thread-4:turn"]);
+    expect(selectCodexCompletionBacklogBatch(state.pending, 4)).toEqual([]);
+  });
+
+  test("formats one concise summary with completion time, task name, and task link", () => {
+    const summary = formatCodexCompletionBacklogSummary([
+      {
+        key: "a:1",
+        threadId: "a",
+        title: "整理发布文档",
+        completedAt: "2026-08-08T08:00:00.000Z",
+        url: "https://deskrelay.example/t/a",
+        texts: ["完成"],
+        nextTextIndex: 0,
+        createdAt: "2026-08-08T08:00:00.000Z",
+      },
+      {
+        key: "a:2",
+        threadId: "a",
+        title: "整理发布文档",
+        completedAt: "2026-08-08T09:00:00.000Z",
+        url: "https://deskrelay.example/t/a",
+        texts: ["完成"],
+        nextTextIndex: 0,
+        createdAt: "2026-08-08T09:00:00.000Z",
+      },
+      {
+        key: "b:1",
+        threadId: "b",
+        title: "修复微信任务列表",
+        completedAt: "2026-08-08T10:30:00.000Z",
+        url: "https://deskrelay.example/t/b",
+        texts: ["完成"],
+        nextTextIndex: 0,
+        createdAt: "2026-08-08T10:30:00.000Z",
+      },
+    ]);
+
+    expect(summary).toContain("积压完成消息已合并：3 条，涉及 2 个任务");
+    expect(summary).toContain("08-08 18:30 · 修复微信任务列表");
+    expect(summary).toContain("08-08 17:00 · 整理发布文档（2 条完成记录）");
+    expect(summary).toContain("https://deskrelay.example/t/a");
+    expect(summary).toContain("https://deskrelay.example/t/b");
+    expect(summary.indexOf("修复微信任务列表")).toBeLessThan(
+      summary.indexOf("整理发布文档"),
+    );
+  });
+
+  test("acknowledges a delivered backlog summary without sending each original message", () => {
+    const queue = buildQueue();
+    queue.enqueue({ key: "a:1", threadId: "a", texts: ["完成 A"] });
+    queue.enqueue({ key: "b:1", threadId: "b", texts: ["完成 B"] });
+
+    const acknowledged = queue.acknowledge(["a:1", "b:1"]);
+
+    expect(acknowledged.map((item) => item.key)).toEqual(["a:1", "b:1"]);
+    expect(queue.getPending()).toEqual([]);
+    expect(queue.hasDelivered("a:1")).toBe(true);
+    expect(queue.hasDelivered("b:1")).toBe(true);
   });
 
   test("bounds delivered keys and expires retained payloads", async () => {

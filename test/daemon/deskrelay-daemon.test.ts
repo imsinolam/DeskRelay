@@ -17,6 +17,7 @@ import {
   compareDaemonApprovalQueueOrder,
   computeCodexDeferredDrainRetryDelayMs,
   buildDaemonRuntimeOptions,
+  buildDaemonTaskCatalogRuntimeOptions,
   defaultDaemonSessionStartMode,
   flushPendingDaemonRestartNotice,
   formatCodexTaskCompletionMessage,
@@ -327,6 +328,20 @@ describe("daemon startup resilience", () => {
     const mobileMethodStart = source.indexOf("  async startCodexMobileWeb(): Promise<void> {");
     const mobileMethodEnd = source.indexOf("\n  async runInitialAdapter", mobileMethodStart);
     expect(source.slice(mobileMethodStart, mobileMethodEnd)).not.toContain('!this.slots.has("codex")');
+  });
+
+  test("merges three or more unsent completion notifications before retrying individually", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const retryStart = source.indexOf("  private async retryPendingCodexCompletionNotifications(");
+    const retryEnd = source.indexOf("\n  private queueWechatMessage(", retryStart);
+    const retryBlock = source.slice(retryStart, retryEnd);
+
+    expect(retryBlock).toContain("selectCodexCompletionBacklogBatch");
+    expect(retryBlock).toContain("formatCodexCompletionBacklogSummary");
+    expect(retryBlock).toContain("this.codexCompletionDeliveries.acknowledge");
+    expect(retryBlock.indexOf("formatCodexCompletionBacklogSummary")).toBeLessThan(
+      retryBlock.indexOf("for (const pending of this.codexCompletionDeliveries.getPending())"),
+    );
   });
 
   test("retries undelivered approvals before handling the inbound message that refreshed WeChat context", () => {
@@ -1035,6 +1050,45 @@ describe("deskrelay-daemon helpers", () => {
     ).toBeNull();
   });
 
+  test("allows bare task commands before an active adapter has been selected", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const inboundStart = source.indexOf("  private async handleInboundMessage(");
+    const inboundEnd = source.indexOf("\n  private async handleDaemonTaskTargetedMessage(", inboundStart);
+    const inboundBlock = source.slice(inboundStart, inboundEnd);
+    const earlyGlobalIndex = inboundBlock.indexOf("await this.handleGlobalTaskInputWithoutActiveSlot(message)");
+    const activeSlotGuardIndex = inboundBlock.indexOf("const slot = this.getActiveSlot()");
+
+    expect(earlyGlobalIndex).toBeGreaterThan(-1);
+    expect(activeSlotGuardIndex).toBeGreaterThan(-1);
+    expect(earlyGlobalIndex).toBeLessThan(activeSlotGuardIndex);
+  });
+
+  test("builds the ClawBot global list from running terminals instead of every supported adapter", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const listStart = source.indexOf("  private async listWechatGlobalTaskCandidates(");
+    const listEnd = source.indexOf("\n  private async listGlobalTaskCandidates(", listStart);
+    const listBlock = source.slice(listStart, listEnd);
+
+    expect(listStart).toBeGreaterThan(-1);
+    expect(listEnd).toBeGreaterThan(listStart);
+    expect(listBlock).toContain("readOpenMobileAdapters(this.cwd)");
+    expect(listBlock).toContain("this.slots.keys()");
+    expect(listBlock).toContain("selectRunningGlobalTaskAdapters");
+    expect(listBlock).toContain("this.listGlobalTaskCandidates(adapters)");
+  });
+
+  test("enumerates disconnected Codex tasks without restoring a desktop task", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const listStart = source.indexOf("  private async listGlobalTaskCandidates(");
+    const listEnd = source.indexOf("\n  private async activateExactGlobalTask(", listStart);
+    const listBlock = source.slice(listStart, listEnd);
+
+    expect(listStart).toBeGreaterThan(-1);
+    expect(listEnd).toBeGreaterThan(listStart);
+    expect(listBlock).toContain('adapter === "codex"');
+    expect(listBlock).not.toContain("this.stateStore.getAdapterSessionId(adapter)");
+  });
+
   test("uses the global task index for bare task commands and preserves the current list scope for navigation", () => {
     expect(isExplicitGlobalTaskListRequest("任务")).toBe(true);
     expect(isExplicitGlobalTaskListRequest("任务列表")).toBe(true);
@@ -1656,6 +1710,26 @@ describe("deskrelay-daemon helpers", () => {
       initialSharedSessionId: "thread_previous",
       initialSharedThreadId: "thread_previous",
     });
+  });
+
+  test("lists the background Codex catalog without restoring or focusing a saved task", () => {
+    expect(
+      buildDaemonTaskCatalogRuntimeOptions({
+        adapter: "codex",
+        cwd: "/Users/test/project",
+      }),
+    ).toMatchObject({
+      kind: "codex",
+      cwd: "/Users/test/project",
+      sessionStartMode: "new",
+      allowDesktopApplicationLaunch: false,
+    });
+    expect(
+      buildDaemonTaskCatalogRuntimeOptions({
+        adapter: "codex",
+        cwd: "/Users/test/project",
+      }).initialSharedSessionId,
+    ).toBeUndefined();
   });
 
   test("formats concise restart notices", () => {

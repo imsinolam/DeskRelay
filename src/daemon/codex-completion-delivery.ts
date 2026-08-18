@@ -6,6 +6,10 @@ export type PendingCodexCompletionDelivery = {
   key: string;
   threadId: string;
   turnId?: string;
+  title?: string;
+  completedAt?: string;
+  url?: string;
+  outcome?: "completed" | "failed" | "interrupted";
   texts: string[];
   nextTextIndex: number;
   createdAt: string;
@@ -87,6 +91,20 @@ function normalizePending(
     ...(typeof record.turnId === "string" && record.turnId.trim()
       ? { turnId: record.turnId.trim() }
       : {}),
+    ...(typeof record.title === "string" && record.title.trim()
+      ? { title: record.title.trim() }
+      : {}),
+    ...(normalizeTimestamp(record.completedAt)
+      ? { completedAt: normalizeTimestamp(record.completedAt) as string }
+      : {}),
+    ...(typeof record.url === "string" && record.url.trim()
+      ? { url: record.url.trim() }
+      : {}),
+    ...(record.outcome === "completed" ||
+        record.outcome === "failed" ||
+        record.outcome === "interrupted"
+      ? { outcome: record.outcome }
+      : {}),
     texts: [...record.texts],
     nextTextIndex: record.nextTextIndex,
     createdAt,
@@ -162,6 +180,97 @@ export function normalizeCodexCompletionDeliveryState(
   };
 }
 
+export function selectCodexCompletionBacklogBatch(
+  pending: PendingCodexCompletionDelivery[],
+  threshold = 3,
+): PendingCodexCompletionDelivery[] {
+  const fullyUnsent = pending.filter((delivery) => delivery.nextTextIndex === 0);
+  return fullyUnsent.length >= Math.max(2, threshold) ? fullyUnsent : [];
+}
+
+function inferCompletionTitle(delivery: PendingCodexCompletionDelivery): string {
+  if (delivery.title?.trim()) return delivery.title.trim();
+  const heading = delivery.texts.join("\n").match(/^\[([^\]]+)]\s*(?:已完成|执行失败|已中断)/m);
+  return heading?.[1]?.trim() || `任务 ${delivery.threadId.slice(0, 8)}`;
+}
+
+function inferCompletionUrl(delivery: PendingCodexCompletionDelivery): string | undefined {
+  if (delivery.url?.trim()) return delivery.url.trim();
+  return delivery.texts.join("\n").match(/https?:\/\/[^\s]+/)?.[0];
+}
+
+function inferCompletionOutcome(
+  delivery: PendingCodexCompletionDelivery,
+): "completed" | "failed" | "interrupted" {
+  if (delivery.outcome) return delivery.outcome;
+  const text = delivery.texts.join("\n");
+  if (/执行失败/.test(text)) return "failed";
+  if (/已中断/.test(text)) return "interrupted";
+  return "completed";
+}
+
+function formatCompletionTimestamp(value: string): string {
+  const date = new Date(value);
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const read = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "00";
+  return `${read("month")}-${read("day")} ${read("hour")}:${read("minute")}`;
+}
+
+export function formatCodexCompletionBacklogSummary(
+  deliveries: PendingCodexCompletionDelivery[],
+  options: { maxTasks?: number } = {},
+): string {
+  const sorted = [...deliveries].sort((left, right) => (
+    Date.parse(right.completedAt ?? right.createdAt) -
+    Date.parse(left.completedAt ?? left.createdAt)
+  ));
+  const grouped = new Map<string, {
+    delivery: PendingCodexCompletionDelivery;
+    count: number;
+  }>();
+  for (const delivery of sorted) {
+    const existing = grouped.get(delivery.threadId);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      grouped.set(delivery.threadId, { delivery, count: 1 });
+    }
+  }
+  const groups = [...grouped.values()];
+  const visible = groups.slice(0, Math.max(1, options.maxTasks ?? 12));
+  const lines = [
+    `积压完成消息已合并：${deliveries.length} 条，涉及 ${groups.length} 个任务`,
+  ];
+  for (const group of visible) {
+    const delivery = group.delivery;
+    const outcome = inferCompletionOutcome(delivery);
+    const status = outcome === "failed"
+      ? "执行失败 · "
+      : outcome === "interrupted"
+        ? "已中断 · "
+        : "";
+    const repeat = group.count > 1 ? `（${group.count} 条完成记录）` : "";
+    lines.push(
+      `${formatCompletionTimestamp(delivery.completedAt ?? delivery.createdAt)} · ${status}${inferCompletionTitle(delivery)}${repeat}`,
+    );
+    const url = inferCompletionUrl(delivery);
+    if (url) lines.push(url);
+  }
+  if (groups.length > visible.length) {
+    lines.push(`另有 ${groups.length - visible.length} 个较早任务，请在网页版“最近”中查看。`);
+  }
+  lines.push("打开对应链接可查看完整回复。");
+  return lines.join("\n");
+}
+
 export class CodexCompletionDeliveryQueue {
   private readonly now: () => number;
   private readonly persist?: (state: CodexCompletionDeliveryState) => void;
@@ -214,6 +323,10 @@ export class CodexCompletionDeliveryQueue {
     key: string;
     threadId: string;
     turnId?: string;
+    title?: string;
+    completedAt?: string;
+    url?: string;
+    outcome?: "completed" | "failed" | "interrupted";
     texts: string[];
   }): CodexCompletionEnqueueResult {
     if (this.pruneExpired()) {
@@ -235,6 +348,12 @@ export class CodexCompletionDeliveryQueue {
       key,
       threadId: input.threadId.trim(),
       ...(input.turnId?.trim() ? { turnId: input.turnId.trim() } : {}),
+      ...(input.title?.trim() ? { title: input.title.trim() } : {}),
+      ...(normalizeTimestamp(input.completedAt)
+        ? { completedAt: normalizeTimestamp(input.completedAt) as string }
+        : {}),
+      ...(input.url?.trim() ? { url: input.url.trim() } : {}),
+      ...(input.outcome ? { outcome: input.outcome } : {}),
       texts: [...texts],
       nextTextIndex: 0,
       createdAt: new Date(this.now()).toISOString(),
@@ -243,6 +362,27 @@ export class CodexCompletionDeliveryQueue {
     this.trimPending();
     this.persistState();
     return { status: "queued", delivery: clonePending(delivery) };
+  }
+
+  acknowledge(keys: string[]): PendingCodexCompletionDelivery[] {
+    const acknowledged: PendingCodexCompletionDelivery[] = [];
+    for (const key of keys) {
+      if (this.inFlight.has(key)) continue;
+      const delivery = this.pending.get(key);
+      if (!delivery) continue;
+      this.pending.delete(key);
+      this.delivered.delete(key);
+      this.delivered.set(key, {
+        key,
+        deliveredAt: new Date(this.now()).toISOString(),
+      });
+      acknowledged.push(clonePending(delivery));
+    }
+    if (acknowledged.length > 0) {
+      this.trimDelivered();
+      this.persistState();
+    }
+    return acknowledged;
   }
 
   async deliver(
