@@ -17,6 +17,36 @@ function markNotLoaded(
   }));
 }
 
+export function mergeSessionRuntimeSignals(
+  candidates: BridgeResumeSessionCandidate[],
+  signals: {
+    pendingApprovalIds?: Iterable<string>;
+    pendingUserInputIds?: Iterable<string>;
+  } = {},
+): BridgeResumeSessionCandidate[] {
+  const pendingApprovalIds = new Set(signals.pendingApprovalIds ?? []);
+  const pendingUserInputIds = new Set(signals.pendingUserInputIds ?? []);
+  return candidates.map((candidate) => {
+    const activeFlags = [
+      ...(pendingApprovalIds.has(candidate.sessionId)
+        ? ["waitingOnApproval" as const]
+        : []),
+      ...(pendingUserInputIds.has(candidate.sessionId)
+        ? ["waitingOnUserInput" as const]
+        : []),
+    ];
+    if (activeFlags.length > 0) {
+      return {
+        ...candidate,
+        runtimeStatus: { type: "active", activeFlags },
+      };
+    }
+    return candidate.runtimeStatus?.type === "active"
+      ? candidate
+      : { ...candidate, runtimeStatus: candidate.runtimeStatus ?? { type: "idle" } };
+  });
+}
+
 export async function listLightweightAdapterSessions(
   adapter: DaemonAdapterKind,
   cwd: string,

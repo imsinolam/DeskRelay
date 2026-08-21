@@ -6,13 +6,11 @@ import {
   formatGlobalTaskList,
   globalTaskIdentityKey,
   paginateGlobalTaskSnapshot,
-  prioritizeGlobalTaskAdapterCoverage,
   resolveCompactGlobalTaskSearchTarget,
   resolveGlobalTaskCandidate,
   resolveGlobalTaskTargetedMessage,
   shouldShowGlobalTaskAdapterLabels,
   selectRunningGlobalTaskAdapters,
-  sortGlobalTaskCandidates,
   updateGlobalTaskSnapshot,
   type GlobalTaskCandidate,
 } from "../../src/daemon/global-task-index.ts";
@@ -34,7 +32,7 @@ describe("global task index", () => {
     })).toEqual(["codex", "codebuddy", "workbuddy", "deepseek"]);
   });
 
-  test("prioritizes an active task over a newer idle task from the same terminal", () => {
+  test("sorts strictly by lastUpdatedAt even when an older task is still running", () => {
     const activeDeepSeek = candidate(
       "deepseek",
       "deepseek-active",
@@ -42,21 +40,20 @@ describe("global task index", () => {
       "2026-08-08T08:00:00.000Z",
     );
     activeDeepSeek.runtimeStatus = { type: "active", activeFlags: [] };
-    const ordered = prioritizeGlobalTaskAdapterCoverage(
-      sortGlobalTaskCandidates([
-        candidate("deepseek", "deepseek-idle", "DeepSeek 最近已完成", "2026-08-08T10:00:00.000Z"),
-        activeDeepSeek,
-        candidate("codex", "codex-1", "Codex 任务", "2026-08-08T09:00:00.000Z"),
-        candidate("workbuddy", "workbuddy-1", "WorkBuddy 任务", "2026-08-08T07:00:00.000Z"),
-      ]),
-      3,
-    );
+    const snapshot = buildGlobalTaskSnapshot([
+      candidate("deepseek", "deepseek-idle", "DeepSeek 最近已完成", "2026-08-08T10:00:00.000Z"),
+      activeDeepSeek,
+      candidate("codex", "codex-1", "Codex 任务", "2026-08-08T09:00:00.000Z"),
+    ]);
 
-    expect(ordered.slice(0, 3).map((item) => item.sessionId)).toContain("deepseek-active");
-    expect(ordered.slice(0, 3).map((item) => item.sessionId)).not.toContain("deepseek-idle");
+    expect(snapshot.candidates.map((item) => item.sessionId)).toEqual([
+      "deepseek-idle",
+      "codex-1",
+      "deepseek-active",
+    ]);
   });
 
-  test("keeps every running terminal represented on the default ClawBot page", () => {
+  test("fills the default page strictly by recency without reserving a slot per terminal", () => {
     const candidates = [
       ...Array.from({ length: 12 }, (_, index) => candidate(
         "codex",
@@ -68,18 +65,14 @@ describe("global task index", () => {
       candidate("workbuddy", "workbuddy-1", "WorkBuddy 最近任务", "2026-08-08T07:00:00.000Z"),
     ];
 
-    const ordered = prioritizeGlobalTaskAdapterCoverage(
-      sortGlobalTaskCandidates(candidates),
-      10,
-    );
-    const snapshot = buildGlobalTaskSnapshot(ordered, { preserveOrder: true });
-    const firstPageAdapters = new Set(
-      paginateGlobalTaskSnapshot(snapshot, { startIndex: 0, pageSize: 10 })
-        .candidates.map((entry) => entry.adapter),
-    );
+    const snapshot = buildGlobalTaskSnapshot(candidates);
+    const firstPage = paginateGlobalTaskSnapshot(snapshot, { startIndex: 0, pageSize: 10 });
 
-    expect(firstPageAdapters).toEqual(new Set(["codex", "deepseek", "workbuddy"]));
-    expect(snapshot.candidates[0]?.adapter).toBe("codex");
+    expect(firstPage.candidates.map((entry) => entry.adapter)).toEqual(
+      Array.from({ length: 10 }, () => "codex"),
+    );
+    expect(snapshot.numberByIdentity.get(globalTaskIdentityKey("deepseek", "deepseek-1"))).toBe(13);
+    expect(snapshot.numberByIdentity.get(globalTaskIdentityKey("workbuddy", "workbuddy-1"))).toBe(14);
   });
 
   test("sorts all adapters by lastUpdatedAt and shows terminal labels", () => {
@@ -96,6 +89,8 @@ describe("global task index", () => {
     ]);
     const output = formatGlobalTaskList({ snapshot, startIndex: 0, pageSize: 10 });
     expect(output).toContain("运行终端最近任务");
+    expect(output).toContain("全部按最近更新时间排序");
+    expect(output).not.toContain("每个运行终端优先显示最近一条");
     expect(output).not.toContain("────────");
     expect(output).toContain("1. [Codex] Codex 最新任务");
     expect(output).toContain("2. [WorkBuddy] WorkBuddy 中间任务");

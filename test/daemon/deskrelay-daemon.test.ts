@@ -526,6 +526,7 @@ describe("deskrelay-daemon helpers", () => {
       "grok",
       "reasonix acp",
       "node /Users/test/.workbuddy/node/bin/dsh web",
+      "/Applications/DSH Desktop.app/Contents/MacOS/DSH Desktop",
       "opencode serve",
     ].join("\n"), { codexDesktopOpen: true });
 
@@ -1075,6 +1076,18 @@ describe("deskrelay-daemon helpers", () => {
     expect(listBlock).toContain("this.slots.keys()");
     expect(listBlock).toContain("selectRunningGlobalTaskAdapters");
     expect(listBlock).toContain("this.listGlobalTaskCandidates(adapters)");
+    expect(listBlock).not.toContain("prioritizeGlobalTaskAdapterCoverage");
+  });
+
+  test("rediscovers the current DeepSeek Harness host while preserving live interaction flags", () => {
+    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const listStart = source.indexOf("  private async listGlobalTaskCandidates(");
+    const listEnd = source.indexOf("\n  private async activateExactGlobalTask(", listStart);
+    const listBlock = source.slice(listStart, listEnd);
+
+    expect(listBlock).toContain('slot.adapter === "deepseek"');
+    expect(listBlock).toContain("listLightweightAdapterSessions");
+    expect(listBlock).toContain("mergeSessionRuntimeSignals");
   });
 
   test("enumerates disconnected Codex tasks without restoring a desktop task", () => {

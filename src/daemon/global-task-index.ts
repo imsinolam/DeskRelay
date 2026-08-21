@@ -75,56 +75,8 @@ export function sortGlobalTaskCandidates(
   });
 }
 
-export function prioritizeGlobalTaskAdapterCoverage(
-  sortedCandidates: GlobalTaskCandidate[],
-  pageSize: number,
-): GlobalTaskCandidate[] {
-  const coverageSize = Math.max(1, pageSize);
-  const selected = new Set<string>();
-  const select = (candidate: GlobalTaskCandidate): void => {
-    if (selected.size >= coverageSize) return;
-    selected.add(globalTaskIdentityKey(candidate.adapter, candidate.sessionId));
-  };
-
-  // A running task is more actionable than a newer idle task. Keep all running
-  // tasks visible before filling the page with one representative per terminal.
-  for (const candidate of sortedCandidates) {
-    if (candidate.runtimeStatus?.type === "active") {
-      select(candidate);
-    }
-  }
-
-  const representedAdapters = new Set(
-    sortedCandidates
-      .filter((candidate) => selected.has(
-        globalTaskIdentityKey(candidate.adapter, candidate.sessionId),
-      ))
-      .map((candidate) => candidate.adapter),
-  );
-  for (const candidate of sortedCandidates) {
-    if (selected.size >= coverageSize) break;
-    if (representedAdapters.has(candidate.adapter)) continue;
-    select(candidate);
-    representedAdapters.add(candidate.adapter);
-  }
-  for (const candidate of sortedCandidates) {
-    if (selected.size >= coverageSize) break;
-    select(candidate);
-  }
-
-  return [
-    ...sortedCandidates.filter((candidate) => selected.has(
-      globalTaskIdentityKey(candidate.adapter, candidate.sessionId),
-    )),
-    ...sortedCandidates.filter((candidate) => !selected.has(
-      globalTaskIdentityKey(candidate.adapter, candidate.sessionId),
-    )),
-  ];
-}
-
 export function buildGlobalTaskSnapshot(
   candidates: GlobalTaskCandidate[],
-  options: { preserveOrder?: boolean } = {},
 ): GlobalTaskSnapshot {
   const unique = new Map<string, GlobalTaskCandidate>();
   for (const candidate of candidates) {
@@ -134,9 +86,7 @@ export function buildGlobalTaskSnapshot(
       unique.set(key, candidate);
     }
   }
-  const ordered = options.preserveOrder
-    ? [...unique.values()]
-    : sortGlobalTaskCandidates([...unique.values()]);
+  const ordered = sortGlobalTaskCandidates([...unique.values()]);
   return {
     candidates: ordered,
     numberByIdentity: new Map(
@@ -152,12 +102,9 @@ export function updateGlobalTaskSnapshot(params: {
   current?: GlobalTaskSnapshot | null;
   latestCandidates: GlobalTaskCandidate[];
   refresh: boolean;
-  preserveLatestOrder?: boolean;
 }): GlobalTaskSnapshot {
   if (params.refresh || !params.current) {
-    return buildGlobalTaskSnapshot(params.latestCandidates, {
-      preserveOrder: params.preserveLatestOrder,
-    });
+    return buildGlobalTaskSnapshot(params.latestCandidates);
   }
   const latestByIdentity = new Map(
     params.latestCandidates.map((candidate) => [
@@ -321,7 +268,7 @@ export function formatGlobalTaskList(params: {
   const showAdapterLabels = shouldShowGlobalTaskAdapterLabels(page.candidates);
   return [
     "运行终端最近任务",
-    "每个运行终端优先显示最近一条，其余按更新时间补足。",
+    "全部按最近更新时间排序。",
     ...page.candidates.map((candidate, index) => {
       const adapterLabel = showAdapterLabels
         ? `[${getBridgeProvider(candidate.adapter).label}] `

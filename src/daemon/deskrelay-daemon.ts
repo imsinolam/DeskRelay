@@ -232,13 +232,15 @@ import {
   resolveGlobalTaskCandidate,
   resolveGlobalTaskTargetedMessage,
   searchGlobalTaskCandidates,
-  prioritizeGlobalTaskAdapterCoverage,
   selectRunningGlobalTaskAdapters,
   updateGlobalTaskSnapshot,
   type GlobalTaskCandidate,
   type GlobalTaskSnapshot,
 } from "./global-task-index.ts";
-import { listLightweightAdapterSessions } from "./global-task-catalog.ts";
+import {
+  listLightweightAdapterSessions,
+  mergeSessionRuntimeSignals,
+} from "./global-task-catalog.ts";
 
 type DaemonCliOptions = {
   cwd: string;
@@ -1509,6 +1511,9 @@ export function detectOpenMobileAdaptersFromProcessList(
       open.add("reasonix");
     }
     if (/(?:^|[\s/\\])dsh(?:\.exe)?\s+web(?:\s|$)/i.test(line) || /--adapter\s+deepseek(?:\s|$)/i.test(line)) {
+      open.add("deepseek");
+    }
+    if (/\/Applications\/DSH Desktop\.app\/Contents\/MacOS\/DSH Desktop(?:\s|$)/i.test(line)) {
       open.add("deepseek");
     }
     if (processLineHasCommand(line, "opencode") || /--adapter\s+opencode(?:\s|$)/i.test(line)) {
@@ -4118,7 +4123,6 @@ class DeskRelayDaemon {
       try {
         const snapshot = this.globalTaskListSnapshot ?? buildGlobalTaskSnapshot(
           await this.listWechatGlobalTaskCandidates(),
-          { preserveOrder: true },
         );
         const compactTarget = resolveCompactGlobalTaskSearchTarget(
           message.text,
@@ -4288,7 +4292,6 @@ class DeskRelayDaemon {
       try {
         const snapshot = this.globalTaskListSnapshot ?? buildGlobalTaskSnapshot(
           await this.listWechatGlobalTaskCandidates(),
-          { preserveOrder: true },
         );
         const compactTarget = resolveCompactGlobalTaskSearchTarget(
           message.text,
@@ -6914,10 +6917,9 @@ class DeskRelayDaemon {
     appendDaemonLog(
       `wechat_global_task_adapters: adapters=${adapters.join(",") || "none"}`,
     );
-    return prioritizeGlobalTaskAdapterCoverage(
-      await this.listGlobalTaskCandidates(adapters),
-      CODEX_TASK_LIST_PAGE_SIZE,
-    );
+    // Keep the aggregate list strictly ordered by lastUpdatedAt. Runtime
+    // state remains visible through inline markers instead of reordering.
+    return this.listGlobalTaskCandidates(adapters);
   }
 
   private async listGlobalTaskCandidates(
@@ -6929,9 +6931,28 @@ class DeskRelayDaemon {
         const slot = this.slots.get(adapter);
         let candidates: BridgeResumeSessionCandidate[];
         if (slot) {
-          candidates = slot.adapter === "codex"
-            ? await this.getCodexTaskCandidates(slot)
-            : await slot.runtime.listResumeSessions(100);
+          if (slot.adapter === "codex") {
+            candidates = await this.getCodexTaskCandidates(slot);
+          } else if (slot.adapter === "deepseek") {
+            // DSH Desktop and `dsh web` may expose different Harness hosts.
+            // Rediscover the current host for this read-only catalog request,
+            // then merge pending interaction signals from the live slot.
+            const freshCandidates = await listLightweightAdapterSessions(
+              adapter,
+              this.cwd,
+              100,
+            );
+            candidates = mergeSessionRuntimeSignals(freshCandidates, {
+              pendingApprovalIds: slot.pendingConfirmations
+                .map((pending) => pending.threadId)
+                .filter((id): id is string => Boolean(id)),
+              pendingUserInputIds: slot.pendingUserInputs
+                .map((pending) => pending.threadId)
+                .filter((id): id is string => Boolean(id)),
+            });
+          } else {
+            candidates = await slot.runtime.listResumeSessions(100);
+          }
         } else if (adapter === "codex") {
           // Task enumeration is read-only: catalog runtime uses a fresh session and
           // never launches the desktop app, so the desktop UI is not moved.
@@ -7069,7 +7090,6 @@ class DeskRelayDaemon {
       current: this.globalTaskListSnapshot,
       latestCandidates,
       refresh: !preserveSnapshot || !this.globalTaskListSnapshot,
-      preserveLatestOrder: true,
     });
     this.globalTaskListSnapshot = snapshot;
     this.activeTaskListScope = "global";
