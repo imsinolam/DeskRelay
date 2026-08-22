@@ -68,11 +68,11 @@ type ResetSyncArgs = {
 };
 
 function log(message: string): void {
-  process.stderr.write(`[deskrelay-wechat] ${message}\n`);
+  process.stderr.write(`[werelay-wechat] ${message}\n`);
 }
 
 function logError(message: string): void {
-  process.stderr.write(`[deskrelay-wechat] ERROR: ${message}\n`);
+  process.stderr.write(`[werelay-wechat] ERROR: ${message}\n`);
 }
 
 const transport = new WeChatTransport({ log, logError });

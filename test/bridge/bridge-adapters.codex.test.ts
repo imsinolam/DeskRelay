@@ -1967,7 +1967,7 @@ describe("Codex desktop latest conversation message", () => {
               content: [{
                 type: "text",
                 text: [
-                  "[DeskRelay WeChat note]",
+                  "[WeRelay WeChat note]",
                   "Your final reply will be forwarded back to a WeChat chat.",
                   "file C:\\Users\\example\\Desktop\\document.docx",
                   "",
@@ -4065,7 +4065,7 @@ describe("Codex desktop IPC transport", () => {
         threadId: "thread_1",
         turnId: "turn_1",
         reason: "允许运行低风险检查吗？",
-        command: "/bin/zsh -lc 'echo deskrelay'",
+        command: "/bin/zsh -lc 'echo werelay'",
         cwd: process.cwd(),
         availableDecisions: ["accept", "cancel"],
       },
@@ -4411,7 +4411,7 @@ describe("Codex desktop IPC transport", () => {
         params: {
           threadId: "thread_summary",
           reason: "需要执行发布检查",
-          command: "/bin/zsh -lc 'rm -rf /tmp/deskrelay-summary-approval'",
+          command: "/bin/zsh -lc 'rm -rf /tmp/werelay-summary-approval'",
           cwd: process.cwd(),
           availableDecisions: ["accept", "cancel"],
         },

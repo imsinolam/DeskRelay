@@ -19,10 +19,10 @@ export interface VersionInfo {
 
 // npm registry 是权威更新源——它是用户实际安装的渠道;GitHub tags 作为回退,
 // 以便在 registry 暂时不可达或包尚未发布时仍能给出最新版本。
-const NPM_PACKAGE_NAME = "deskrelay";
+const NPM_PACKAGE_NAME = "werelay";
 const DEFAULT_NPM_REGISTRY_URL = `https://registry.npmjs.org/${NPM_PACKAGE_NAME}/latest`;
 const DEFAULT_GITHUB_TAGS_URL =
-  "https://api.github.com/repos/UNLINEARITY/DeskRelay/tags?per_page=20";
+  "https://api.github.com/repos/imsinolam/WeRelay/tags?per_page=20";
 const FETCH_TIMEOUT_MS = 10_000;
 
 export interface FetchLatestVersionOptions {
@@ -96,7 +96,7 @@ async function fetchVersionFromGithub(deps: FetchDeps): Promise<string | null> {
 
 /**
  * 从 npm registry 获取最新版本号(回退到 GitHub tags)。
- * 通过 HTTPS 请求而非本地 git 命令,因此对全局安装的命令(deskrelay-check-update)同样可用。
+ * 通过 HTTPS 请求而非本地 git 命令,因此对全局安装的命令(werelay-check-update)同样可用。
  */
 export async function fetchLatestVersion(
   options: FetchLatestVersionOptions = {},
@@ -243,12 +243,12 @@ export function formatUpdateMessage(versionInfo: VersionInfo): string {
 [Update Available] Version ${latest} is available (current: ${current})
 
 Update instructions:
-   cd DeskRelay
+   cd WeRelay
    git pull
    bun install
    npm install -g .
 
 For more information:
-   https://github.com/UNLINEARITY/DeskRelay/releases
+   https://github.com/imsinolam/WeRelay/releases
 `;
 }

@@ -71,7 +71,7 @@ import {
   shouldSendDaemonRestartNotice,
   retrySwitchedAdapterTaskList,
   waitForVisibleClientConnection,
-} from "../../src/daemon/deskrelay-daemon.ts";
+} from "../../src/daemon/werelay-daemon.ts";
 import { redactSensitiveCommandText } from "../../src/bridge/bridge-utils.ts";
 import type { BridgeLockPayload } from "../../src/bridge/bridge-state.ts";
 import type {
@@ -111,7 +111,7 @@ function buildDaemonEndpoint(overrides: Partial<DaemonEndpoint> = {}): DaemonEnd
 
 describe("mobile image persistence", () => {
   test("does not delete an uploaded image when desktop acceptance is uncertain", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const start = source.indexOf("  private async sendMobileMessage(");
     const end = source.indexOf("\n  private persistMobileImages", start);
     expect(start).toBeGreaterThan(-1);
@@ -298,7 +298,7 @@ describe("daemon sequential approvals", () => {
   });
 
   test("uses the sequential handler before ordinary single-command dispatch", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const inboundStart = source.indexOf("  private async handleInboundMessage(");
     const commandIndex = source.indexOf("    let command = resolveDaemonWechatCommand", inboundStart);
     const sequenceIndex = source.indexOf("parseDaemonApprovalShortcutSequence", inboundStart);
@@ -314,7 +314,7 @@ describe("daemon sequential approvals", () => {
 
 describe("daemon startup resilience", () => {
   test("starts the mobile web before the initial adapter and keeps polling if that adapter fails", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const ipc = source.indexOf("  await daemon.startIpcServer();");
     const mobile = source.indexOf("  await daemon.startCodexMobileWeb();", ipc);
     const initial = source.indexOf("    await daemon.runInitialAdapter(options);", mobile);
@@ -331,7 +331,7 @@ describe("daemon startup resilience", () => {
   });
 
   test("merges three or more unsent completion notifications before retrying individually", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const retryStart = source.indexOf("  private async retryPendingCodexCompletionNotifications(");
     const retryEnd = source.indexOf("\n  private queueWechatMessage(", retryStart);
     const retryBlock = source.slice(retryStart, retryEnd);
@@ -345,7 +345,7 @@ describe("daemon startup resilience", () => {
   });
 
   test("retries undelivered approvals before handling the inbound message that refreshed WeChat context", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts").replace(/\r\n?/g, "\n");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts").replace(/\r\n?/g, "\n");
     const loopStart = source.indexOf(
       "      for (const message of pollResult.messages) {",
     );
@@ -369,7 +369,7 @@ describe("daemon startup resilience", () => {
   });
 
   test("keeps restored approval deliveries while the desktop approval index is still warming up", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const retryStart = source.indexOf("  private async isApprovalNotificationStillPending(");
     const retryEnd = source.indexOf("  private deliverCodexCompletionNotification(", retryStart);
     const retrySource = source.slice(retryStart, retryEnd);
@@ -423,7 +423,7 @@ describe("mobile transcript visibility", () => {
   });
 });
 
-describe("deskrelay-daemon helpers", () => {
+describe("werelay-daemon helpers", () => {
   test("redacts command credentials before approval text is logged or persisted", () => {
     expect(redactSensitiveCommandText(
       "sshpass -p 'secret-value' ssh host Authorization=BearerToken --token=abc",
@@ -616,7 +616,7 @@ describe("deskrelay-daemon helpers", () => {
   });
 
   test("wires task-scoped automatic approval into approval and completion events", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const approvalStart = source.indexOf('      case "approval_required":');
     const approvalEnd = source.indexOf('      case "user_input_required":', approvalStart);
     const completionStart = source.indexOf('      case "task_complete":');
@@ -670,7 +670,7 @@ describe("deskrelay-daemon helpers", () => {
   });
 
   test("persists resolved approvals for the mobile task transcript", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const readStart = source.indexOf("  private async readMobileMessages(");
     const readEnd = source.indexOf("  private async readHistoricalLatestMessage(", readStart);
     const webStart = source.indexOf("  private async resolveMobileApproval(");
@@ -1052,7 +1052,7 @@ describe("deskrelay-daemon helpers", () => {
   });
 
   test("allows bare task commands before an active adapter has been selected", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const inboundStart = source.indexOf("  private async handleInboundMessage(");
     const inboundEnd = source.indexOf("\n  private async handleDaemonTaskTargetedMessage(", inboundStart);
     const inboundBlock = source.slice(inboundStart, inboundEnd);
@@ -1065,7 +1065,7 @@ describe("deskrelay-daemon helpers", () => {
   });
 
   test("builds the ClawBot global list from running terminals instead of every supported adapter", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const listStart = source.indexOf("  private async listWechatGlobalTaskCandidates(");
     const listEnd = source.indexOf("\n  private async listGlobalTaskCandidates(", listStart);
     const listBlock = source.slice(listStart, listEnd);
@@ -1080,7 +1080,7 @@ describe("deskrelay-daemon helpers", () => {
   });
 
   test("rediscovers the current DeepSeek Harness host while preserving live interaction flags", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const listStart = source.indexOf("  private async listGlobalTaskCandidates(");
     const listEnd = source.indexOf("\n  private async activateExactGlobalTask(", listStart);
     const listBlock = source.slice(listStart, listEnd);
@@ -1091,7 +1091,7 @@ describe("deskrelay-daemon helpers", () => {
   });
 
   test("enumerates disconnected Codex tasks without restoring a desktop task", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const listStart = source.indexOf("  private async listGlobalTaskCandidates(");
     const listEnd = source.indexOf("\n  private async activateExactGlobalTask(", listStart);
     const listBlock = source.slice(listStart, listEnd);
@@ -1497,7 +1497,7 @@ describe("deskrelay-daemon helpers", () => {
       3,
       "thread_a",
       "codex-clawbot",
-    )).toBe("[DeskRelay]\n需要审批");
+    )).toBe("[WeRelay]\n需要审批");
   });
 
   test("does not reuse an older turn reply as the next completion preview", () => {
@@ -1548,7 +1548,7 @@ describe("deskrelay-daemon helpers", () => {
         role: "user",
         turnId: "turn_current",
         text: [
-          "[DeskRelay WeChat note]",
+          "[WeRelay WeChat note]",
           "English bridge guidance that must not enter the completion notice.",
           "",
           "[User request]",
@@ -1686,7 +1686,7 @@ describe("deskrelay-daemon helpers", () => {
   });
 
   test("retains failed completion notices for retry after context refresh", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     expect(source).toContain("retryPendingCodexCompletionNotifications");
     expect(source).toContain("codex_completion_pending");
     expect(source).toContain("codex_completion_resent");
@@ -1747,10 +1747,10 @@ describe("deskrelay-daemon helpers", () => {
 
   test("formats concise restart notices", () => {
     expect(formatDaemonRestartNotice(true)).toBe(
-      "DeskRelay 已重启，仍在原任务。\n直接发送消息即可继续；发送“任务”可切换。",
+      "WeRelay 已重启，仍在原任务。\n直接发送消息即可继续；发送“任务”可切换。",
     );
     expect(formatDaemonRestartNotice(false)).toBe(
-      "DeskRelay 已重启。\n发送“任务”选择要继续的任务。",
+      "WeRelay 已重启。\n发送“任务”选择要继续的任务。",
     );
   });
 
@@ -1807,7 +1807,7 @@ describe("deskrelay-daemon helpers", () => {
     expect(shouldForwardDaemonThreadSwitch("local_follow")).toBe(false);
     expect(shouldForwardDaemonThreadSwitch("local_turn")).toBe(false);
 
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const sessionSwitchStart = source.indexOf('      case "session_switched":');
     const sessionSwitchEnd = source.indexOf('      case "thread_switched":', sessionSwitchStart);
     expect(sessionSwitchStart).toBeGreaterThan(-1);
@@ -1836,7 +1836,7 @@ describe("deskrelay-daemon helpers", () => {
   });
 
   test("creates ClawBot tasks without clearing other background task state", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const start = source.indexOf('      case "new_session":');
     const end = source.indexOf('      case "stop":', start);
     const block = source.slice(start, end);
@@ -1851,7 +1851,7 @@ describe("deskrelay-daemon helpers", () => {
   });
 
   test("keeps ClawBot task selection independent from desktop task switching", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const targetedStart = source.indexOf("  private async handleDaemonTaskTargetedMessage(");
     const targetedEnd = source.indexOf("\n  private async handleSystemCommand(", targetedStart);
     const resumeStart = source.indexOf('      case "resume": {');
@@ -1876,7 +1876,7 @@ describe("deskrelay-daemon helpers", () => {
   });
 
   test("shows the selected adapter task list after a successful switch", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const switchStart = source.indexOf("    const switchAdapter = parseDaemonSwitchCommand(message.text);");
     const switchEnd = source.indexOf("\n    if (message.text.trim().toLowerCase() === \"/daemon-stop\")", switchStart);
     const switchBlock = source.slice(switchStart, switchEnd);
@@ -1890,7 +1890,7 @@ describe("deskrelay-daemon helpers", () => {
   });
 
   test("retries exact global task restore while the companion is still starting", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const activationStart = source.indexOf("  private async activateExactGlobalTask(");
     const activationEnd = source.indexOf(
       "\n  private async handleGlobalTaskTargetedMessage(",
@@ -1908,7 +1908,7 @@ describe("deskrelay-daemon helpers", () => {
   });
 
   test("routes global task commands and number-colon messages through adapter plus session identity", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const inboundStart = source.indexOf("  private async handleInboundMessage(");
     const inboundEnd = source.indexOf("\n  private async handleDaemonTaskTargetedMessage(", inboundStart);
     const inboundBlock = source.slice(inboundStart, inboundEnd);
@@ -1927,7 +1927,7 @@ describe("deskrelay-daemon helpers", () => {
   });
 
   test("keeps adapter switches scoped to that adapter while mobile task board uses the global catalog", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const switchStart = source.indexOf("    const switchAdapter = parseDaemonSwitchCommand(message.text);");
     const switchEnd = source.indexOf('\n    if (message.text.trim().toLowerCase() === "/daemon-stop")', switchStart);
     const switchBlock = source.slice(switchStart, switchEnd);
@@ -1942,7 +1942,7 @@ describe("deskrelay-daemon helpers", () => {
   });
 
   test("does not restrict stable number-colon routing to Codex", () => {
-    const source = readRepoFile("src/daemon/deskrelay-daemon.ts");
+    const source = readRepoFile("src/daemon/werelay-daemon.ts");
     const routeStart = source.indexOf("    const targetedTaskMessage =");
     const routeEnd = source.indexOf("\n    const taskListScope = resolveDaemonTaskListScope", routeStart);
     const routeBlock = source.slice(routeStart, routeEnd);
@@ -2254,7 +2254,7 @@ describe("deskrelay-daemon helpers", () => {
     });
 
     expect(command).toContain("start");
-    expect(command).toContain('"deskrelay-claude"');
+    expect(command).toContain('"werelay-claude"');
     expect(command).toContain('/D "D:\\work"');
     expect(command).toContain('"C:\\Program Files\\bridge\\local-companion.js"');
   });
@@ -2506,13 +2506,13 @@ describe("deskrelay-daemon helpers", () => {
             pid: 100,
             parentPid: 50,
             commandLine:
-              '"C:\\Program Files\\nodejs\\node.exe" C:\\Users\\example\\AppData\\Roaming\\npm\\node_modules\\deskrelay\\bin\\deskrelay-daemon.mjs --cwd C:\\Users\\example',
+              '"C:\\Program Files\\nodejs\\node.exe" C:\\Users\\example\\AppData\\Roaming\\npm\\node_modules\\werelay\\bin\\werelay-daemon.mjs --cwd C:\\Users\\example',
           },
           {
             pid: 101,
             parentPid: 100,
             commandLine:
-              '"C:\\Program Files\\nodejs\\node.exe" C:\\repo\\dist\\daemon\\deskrelay-daemon.js --cwd C:\\Users\\example',
+              '"C:\\Program Files\\nodejs\\node.exe" C:\\repo\\dist\\daemon\\werelay-daemon.js --cwd C:\\Users\\example',
           },
         ];
       },
@@ -2749,16 +2749,16 @@ describe("deskrelay-daemon helpers", () => {
       bin?: Record<string, string>;
       scripts?: Record<string, string>;
     };
-    const mainBinSource = readRepoFile("bin/deskrelay.mjs");
-    const binSource = readRepoFile("bin/deskrelay-daemon.mjs");
-    const reasonixBinSource = readRepoFile("bin/deskrelay-bridge-reasonix.mjs");
+    const mainBinSource = readRepoFile("bin/werelay.mjs");
+    const binSource = readRepoFile("bin/werelay-daemon.mjs");
+    const reasonixBinSource = readRepoFile("bin/werelay-bridge-reasonix.mjs");
 
-    expect(packageJson.bin?.deskrelay).toBe("bin/deskrelay.mjs");
-    expect(mainBinSource).toContain('runJsEntry("dist/daemon/deskrelay-daemon.js")');
-    expect(packageJson.bin?.["deskrelay-daemon"]).toBe("bin/deskrelay-daemon.mjs");
-    expect(packageJson.scripts?.daemon).toContain("src/daemon/deskrelay-daemon.ts");
-    expect(binSource).toContain('runJsEntry("dist/daemon/deskrelay-daemon.js")');
-    expect(packageJson.bin?.["deskrelay-bridge-reasonix"]).toBe("bin/deskrelay-bridge-reasonix.mjs");
+    expect(packageJson.bin?.werelay).toBe("bin/werelay.mjs");
+    expect(mainBinSource).toContain('runJsEntry("dist/daemon/werelay-daemon.js")');
+    expect(packageJson.bin?.["werelay-daemon"]).toBe("bin/werelay-daemon.mjs");
+    expect(packageJson.scripts?.daemon).toContain("src/daemon/werelay-daemon.ts");
+    expect(binSource).toContain('runJsEntry("dist/daemon/werelay-daemon.js")');
+    expect(packageJson.bin?.["werelay-bridge-reasonix"]).toBe("bin/werelay-bridge-reasonix.mjs");
     expect(packageJson.scripts?.["bridge:reasonix"]).toContain("--adapter reasonix");
     expect(reasonixBinSource).toContain('["--adapter", "reasonix"]');
   });

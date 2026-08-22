@@ -140,7 +140,7 @@ describe("wechat upload limits", () => {
   test("treats WeChat session timeout as fatal auth instead of retryable network", () => {
     expect(
       classifyWechatTransportError(
-        new Error('WeChat session timed out. Run "deskrelay-setup" to log in again.'),
+        new Error('WeChat session timed out. Run "werelay-setup" to log in again.'),
       ),
     ).toEqual({
       kind: "auth",

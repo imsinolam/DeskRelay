@@ -106,7 +106,7 @@ function providerSessionSource(provider: BridgeProviderDefinition): string {
     case "desktop_owner":
       return `任务由 ${provider.label} 桌面端持有，手机继续同一条任务。`;
     case "visible_cli_owner":
-      return "连接电脑上由 DeskRelay 打开的可见终端，手机与电脑共用同一条任务。";
+      return "连接电脑上由 WeRelay 打开的可见终端，手机与电脑共用同一条任务。";
     case "shared_service_owner":
       return "连接电脑上的本机服务，手机与电脑界面共用同一条任务。";
     default:
@@ -244,7 +244,7 @@ async function inspectDependency(
     let host = dependency.host ?? "127.0.0.1";
     let port = dependency.port;
     if (provider.id === "deepseek") {
-      const configuredUrl = options.env.DESKRELAY_DEEPSEEK_HARNESS_URL?.trim();
+      const configuredUrl = options.env.WERELAY_DEEPSEEK_HARNESS_URL?.trim();
       if (configuredUrl) {
         try {
           const url = new URL(configuredUrl);

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  startDeskRelayRelayServer,
+  startWeRelayRelayServer,
 } from "./relay-server.ts";
 
 export type RelayServerCliOptions = {
@@ -51,31 +51,31 @@ export function parseRelayServerCliOptions(
   env: NodeJS.ProcessEnv = process.env,
 ): RelayServerCliOptions {
   const host = readOption(args, "--host")?.trim() ||
-    env.DESKRELAY_RELAY_HOST?.trim() ||
+    env.WERELAY_RELAY_HOST?.trim() ||
     "127.0.0.1";
   const allowNonLoopback = args.includes("--allow-non-loopback") ||
-    isEnabled(env.DESKRELAY_RELAY_ALLOW_NON_LOOPBACK);
+    isEnabled(env.WERELAY_RELAY_ALLOW_NON_LOOPBACK);
   if (!isLoopbackRelayHost(host) && !allowNonLoopback) {
     throw new Error(
       "Relay 默认只允许监听本机回环地址。若已做好防火墙、TLS 和访问控制，可显式添加 --allow-non-loopback。",
     );
   }
   const rawPort = readOption(args, "--port")?.trim() ||
-    env.DESKRELAY_RELAY_PORT?.trim() ||
+    env.WERELAY_RELAY_PORT?.trim() ||
     "14396";
   const port = Number.parseInt(rawPort, 10);
   if (!Number.isInteger(port) || port < 0 || port > 65_535) {
     throw new Error("Relay 监听端口无效。");
   }
   const deviceId = readOption(args, "--device-id")?.trim() ||
-    env.DESKRELAY_RELAY_DEVICE_ID?.trim() ||
+    env.WERELAY_RELAY_DEVICE_ID?.trim() ||
     "default";
-  const deviceToken = env.DESKRELAY_RELAY_DEVICE_TOKEN?.trim() || "";
+  const deviceToken = env.WERELAY_RELAY_DEVICE_TOKEN?.trim() || "";
   if (!deviceToken) {
-    throw new Error("缺少 DESKRELAY_RELAY_DEVICE_TOKEN，Relay 无法启动。");
+    throw new Error("缺少 WERELAY_RELAY_DEVICE_TOKEN，Relay 无法启动。");
   }
-  const dataDir = env.DESKRELAY_DATA_DIR?.trim() || path.join(os.homedir(), ".deskrelay");
-  const taskLinkStateFile = env.DESKRELAY_RELAY_TASK_LINK_STATE_FILE?.trim() ||
+  const dataDir = env.WERELAY_DATA_DIR?.trim() || path.join(os.homedir(), ".werelay");
+  const taskLinkStateFile = env.WERELAY_RELAY_TASK_LINK_STATE_FILE?.trim() ||
     path.join(dataDir, "relay-task-links.json");
   return {
     host,
@@ -94,16 +94,16 @@ export async function main(
   if (options.allowNonLoopback && !isLoopbackRelayHost(options.host)) {
     process.stderr.write(`${formatRelayNonLoopbackWarning(options.host)}\n`);
   }
-  const server = await startDeskRelayRelayServer({
+  const server = await startWeRelayRelayServer({
     host: options.host,
     port: options.port,
     deviceId: options.deviceId,
     deviceToken: options.deviceToken,
     taskLinkStateFile: options.taskLinkStateFile,
-    logger: (message) => process.stderr.write(`[DeskRelay Relay] ${message}\n`),
+    logger: (message) => process.stderr.write(`[WeRelay Relay] ${message}\n`),
   });
   process.stdout.write(
-    `DeskRelay Relay 已启动：http://${server.host}:${server.port}\n`,
+    `WeRelay Relay 已启动：http://${server.host}:${server.port}\n`,
   );
 
   let closing = false;
@@ -112,7 +112,7 @@ export async function main(
       return;
     }
     closing = true;
-    process.stdout.write(`收到 ${signal}，正在停止 DeskRelay Relay。\n`);
+    process.stdout.write(`收到 ${signal}，正在停止 WeRelay Relay。\n`);
     void server.close().finally(() => process.exit(0));
   };
   process.on("SIGINT", () => close("SIGINT"));

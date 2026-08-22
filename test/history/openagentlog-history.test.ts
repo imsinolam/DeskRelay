@@ -18,7 +18,7 @@ afterEach(() => {
 });
 
 function createRuntimeFile(overrides: Record<string, unknown> = {}): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-oal-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-oal-"));
   tempDirs.push(dir);
   const runtimePath = path.join(dir, "integration-runtime.json");
   fs.writeFileSync(runtimePath, JSON.stringify({

@@ -145,7 +145,7 @@ describe("Codex completion delivery queue", () => {
         threadId: `thread-${index}`,
         title: `任务 ${index}`,
         completedAt: `2026-08-08T0${index}:00:00.000Z`,
-        url: `https://deskrelay.example/t/${index}`,
+        url: `https://werelay.example/t/${index}`,
         texts: [`完成 ${index}`],
       });
     }
@@ -165,7 +165,7 @@ describe("Codex completion delivery queue", () => {
         threadId: "a",
         title: "整理发布文档",
         completedAt: "2026-08-08T08:00:00.000Z",
-        url: "https://deskrelay.example/t/a",
+        url: "https://werelay.example/t/a",
         texts: ["完成"],
         nextTextIndex: 0,
         createdAt: "2026-08-08T08:00:00.000Z",
@@ -175,7 +175,7 @@ describe("Codex completion delivery queue", () => {
         threadId: "a",
         title: "整理发布文档",
         completedAt: "2026-08-08T09:00:00.000Z",
-        url: "https://deskrelay.example/t/a",
+        url: "https://werelay.example/t/a",
         texts: ["完成"],
         nextTextIndex: 0,
         createdAt: "2026-08-08T09:00:00.000Z",
@@ -185,7 +185,7 @@ describe("Codex completion delivery queue", () => {
         threadId: "b",
         title: "修复微信任务列表",
         completedAt: "2026-08-08T10:30:00.000Z",
-        url: "https://deskrelay.example/t/b",
+        url: "https://werelay.example/t/b",
         texts: ["完成"],
         nextTextIndex: 0,
         createdAt: "2026-08-08T10:30:00.000Z",
@@ -195,8 +195,8 @@ describe("Codex completion delivery queue", () => {
     expect(summary).toContain("积压完成消息已合并：3 条，涉及 2 个任务");
     expect(summary).toContain("08-08 18:30 · 修复微信任务列表");
     expect(summary).toContain("08-08 17:00 · 整理发布文档（2 条完成记录）");
-    expect(summary).toContain("https://deskrelay.example/t/a");
-    expect(summary).toContain("https://deskrelay.example/t/b");
+    expect(summary).toContain("https://werelay.example/t/a");
+    expect(summary).toContain("https://werelay.example/t/b");
     expect(summary.indexOf("修复微信任务列表")).toBeLessThan(
       summary.indexOf("整理发布文档"),
     );

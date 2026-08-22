@@ -646,7 +646,7 @@ export class ReasonixServerAdapter implements BridgeAdapter {
     const generation = ++this.generation;
     const portFile = path.join(
       os.tmpdir(),
-      `deskrelay-reasonix-${process.pid}-${this.serverPort}.port`,
+      `werelay-reasonix-${process.pid}-${this.serverPort}.port`,
     );
     try {
       fs.unlinkSync(portFile);
@@ -1052,7 +1052,7 @@ export class ReasonixServerAdapter implements BridgeAdapter {
   }
 
   private openOfficialWebUi(): void {
-    if (process.env.DESKRELAY_REASONIX_OPEN_WEB?.trim() === "0") return;
+    if (process.env.WERELAY_REASONIX_OPEN_WEB?.trim() === "0") return;
     const url = this.endpoint;
     try {
       if (process.platform === "darwin") {

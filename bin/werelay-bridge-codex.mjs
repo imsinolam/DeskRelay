@@ -2,4 +2,4 @@
 
 import { runJsEntry } from "./_run-entry.mjs";
 
-runJsEntry("dist/bridge/deskrelay-bridge.js");
+runJsEntry("dist/bridge/werelay-bridge.js", ["--adapter", "codex"]);

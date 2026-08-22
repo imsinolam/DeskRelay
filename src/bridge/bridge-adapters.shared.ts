@@ -301,7 +301,7 @@ export function assertNoReservedExtraCliArgs(
     return;
   }
 
-  throw new Error(`${owner} is managed by DeskRelay; do not pass ${blocked} as an extra CLI argument.`);
+  throw new Error(`${owner} is managed by WeRelay; do not pass ${blocked} as an extra CLI argument.`);
 }
 
 export function isClaudeInvalidResumeError(text: string): boolean {
@@ -695,7 +695,7 @@ export function buildCodexDynamicToolCallFailureResponse(): Record<string, unkno
     contentItems: [
       {
         type: "inputText",
-        text: "Dynamic tool calls are not supported by DeskRelay.",
+        text: "Dynamic tool calls are not supported by WeRelay.",
       },
     ],
     success: false,
@@ -1581,7 +1581,10 @@ export function isTrustedCodexFallbackSession(meta: CodexSessionMeta | null | un
   }
 
   const originator = normalizeOutput(meta?.originator ?? "").trim().toLowerCase();
-  return sessionSource === "vscode" && originator === "deskrelay-bridge";
+  return sessionSource === "vscode" && (
+    originator === "werelay-bridge" ||
+    originator === "deskrelay-bridge"
+  );
 }
 
 export function parseCodexSessionUserMessage(line: string): string | null {

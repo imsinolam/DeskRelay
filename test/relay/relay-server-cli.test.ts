@@ -5,13 +5,13 @@ import {
   parseRelayServerCliOptions,
 } from "../../src/relay/relay-server-cli.ts";
 
-describe("DeskRelay relay server CLI", () => {
+describe("WeRelay relay server CLI", () => {
   test("defaults to a loopback listener without putting the device token in process arguments", () => {
     expect(parseRelayServerCliOptions(
       ["--host", "127.0.0.1", "--port", "14396", "--device-id", "example-device"],
       {
-        DESKRELAY_RELAY_DEVICE_TOKEN: "server-secret",
-        DESKRELAY_DATA_DIR: "/tmp/deskrelay-test",
+        WERELAY_RELAY_DEVICE_TOKEN: "server-secret",
+        WERELAY_DATA_DIR: "/tmp/werelay-test",
       },
     )).toEqual({
       host: "127.0.0.1",
@@ -19,7 +19,7 @@ describe("DeskRelay relay server CLI", () => {
       deviceId: "example-device",
       deviceToken: "server-secret",
       allowNonLoopback: false,
-      taskLinkStateFile: path.join("/tmp/deskrelay-test", "relay-task-links.json"),
+      taskLinkStateFile: path.join("/tmp/werelay-test", "relay-task-links.json"),
     });
   });
 
@@ -27,7 +27,7 @@ describe("DeskRelay relay server CLI", () => {
     for (const host of ["0.0.0.0", "::", "192.168.1.20", "example.com"]) {
       expect(() => parseRelayServerCliOptions(
         ["--host", host],
-        { DESKRELAY_RELAY_DEVICE_TOKEN: "server-secret" },
+        { WERELAY_RELAY_DEVICE_TOKEN: "server-secret" },
       )).toThrow("默认只允许监听本机回环地址");
     }
   });
@@ -35,7 +35,7 @@ describe("DeskRelay relay server CLI", () => {
   test("requires an explicit dangerous switch for a non-loopback listener", () => {
     expect(parseRelayServerCliOptions(
       ["--host", "0.0.0.0", "--allow-non-loopback"],
-      { DESKRELAY_RELAY_DEVICE_TOKEN: "server-secret" },
+      { WERELAY_RELAY_DEVICE_TOKEN: "server-secret" },
     )).toMatchObject({
       host: "0.0.0.0",
       allowNonLoopback: true,
@@ -44,7 +44,7 @@ describe("DeskRelay relay server CLI", () => {
 
   test("requires a device token", () => {
     expect(() => parseRelayServerCliOptions([], {})).toThrow(
-      "缺少 DESKRELAY_RELAY_DEVICE_TOKEN",
+      "缺少 WERELAY_RELAY_DEVICE_TOKEN",
     );
   });
 });

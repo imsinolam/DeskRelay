@@ -77,10 +77,10 @@ export function resolveWorkBuddyDesktopSocketPath(options: {
   const platform = options.platform ?? process.platform;
   const uid = options.uid ?? (typeof process.getuid === "function" ? process.getuid() : undefined);
   if (platform === "win32") {
-    return `\\\\.\\pipe\\deskrelay-workbuddy-${uid ?? "user"}`;
+    return `\\\\.\\pipe\\werelay-workbuddy-${uid ?? "user"}`;
   }
   const tmpDir = options.tmpDir ?? (platform === "darwin" ? "/tmp" : os.tmpdir());
-  return path.posix.join(tmpDir, `deskrelay-workbuddy-${uid ?? "user"}.sock`);
+  return path.posix.join(tmpDir, `werelay-workbuddy-${uid ?? "user"}.sock`);
 }
 
 export function resolveWorkBuddyDesktopHookPath(dataDir = resolveChannelDataDir()): string {
@@ -93,8 +93,8 @@ const fs = require("node:fs");
 const net = require("node:net");
 const childProcess = require("node:child_process");
 
-const socketPath = process.env.DESKRELAY_WORKBUDDY_SOCKET;
-const logPath = process.env.DESKRELAY_WORKBUDDY_HOOK_LOG;
+const socketPath = process.env.WERELAY_WORKBUDDY_SOCKET;
+const logPath = process.env.WERELAY_WORKBUDDY_HOOK_LOG;
 
 function log(message) {
   if (!logPath) return;
@@ -154,10 +154,10 @@ if (socketPath && process.type === "browser" && !globalThis.__deskRelayWorkBuddy
           } catch (error) {
             send(client, {
               type: "rpc-error",
-              id: typeof frame?.id === "string" ? frame.id : "deskrelay-invalid-request",
-              channel: typeof frame?.channel === "string" ? frame.channel : "deskrelay",
+              id: typeof frame?.id === "string" ? frame.id : "werelay-invalid-request",
+              channel: typeof frame?.channel === "string" ? frame.channel : "werelay",
               error: {
-                code: "DESKRELAY_BRIDGE_ERROR",
+                code: "WERELAY_BRIDGE_ERROR",
                 message: error instanceof Error ? error.message : String(error),
               },
             });
@@ -372,8 +372,8 @@ export async function launchWorkBuddyWithDesktopRelay(options: {
     ...process.env,
     ...options.env,
     NODE_OPTIONS: buildNodeOptions(options.env?.NODE_OPTIONS ?? process.env.NODE_OPTIONS, hookPath),
-    DESKRELAY_WORKBUDDY_SOCKET: socketPath,
-    DESKRELAY_WORKBUDDY_HOOK_LOG: options.env?.DESKRELAY_WORKBUDDY_HOOK_LOG ??
+    WERELAY_WORKBUDDY_SOCKET: socketPath,
+    WERELAY_WORKBUDDY_HOOK_LOG: options.env?.WERELAY_WORKBUDDY_HOOK_LOG ??
       path.join(resolveChannelDataDir(), "runtime", "workbuddy-desktop-hook.log"),
   };
   const child = spawn(executable, [appAsar], {
@@ -488,7 +488,7 @@ export class WorkBuddyDesktopRpcClient implements WorkBuddyDesktopRpcClientLike 
     }
     if (!this.allowDesktopApplicationLaunch) {
       throw new Error(
-        "DeskRelay 后台不会自动启动或重启 WorkBuddy；请从网页或 ClawBot 明确选择 WorkBuddy 后重试。",
+        "WeRelay 后台不会自动启动或重启 WorkBuddy；请从网页或 ClawBot 明确选择 WorkBuddy 后重试。",
       );
     }
     const launchOptions = {
@@ -520,7 +520,7 @@ export class WorkBuddyDesktopRpcClient implements WorkBuddyDesktopRpcClientLike 
     if (!socket || socket.destroyed) {
       throw new Error("WorkBuddy Desktop 连接已断开，请重新切换到 WorkBuddy。");
     }
-    const id = `deskrelay-${crypto.randomUUID()}`;
+    const id = `werelay-${crypto.randomUUID()}`;
     return await new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);

@@ -6,20 +6,22 @@ export const CODEX_MOBILE_HTML = `<!doctype html>
   <meta name="theme-color" content="#ffffff">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <title>DeskRelay</title>
-  <link rel="stylesheet" href="/app.css?appv=__DESK_RELAY_ASSET_VERSION__">
+  <title>WeRelay</title>
+  <link rel="stylesheet" href="/app.css?appv=__WE_RELAY_ASSET_VERSION__">
 </head>
 <body>
-  <section class="boot-screen" id="boot-screen" aria-label="正在打开 DeskRelay">
+  <section class="boot-screen" id="boot-screen" aria-label="正在打开 WeRelay">
     <div class="boot-content">
-      <div class="boot-wordmark">DeskRelay</div>
+      <div class="boot-wordmark">WeRelay</div>
+      <div class="boot-activity" aria-hidden="true"><span></span><span></span><span></span></div>
       <div class="boot-status" id="boot-status">正在检查电脑连接状态…</div>
+      <div class="boot-detail" id="boot-detail">正在确认服务器和电脑是否在线。</div>
     </div>
   </section>
 
   <section class="auth-screen" id="auth-screen" aria-labelledby="auth-title" hidden>
     <div class="auth-card">
-      <a class="auth-wordmark" href="/about" aria-label="查看 DeskRelay 项目说明">DeskRelay</a>
+      <a class="auth-wordmark" href="/about" aria-label="查看 WeRelay 项目说明">WeRelay</a>
       <h1 id="auth-title">验证访问</h1>
       <p id="auth-description">请输入移动版访问密码。</p>
       <form class="auth-form" id="auth-form">
@@ -40,8 +42,8 @@ export const CODEX_MOBILE_HTML = `<!doctype html>
     <aside class="sidebar" id="sidebar" aria-label="任务列表">
       <div class="sidebar-head">
         <div class="workspace-area">
-          <button class="workspace-switcher" id="workspace-switcher" type="button" aria-label="切换终端或打开 DeskRelay 菜单" aria-expanded="false">
-            <span class="workspace-product">DeskRelay</span>
+          <button class="workspace-switcher" id="workspace-switcher" type="button" aria-label="切换终端或打开 WeRelay 菜单" aria-expanded="false">
+            <span class="workspace-product">WeRelay</span>
             <span class="workspace-divider">·</span>
             <span class="workspace-adapter" id="active-adapter-label">Codex</span>
             <span class="workspace-switch-progress" id="workspace-switch-progress" aria-hidden="true" hidden></span>
@@ -128,7 +130,7 @@ export const CODEX_MOBILE_HTML = `<!doctype html>
 
       <section class="messages" id="messages" aria-live="polite">
         <div class="empty-state" id="empty-state">
-          <div class="empty-wordmark">DeskRelay</div>
+          <div class="empty-wordmark">WeRelay</div>
           <h1>从手机继续任务</h1>
           <p>这里显示电脑端任务的完整上下文。</p>
         </div>
@@ -208,22 +210,22 @@ export const CODEX_MOBILE_HTML = `<!doctype html>
   </div>
 
   <div class="toast" id="toast" role="status"></div>
-  <script src="/app.js?appv=__DESK_RELAY_ASSET_VERSION__" defer></script>
+  <script src="/app.js?appv=__WE_RELAY_ASSET_VERSION__" defer></script>
 </body>
 </html>`;
 
-export const DESK_RELAY_ABOUT_HTML = `<!doctype html>
+export const WE_RELAY_ABOUT_HTML = `<!doctype html>
 <html class="about-document" lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#ffffff">
-  <title>项目说明 · DeskRelay</title>
-  <link rel="stylesheet" href="/app.css?appv=__DESK_RELAY_ASSET_VERSION__">
+  <title>项目说明 · WeRelay</title>
+  <link rel="stylesheet" href="/app.css?appv=__WE_RELAY_ASSET_VERSION__">
 </head>
 <body class="about-page">
   <header class="about-topbar">
-    <a class="about-logo" href="/about">DeskRelay</a>
+    <a class="about-logo" href="/about">WeRelay</a>
     <a class="about-open-app" href="/">打开任务</a>
   </header>
 
@@ -231,7 +233,7 @@ export const DESK_RELAY_ABOUT_HTML = `<!doctype html>
     <section class="about-hero">
       <div class="about-eyebrow">ONE REAL SESSION. EVERY SCREEN.</div>
       <h1>让真实的 AI 编程任务<br>延伸到任何设备</h1>
-      <p>DeskRelay 连接电脑上的真实 Codex、Claude Code、Cursor 和其他编程 Agent 任务。微信、手机网页与其他入口只负责延伸这条任务，不复制会话，也不在后台创建一条看不见的分支。</p>
+      <p>WeRelay 连接电脑上的真实 Codex、Claude Code、Cursor 和其他编程 Agent 任务。微信、手机网页与其他入口只负责延伸这条任务，不复制会话，也不在后台创建一条看不见的分支。</p>
       <div class="about-actions">
         <a class="about-primary-action" href="/">打开任务</a>
         <a class="about-secondary-action" href="#principles">了解工作方式</a>
@@ -259,7 +261,7 @@ export const DESK_RELAY_ABOUT_HTML = `<!doctype html>
         </article>
         <article class="about-card">
           <h3>不替代原生客户端</h3>
-          <p>Codex、Cursor 或 Claude Code 仍然是主工作界面。DeskRelay 只补上离开电脑后的入口。</p>
+          <p>Codex、Cursor 或 Claude Code 仍然是主工作界面。WeRelay 只补上离开电脑后的入口。</p>
         </article>
         <article class="about-card">
           <h3>不中断后台任务</h3>
@@ -271,16 +273,16 @@ export const DESK_RELAY_ABOUT_HTML = `<!doctype html>
     <section class="about-section">
       <div class="about-section-heading">
         <div class="about-section-index">02</div>
-        <h2>DeskRelay 如何工作</h2>
+        <h2>WeRelay 如何工作</h2>
       </div>
-      <div class="about-flow" aria-label="DeskRelay 工作流程">
+      <div class="about-flow" aria-label="WeRelay 工作流程">
         <div class="about-flow-node">
           <strong>远程入口</strong>
           <span>微信 · 手机网页 · 浏览器</span>
         </div>
         <div class="about-flow-arrow" aria-hidden="true">→</div>
         <div class="about-flow-node is-relay">
-          <strong>DeskRelay</strong>
+          <strong>WeRelay</strong>
           <span>任务映射 · 队列 · 审批 · 状态</span>
         </div>
         <div class="about-flow-arrow" aria-hidden="true">→</div>
@@ -324,12 +326,12 @@ export const DESK_RELAY_ABOUT_HTML = `<!doctype html>
         <div class="about-section-index">05</div>
         <h2>本地优先</h2>
       </div>
-      <p>任务和 Agent 仍然运行在你的电脑上。DeskRelay 只在你授权的入口之间传递必要的信息。移动网页使用独立访问密码；公网访问可通过 DeskRelay 应用层主动 Relay 提供，电脑不需要暴露本地端口。</p>
+      <p>任务和 Agent 仍然运行在你的电脑上。WeRelay 只在你授权的入口之间传递必要的信息。移动网页使用独立访问密码；公网访问可通过 WeRelay 应用层主动 Relay 提供，电脑不需要暴露本地端口。</p>
     </section>
 
     <footer class="about-footer">
       <div>
-        <strong>DeskRelay</strong>
+        <strong>WeRelay</strong>
         <span>Your real coding-agent sessions, everywhere.</span>
       </div>
       <a href="/">返回任务</a>
@@ -419,9 +421,15 @@ button:focus-visible { outline: 2px solid var(--border-strong); outline-offset: 
 .about-footer span { color: var(--muted); font-size: 13px; }
 .about-footer a { color: var(--text); font-size: 14px; font-weight: 560; text-decoration: none; }
 .boot-screen { min-height: 100dvh; display: grid; place-items: center; background: var(--canvas); }
-.boot-content { display: grid; justify-items: center; gap: 10px; }
+.boot-content { width: min(360px, calc(100vw - 48px)); display: grid; justify-items: center; gap: 9px; }
 .boot-wordmark { color: var(--text); font-size: 24px; font-weight: 650; letter-spacing: -0.035em; }
-.boot-status { color: var(--muted); font-size: 13px; line-height: 1.5; text-align: center; }
+.boot-activity { display: inline-flex; align-items: center; gap: 4px; height: 12px; margin: 6px 0 1px; }
+.boot-activity span { width: 4px; height: 4px; border-radius: 50%; background: var(--muted); animation: boot-activity-dot 1.2s ease-in-out infinite; }
+.boot-activity span:nth-child(2) { animation-delay: .16s; }
+.boot-activity span:nth-child(3) { animation-delay: .32s; }
+@keyframes boot-activity-dot { 0%, 60%, 100% { opacity: .28; transform: translateY(0); } 30% { opacity: .92; transform: translateY(-3px); } }
+.boot-status { color: var(--text); font-size: 14px; font-weight: 570; line-height: 1.5; text-align: center; }
+.boot-detail { min-height: 40px; color: var(--muted); font-size: 12px; line-height: 1.65; text-align: center; text-wrap: balance; }
 .auth-screen { min-height: 100dvh; display: grid; place-items: center; padding: max(24px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom)); background: var(--canvas); }
 .auth-card { width: min(100%, 390px); padding: 34px 30px 30px; border: 1px solid var(--border); border-radius: 24px; background: var(--page); box-shadow: var(--shadow); }
 .auth-wordmark { display: inline-block; margin-bottom: 28px; color: var(--text); font-size: 22px; font-weight: 680; letter-spacing: -0.04em; text-decoration: none; }
@@ -1374,6 +1382,7 @@ export const CODEX_MOBILE_JS = String.raw`
   var app = document.getElementById("app");
   var bootScreen = document.getElementById("boot-screen");
   var bootStatus = document.getElementById("boot-status");
+  var bootDetail = document.getElementById("boot-detail");
   var authScreen = document.getElementById("auth-screen");
   var authForm = document.getElementById("auth-form");
   var authTitle = document.getElementById("auth-title");
@@ -1534,7 +1543,7 @@ export const CODEX_MOBILE_JS = String.raw`
     localTaskDrafts: Object.create(null)
   };
 
-  var APP_VERSION = "__DESK_RELAY_ASSET_VERSION__";
+  var APP_VERSION = "__WE_RELAY_ASSET_VERSION__";
   var APP_VERSION_CHECK_INTERVAL_MS = 30 * 1000;
   var PROJECT_TASK_BATCH_SIZE = 5;
   var RECENT_TASK_BATCH_SIZE = 20;
@@ -1543,7 +1552,7 @@ export const CODEX_MOBILE_JS = String.raw`
   var TASK_REFRESH_INTERVAL_MS = 8000;
   var TASK_LONG_PRESS_MS = 520;
   var TASK_LONG_PRESS_MOVE_PX = 8;
-  var LAN_REDIRECT_ATTEMPT_KEY = "deskrelayLanRedirectAttemptedAt";
+  var LAN_REDIRECT_ATTEMPT_KEY = "werelayLanRedirectAttemptedAt";
   var LAN_REDIRECT_COOLDOWN_MS = 10 * 60 * 1000;
   var LAN_REDIRECT_FALLBACK_MS = 3500;
   var DEVICE_CONNECTION_RETRY_MS = 1500;
@@ -1662,7 +1671,7 @@ export const CODEX_MOBILE_JS = String.raw`
     return String(adapterId || "") + "\u0000" + String(threadId || "");
   }
 
-  var PERSISTENT_MOBILE_CACHE_STORAGE_NAME = "deskrelayMobileCacheV1";
+  var PERSISTENT_MOBILE_CACHE_STORAGE_NAME = "werelayMobileCacheV1";
   var PERSISTENT_MOBILE_CACHE_SCHEMA_VERSION = 1;
   var PERSISTENT_MOBILE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
   var PERSISTENT_MOBILE_CACHE_WRITE_DELAY_MS = 120;
@@ -2592,31 +2601,52 @@ export const CODEX_MOBILE_JS = String.raw`
     } catch (_) {}
   }
 
-  function resolveBootConnectionState(health) {
+  function resolveBootConnectionState(health, waitedMs) {
+    var elapsedSeconds = Math.max(0, Math.floor((Number(waitedMs) || 0) / 1000));
     if (health && typeof health.deviceOnline === "boolean") {
-      return health.deviceOnline
-        ? {
-            mode: "relay",
-            ready: true,
-            label: "电脑已连接，正在读取任务…"
-          }
-        : {
-            mode: "relay",
-            ready: false,
-            label: "正在等待你的电脑主动连接服务器…"
-          };
+      if (health.deviceOnline) {
+        return {
+          mode: "relay",
+          ready: true,
+          label: "电脑已连接",
+          detail: "正在读取任务和最近消息…"
+        };
+      }
+      if (elapsedSeconds < 10) {
+        return {
+          mode: "relay",
+          ready: false,
+          label: "服务器已连接",
+          detail: "正在等待你的电脑主动连接…"
+        };
+      }
+      if (elapsedSeconds < 30) {
+        return {
+          mode: "relay",
+          ready: false,
+          label: "电脑尚未连接",
+          detail: "已等待 " + elapsedSeconds + " 秒，WeRelay 会自动重试。"
+        };
+      }
+      return {
+        mode: "relay",
+        ready: false,
+        label: "电脑仍未连接",
+        detail: "已等待 " + elapsedSeconds + " 秒，请确认电脑已开机、联网且 WeRelay 正在运行。"
+      };
     }
     return {
       mode: "direct",
       ready: true,
-      label: "正在读取电脑上的任务…"
+      label: "已连接电脑",
+      detail: "正在读取任务和最近消息…"
     };
   }
 
   function bootReadyStatus() {
     return state.connectionMode === "relay"
-      ? "电脑已连接，正在读取任务…"
-      : "正在读取电脑上的任务…";
+      ? "电脑已连接"
+      : "已连接电脑";
   }
 
   async function waitForComputerConnection() {
@@ -2625,17 +2655,29 @@ export const CODEX_MOBILE_JS = String.raw`
       authScreen.hidden = true;
       bootScreen.hidden = false;
     }
-    bootStatus.textContent = "正在检查电脑连接状态…";
+    var startedAtMs = Date.now();
+    var serverFailureCount = 0;
+    bootStatus.textContent = "正在检查连接状态";
+    bootDetail.textContent = "正在确认服务器和电脑是否在线。";
     while (true) {
       try {
         var health = await fetchJson("/health", { cache: "no-store" });
-        var connection = resolveBootConnectionState(health);
+        serverFailureCount = 0;
+        var connection = resolveBootConnectionState(health, Date.now() - startedAtMs);
         state.connectionMode = connection.mode;
         bootStatus.textContent = connection.label;
+        bootDetail.textContent = connection.detail;
+        if (state.cachePreviewMode) {
+          if (connection.ready) setCacheSyncState("checking");
+          else setCacheSyncState("waiting-computer");
+        }
         if (connection.ready) return;
       } catch (_) {
+        serverFailureCount += 1;
         state.connectionMode = "unknown";
-        bootStatus.textContent = "正在连接 DeskRelay 服务器…";
+        bootStatus.textContent = "暂时无法连接服务器";
+        bootDetail.textContent = "已重试 " + serverFailureCount + " 次，网络恢复后会自动继续。";
+        if (state.cachePreviewMode) setCacheSyncState("server-retry");
       }
       await new Promise(function (resolve) {
         setTimeout(resolve, document.hidden ? 5000 : DEVICE_CONNECTION_RETRY_MS);
@@ -2670,6 +2712,7 @@ export const CODEX_MOBILE_JS = String.raw`
     }
 
     bootStatus.textContent = "检测到与电脑在同一网络，正在切换到高速连接…";
+    bootDetail.textContent = "局域网连接通常更快，失败后会自动返回公网。";
     var handoff;
     try {
       handoff = await fetchJson("/api/network/lan-handoff", {
@@ -2679,10 +2722,12 @@ export const CODEX_MOBILE_JS = String.raw`
       });
     } catch (_) {
       bootStatus.textContent = bootReadyStatus();
+      bootDetail.textContent = "正在读取任务和最近消息…";
       return false;
     }
     if (!handoff || typeof handoff.handoffUrl !== "string" || !handoff.handoffUrl) {
       bootStatus.textContent = bootReadyStatus();
+      bootDetail.textContent = "正在读取任务和最近消息…";
       return false;
     }
 
@@ -2699,6 +2744,7 @@ export const CODEX_MOBILE_JS = String.raw`
     } catch (_) {
       clearTimeout(fallbackTimer);
       bootStatus.textContent = bootReadyStatus();
+      bootDetail.textContent = "正在读取任务和最近消息…";
       return false;
     }
   }
@@ -2759,7 +2805,7 @@ export const CODEX_MOBILE_JS = String.raw`
     var task = currentTask();
     document.title = task && task.title
       ? task.title
-      : "DeskRelay · " + currentAdapterName();
+      : "WeRelay · " + currentAdapterName();
   }
 
   function isAdapterCapabilityError() {
@@ -3121,12 +3167,12 @@ export const CODEX_MOBILE_JS = String.raw`
     authError.textContent = message || "";
     if (mode === "setup") {
       authTitle.textContent = "设置访问密码";
-      authDescription.textContent = "首次使用，请先为 DeskRelay 移动端设置密码。";
+      authDescription.textContent = "首次使用，请先为 WeRelay 移动端设置密码。";
       authHint.textContent = "至少 8 个字符。密码只保存在这台 Mac 上。";
       authSubmit.textContent = "设置并进入";
       authPassword.autocomplete = "new-password";
     } else {
-      authTitle.textContent = "进入 DeskRelay";
+      authTitle.textContent = "进入 WeRelay";
       authDescription.textContent = "输入访问密码，继续电脑上的任务。";
       authHint.textContent = "登录状态会在此设备保留 30 天。";
       authSubmit.textContent = "进入";
@@ -4465,7 +4511,7 @@ export const CODEX_MOBILE_JS = String.raw`
 
   async function installSettingsDependency(provider, dependency, button) {
     var confirmed = window.confirm(
-      "将在这台电脑上安装“" + (dependency.label || dependency.name) + "”。安装命令由 DeskRelay 预先定义，网页不能提交任意命令。是否继续？"
+      "将在这台电脑上安装“" + (dependency.label || dependency.name) + "”。安装命令由 WeRelay 预先定义，网页不能提交任意命令。是否继续？"
     );
     if (!confirmed) return;
     button.disabled = true;
@@ -5982,7 +6028,7 @@ export const CODEX_MOBILE_JS = String.raw`
       state.messageNodes = Object.create(null);
       var emptyTask = currentTask();
       if (isTemporaryTask(emptyTask)) {
-        messagesEl.innerHTML = '<div class="empty-state"><div class="empty-wordmark">DeskRelay</div><h1>' +
+        messagesEl.innerHTML = '<div class="empty-state"><div class="empty-wordmark">WeRelay</div><h1>' +
           (emptyTask.localCreationState === "failed"
             ? '任务创建失败'
             : emptyTask.localCreationState === "ready"
@@ -6002,10 +6048,10 @@ export const CODEX_MOBILE_JS = String.raw`
           escapeHtml(state.adapterError) + '<br>' +
           (capabilityLimited
             ? '可从上方菜单切换到其他终端。'
-            : '点击上方「DeskRelay · ' + escapeHtml(currentAdapterName()) + '」重新连接。') +
+            : '点击上方「WeRelay · ' + escapeHtml(currentAdapterName()) + '」重新连接。') +
           '</p></div>';
       } else {
-        messagesEl.innerHTML = '<div class="empty-state"><div class="empty-wordmark">DeskRelay</div><h1>还没有消息</h1><p>可以从手机继续这个任务。</p></div>';
+        messagesEl.innerHTML = '<div class="empty-state"><div class="empty-wordmark">WeRelay</div><h1>还没有消息</h1><p>可以从手机继续这个任务。</p></div>';
       }
       messagesEl.dataset.threadId = state.currentThreadId || "";
       updateUserMessageNavigation();
@@ -6787,7 +6833,9 @@ export const CODEX_MOBILE_JS = String.raw`
     var labels = {
       checking: "检查更新",
       updating: "同步更新",
-      current: "已是最新"
+      current: "已是最新",
+      "waiting-computer": "等待电脑",
+      "server-retry": "重连服务器"
     };
     var label = labels[state.cacheSyncState] || "";
     cacheSyncIndicator.hidden = !label;

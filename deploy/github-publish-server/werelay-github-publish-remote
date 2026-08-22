@@ -2,15 +2,15 @@
 set -euo pipefail
 
 umask 077
-BASE_DIR="${DESKRELAY_GITHUB_PUBLISH_ROOT:-$HOME/deskrelay-github-relay}"
+BASE_DIR="${WERELAY_GITHUB_PUBLISH_ROOT:-$HOME/werelay-github-relay}"
 INCOMING_DIR="$BASE_DIR/incoming"
 BARE_REPO="$BASE_DIR/repo.git"
 WORK_ROOT="$BASE_DIR/work"
-SSH_CONFIG="${DESKRELAY_GITHUB_SSH_CONFIG:-$HOME/.ssh/deskrelay_github_config}"
-GITHUB_REPO="${DESKRELAY_GITHUB_REPOSITORY:-git@github.com:imsinolam/DeskRelay.git}"
+SSH_CONFIG="${WERELAY_GITHUB_SSH_CONFIG:-$HOME/.ssh/werelay_github_config}"
+GITHUB_REPO="${WERELAY_GITHUB_REPOSITORY:-git@github.com:imsinolam/WeRelay.git}"
 LOG_FILE="$BASE_DIR/push.log"
-AUTHOR_NAME="${DESKRELAY_GITHUB_AUTHOR_NAME:-imsinolam}"
-AUTHOR_EMAIL="${DESKRELAY_GITHUB_AUTHOR_EMAIL:-imsinolam@users.noreply.github.com}"
+AUTHOR_NAME="${WERELAY_GITHUB_AUTHOR_NAME:-imsinolam}"
+AUTHOR_EMAIL="${WERELAY_GITHUB_AUTHOR_EMAIL:-imsinolam@users.noreply.github.com}"
 WORK_DIR=""
 REPOSITORY=""
 ARCHIVE=""
@@ -29,13 +29,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-[[ $# -eq 3 && "$2" == "--message-base64url" ]] || fail "usage: deskrelay-github-publish-remote <snapshot.tar.gz> --message-base64url <encoded-message>"
+[[ $# -eq 3 && "$2" == "--message-base64url" ]] || fail "usage: werelay-github-publish-remote <snapshot.tar.gz> --message-base64url <encoded-message>"
 ARCHIVE="$1"
 COMMIT_MESSAGE="$(node -e 'process.stdout.write(Buffer.from(process.argv[1], "base64url").toString("utf8"))' "$3")"
 [[ -n "$COMMIT_MESSAGE" ]] || fail "commit message cannot be empty"
 [[ "$COMMIT_MESSAGE" != *$'\n'* && "$COMMIT_MESSAGE" != *$'\r'* ]] || fail "commit message must be one line"
 case "$ARCHIVE" in
-  "$INCOMING_DIR"/deskrelay-snapshot-*.tar.gz) ;;
+  "$INCOMING_DIR"/werelay-snapshot-*.tar.gz) ;;
   *) fail "archive must be inside $INCOMING_DIR" ;;
 esac
 [[ -f "$ARCHIVE" ]] || fail "archive does not exist"

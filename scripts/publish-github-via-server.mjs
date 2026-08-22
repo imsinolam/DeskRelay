@@ -8,9 +8,9 @@ import process from "node:process";
 
 const root = process.cwd();
 const options = parseArgs(process.argv.slice(2));
-const server = options.server ?? process.env.DESKRELAY_GITHUB_PUBLISH_SERVER;
-const identity = options.identity ?? process.env.DESKRELAY_GITHUB_PUBLISH_IDENTITY;
-const remoteHelper = options.remoteHelper ?? process.env.DESKRELAY_GITHUB_REMOTE_HELPER;
+const server = options.server ?? process.env.WERELAY_GITHUB_PUBLISH_SERVER;
+const identity = options.identity ?? process.env.WERELAY_GITHUB_PUBLISH_IDENTITY;
+const remoteHelper = options.remoteHelper ?? process.env.WERELAY_GITHUB_REMOTE_HELPER;
 
 if (!server || !identity || !remoteHelper || !options.message) {
   printHelp();
@@ -32,11 +32,11 @@ if (!fs.existsSync(identity) || !fs.statSync(identity).isFile()) {
   throw new Error(`SSH identity does not exist: ${identity}`);
 }
 
-const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-github-publish-"));
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-github-publish-"));
 const snapshotDir = path.join(tempRoot, "snapshot");
 const archivePath = path.join(tempRoot, "snapshot.tar.gz");
 const releaseId = `${new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 14)}-${process.pid}`;
-const remoteArchive = `~/deskrelay-github-relay/incoming/deskrelay-snapshot-${releaseId}.tar.gz`;
+const remoteArchive = `~/werelay-github-relay/incoming/werelay-snapshot-${releaseId}.tar.gz`;
 
 try {
   run(process.execPath, [path.join(root, "scripts/check-public-safety.mjs")], { cwd: root });
@@ -114,7 +114,7 @@ function printHelp() {
   node scripts/publish-github-via-server.mjs \\
     --server user@publish.example.com \\
     --identity /absolute/path/to/ssh-key \\
-    --remote-helper ~/bin/deskrelay-github-publish-remote \\
+    --remote-helper ~/bin/werelay-github-publish-remote \\
     --message "fix: describe the public change"
 
 The local machine only creates and uploads a privacy-reviewed snapshot.

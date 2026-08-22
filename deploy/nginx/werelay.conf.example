@@ -1,5 +1,5 @@
 # Replace relay.example.com and certificate paths before enabling.
-# DeskRelay Relay itself listens only on the server loopback address.
+# WeRelay Relay itself listens only on the server loopback address.
 
 server {
     listen 80;

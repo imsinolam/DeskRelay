@@ -1,11 +1,11 @@
-# Contributing to DeskRelay
+# Contributing to WeRelay
 
-感谢你愿意参与 DeskRelay 的改进。这个项目连接 WeChat iLink、本地 CLI agent、可见终端 companion 和本地运行状态，很多问题只有在真实系统中才能复现。提交 issue 或 pull request 时，请尽量提供可验证的现象、命令和日志片段。
+感谢你愿意参与 WeRelay 的改进。这个项目连接 WeChat iLink、本地 CLI agent、可见终端 companion 和本地运行状态，很多问题只有在真实系统中才能复现。提交 issue 或 pull request 时，请尽量提供可验证的现象、命令和日志片段。
 
 ## Before You Start
 
 - 所有 Agent 必须先阅读 [多 Agent 协作规范](docs/开发协作/多Agent协作规范.md)，再开始修改。
-- 文档入口见 [DeskRelay 文档导航](docs/README.md)。
+- 文档入口见 [WeRelay 文档导航](docs/README.md)。
 - 先阅读 [README.md](README.md)，确认当前推荐的使用方式。
 - Agent 前置安装见 [docs/使用指南/Agent安装与配置.md](docs/使用指南/Agent安装与配置.md)。
 - 运行配置见 [docs/使用指南/运行配置.md](docs/使用指南/运行配置.md)。
@@ -15,14 +15,14 @@
 
 ## Fork and Pull Request Workflow
 
-如果你没有 `UNLINEARITY/DeskRelay` 的写权限，请从 fork 提交 PR。这里的 `origin` 指你的 fork，`upstream` 指官方仓库。
+如果你没有 `imsinolam/WeRelay` 的写权限，请从 fork 提交 PR。这里的 `origin` 指你的 fork，`upstream` 指官方仓库。
 
 首次参与时：
 
 ```bash
-git clone https://github.com/<your-github-name>/DeskRelay.git
-cd DeskRelay
-git remote add upstream https://github.com/UNLINEARITY/DeskRelay.git
+git clone https://github.com/<your-github-name>/WeRelay.git
+cd WeRelay
+git remote add upstream https://github.com/imsinolam/WeRelay.git
 git fetch upstream
 ```
 
@@ -55,7 +55,7 @@ git push -u origin fix/opencode-session-start
 
 然后在 GitHub 上创建 PR：
 
-- `base repository`: `UNLINEARITY/DeskRelay`
+- `base repository`: `imsinolam/WeRelay`
 - `base branch`: `main`
 - `head repository`: 你的 fork
 - `compare branch`: 你的工作分支，例如 `fix/opencode-session-start`
@@ -66,14 +66,14 @@ git push -u origin fix/opencode-session-start
 
 提交 bug issue 时，请尽量包含：
 
-1. 使用的命令，例如 `deskrelay`、`deskrelay-codex-start`、`deskrelay-claude-start` 或 `deskrelay-opencode-start`。
+1. 使用的命令，例如 `werelay`、`werelay-codex-start`、`werelay-claude-start` 或 `werelay-opencode-start`。
 2. 使用的 adapter：Codex、Claude Code、TClaude、Grok、CodeBuddy、reasonix、WorkBuddy、OpenCode 或 shell。
 3. 操作系统、Node.js 版本、包版本和安装方式。
 4. 期望行为与实际行为。
 5. 最小复现步骤。
-6. 相关日志片段，通常来自 `~/.deskrelay/bridge.log`。
+6. 相关日志片段，通常来自 `~/.werelay/bridge.log`。
 
-请在贴日志前删除账号凭据、token、完整微信用户标识、私有文件内容和不希望公开的本地路径。不要上传 `~/.deskrelay/account.json`、`sync_buf.txt`、`context_tokens.json` 或其他登录状态文件。
+请在贴日志前删除账号凭据、token、完整微信用户标识、私有文件内容和不希望公开的本地路径。不要上传 `~/.werelay/account.json`、`sync_buf.txt`、`context_tokens.json` 或其他登录状态文件。
 
 ## Development Setup
 
@@ -237,14 +237,14 @@ npm run privacy:check
 npm run privacy:check:history
 ```
 
-如果历史检查失败，不要直接推送旧历史；优先从已审计的当前快照创建新的公开历史。issue 和 PR 中也不得包含真实任务名、项目路径、聊天截图、服务器地址、setup 链接或 `~/.deskrelay` 内容。
+如果历史检查失败，不要直接推送旧历史；优先从已审计的当前快照创建新的公开历史。issue 和 PR 中也不得包含真实任务名、项目路径、聊天截图、服务器地址、setup 链接或 `~/.werelay` 内容。
 
 ## Runtime State and Privacy
 
 默认运行数据目录是：
 
 ```text
-~/.deskrelay
+~/.werelay
 ```
 
 这个目录包含登录凭据、WeChat 同步状态、上下文 token、bridge 日志、workspace 状态和附件缓存。贡献代码或提交 issue 时，请不要提交这些文件，也不要公开其中的敏感内容。

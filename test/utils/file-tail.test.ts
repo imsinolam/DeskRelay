@@ -7,7 +7,7 @@ import path from "node:path";
 import { readFileTail, scanFileTail } from "../../src/utils/file-tail.ts";
 
 function writeTempFile(content: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-file-tail-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-file-tail-"));
   const file = path.join(dir, "session.log");
   fs.writeFileSync(file, content, "utf8");
   return file;
@@ -32,7 +32,7 @@ describe("file-tail primitive", () => {
   });
 
   test("reports null for a missing file", () => {
-    expect(readFileTail("/nonexistent/deskrelay-tail.log", { scanLimitBytes: 1024 })).toBeNull();
+    expect(readFileTail("/nonexistent/werelay-tail.log", { scanLimitBytes: 1024 })).toBeNull();
   });
 
   test("delivers line flags for first and last scanned lines", () => {

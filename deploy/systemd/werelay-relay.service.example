@@ -1,17 +1,17 @@
 [Unit]
-Description=DeskRelay application relay
+Description=WeRelay application relay
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=deskrelay
-Group=deskrelay
-EnvironmentFile=/etc/deskrelay-relay.env
-StateDirectory=deskrelay
+User=werelay
+Group=werelay
+EnvironmentFile=/etc/werelay-relay.env
+StateDirectory=werelay
 StateDirectoryMode=0700
-# Run `command -v deskrelay-relay-server` and replace this path if needed.
-ExecStart=/usr/local/bin/deskrelay-relay-server
+# Run `command -v werelay-relay-server` and replace this path if needed.
+ExecStart=/usr/local/bin/werelay-relay-server
 Restart=always
 RestartSec=3
 NoNewPrivileges=true

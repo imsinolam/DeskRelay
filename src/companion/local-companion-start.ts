@@ -101,7 +101,7 @@ const DEFAULT_WAIT_TIMEOUT_MS = 15_000;
 const DEFAULT_ADAPTER: LocalCompanionLaunchAdapter = "codex";
 
 function log(adapter: LocalCompanionLaunchAdapter, message: string): void {
-  process.stderr.write(`[deskrelay-${adapter}-start] ${message}\n`);
+  process.stderr.write(`[werelay-${adapter}-start] ${message}\n`);
 }
 
 export function normalizeComparablePath(cwd: string): string {
@@ -217,13 +217,13 @@ export function parseCliArgs(argv: string[]): LocalCompanionStartCliOptions {
     if (arg === "--help" || arg === "-h") {
       process.stdout.write(
         [
-          "Usage: deskrelay-codex-start [--cwd <path>] [--profile <name-or-path>] [--timeout-ms <ms>] [...codex args]",
-          "       deskrelay-claude-start [--cwd <path>] [--profile <name-or-path>] [--timeout-ms <ms>] [...claude args]",
-          "       deskrelay-tclaude-start [--cwd <path>] [--profile <name-or-path>] [--timeout-ms <ms>] [...tclaude args]",
-          "       deskrelay-grok-start [--cwd <path>] [--profile <name-or-path>] [--timeout-ms <ms>] [...grok args]",
-          "       deskrelay-codebuddy-start [--cwd <path>] [--profile <name-or-path>] [--timeout-ms <ms>] [...codebuddy args]",
-          "       deskrelay-reasonix-start [--cwd <path>] [--profile <model>] [--timeout-ms <ms>] [...reasonix serve args]",
-          "       deskrelay-opencode-start [--cwd <path>] [--profile <name-or-path>] [--timeout-ms <ms>] [...opencode args]",
+          "Usage: werelay-codex-start [--cwd <path>] [--profile <name-or-path>] [--timeout-ms <ms>] [...codex args]",
+          "       werelay-claude-start [--cwd <path>] [--profile <name-or-path>] [--timeout-ms <ms>] [...claude args]",
+          "       werelay-tclaude-start [--cwd <path>] [--profile <name-or-path>] [--timeout-ms <ms>] [...tclaude args]",
+          "       werelay-grok-start [--cwd <path>] [--profile <name-or-path>] [--timeout-ms <ms>] [...grok args]",
+          "       werelay-codebuddy-start [--cwd <path>] [--profile <name-or-path>] [--timeout-ms <ms>] [...codebuddy args]",
+          "       werelay-reasonix-start [--cwd <path>] [--profile <model>] [--timeout-ms <ms>] [...reasonix serve args]",
+          "       werelay-opencode-start [--cwd <path>] [--profile <name-or-path>] [--timeout-ms <ms>] [...opencode args]",
           "       local-companion-start [--adapter <codex|claude|tclaude|grok|codebuddy|reasonix|opencode>] [--cwd <path>] [--profile <name-or-path>] [--timeout-ms <ms>] [...cli args]",
           "",
           "Starts a bridge for the current directory, waits for the local endpoint, then opens the visible companion or panel.",
@@ -446,7 +446,7 @@ function startBridgeInBackground(options: LocalCompanionStartCliOptions): void {
     MODULE_DIR,
     "..",
     "bridge",
-    `deskrelay-bridge${RUNTIME_ENTRY_EXTENSION}`,
+    `werelay-bridge${RUNTIME_ENTRY_EXTENSION}`,
   );
   const args = buildBackgroundBridgeArgs(entryPath, options);
 
@@ -486,7 +486,7 @@ async function startCodexDesktopDaemon(
     MODULE_DIR,
     "..",
     "daemon",
-    `deskrelay-daemon${RUNTIME_ENTRY_EXTENSION}`,
+    `werelay-daemon${RUNTIME_ENTRY_EXTENSION}`,
   );
   const child = spawn(
     process.execPath,
@@ -525,16 +525,16 @@ async function startCodexDesktopDaemon(
       if (!response.ok) {
         throw new Error(response.error);
       }
-      log("codex", `Started desktop-mapped deskrelay-daemon for ${options.cwd}.`);
+      log("codex", `Started desktop-mapped werelay-daemon for ${options.cwd}.`);
       return;
     }
     if (child.pid && !isPidAlive(child.pid)) {
-      throw new Error(`Failed to start deskrelay-daemon for ${options.cwd}.`);
+      throw new Error(`Failed to start werelay-daemon for ${options.cwd}.`);
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 
-  throw new Error(`Timed out starting deskrelay-daemon for ${options.cwd}.`);
+  throw new Error(`Timed out starting werelay-daemon for ${options.cwd}.`);
 }
 
 async function waitForEndpoint(
@@ -648,7 +648,7 @@ export async function tryDelegateToDaemon(
 
   if (!isSameWorkspaceCwd(endpoint.cwd, options.cwd)) {
     throw new Error(
-      `deskrelay-daemon is running for ${endpoint.cwd}. This launcher requested ${options.cwd}; daemon switching is limited to its startup cwd.`,
+      `werelay-daemon is running for ${endpoint.cwd}. This launcher requested ${options.cwd}; daemon switching is limited to its startup cwd.`,
     );
   }
 
@@ -668,7 +668,7 @@ export async function tryDelegateToDaemon(
 
   log(
     options.adapter,
-    `Delegated to running deskrelay-daemon for ${options.cwd}.`,
+    `Delegated to running werelay-daemon for ${options.cwd}.`,
   );
   return true;
 }

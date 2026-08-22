@@ -18,7 +18,7 @@ async function withUnixServer(
   handler: (socket: net.Socket) => void,
   run: (socketPath: string) => Promise<void>,
 ): Promise<void> {
-  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "deskrelay-workbuddy-rpc-"));
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "werelay-workbuddy-rpc-"));
   const socketPath = path.join(dir, "bridge.sock");
   const server = net.createServer(handler);
   await new Promise<void>((resolve, reject) => {
@@ -59,12 +59,12 @@ describe("WorkBuddy desktop RPC client", () => {
       tmpDir: "/tmp",
       platform: "darwin",
     }))
-      .toBe("/tmp/deskrelay-workbuddy-501.sock");
+      .toBe("/tmp/werelay-workbuddy-501.sock");
     expect(resolveWorkBuddyDesktopSocketPath({ uid: 501, platform: "win32" }))
-      .toBe("\\\\.\\pipe\\deskrelay-workbuddy-501");
+      .toBe("\\\\.\\pipe\\werelay-workbuddy-501");
     if (process.platform === "darwin") {
       expect(resolveWorkBuddyDesktopSocketPath({ uid: 501 }))
-        .toBe("/tmp/deskrelay-workbuddy-501.sock");
+        .toBe("/tmp/werelay-workbuddy-501.sock");
     }
   });
 
@@ -141,7 +141,7 @@ describe("WorkBuddy desktop RPC client", () => {
   });
 
   test("writes a private local hook without HTTP listeners", async () => {
-    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "deskrelay-workbuddy-hook-"));
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "werelay-workbuddy-hook-"));
     const hookPath = path.join(dir, "hook.cjs");
     try {
       await ensureWorkBuddyDesktopHookFile(hookPath);
@@ -158,7 +158,7 @@ describe("WorkBuddy desktop RPC client", () => {
   });
 
   test("automatically relaunches an already open WorkBuddy when the desktop hook is missing", async () => {
-    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "deskrelay-workbuddy-restart-"));
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "werelay-workbuddy-restart-"));
     const socketPath = path.join(dir, "bridge.sock");
     let server: net.Server | null = null;
     let cleanupCount = 0;
@@ -205,7 +205,7 @@ describe("WorkBuddy desktop RPC client", () => {
   });
 
   test("waits briefly for an already instrumented WorkBuddy before deciding to restart it", async () => {
-    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "deskrelay-workbuddy-grace-"));
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "werelay-workbuddy-grace-"));
     const socketPath = path.join(dir, "bridge.sock");
     let server: net.Server | null = null;
     let restartCount = 0;
@@ -247,7 +247,7 @@ describe("WorkBuddy desktop RPC client", () => {
       let launchCount = 0;
       let restartCount = 0;
       const client = new WorkBuddyDesktopRpcClient({
-        socketPath: `/tmp/deskrelay-workbuddy-disabled-${running}.sock`,
+        socketPath: `/tmp/werelay-workbuddy-disabled-${running}.sock`,
         callbacks: { onEvent: () => undefined },
         allowDesktopApplicationLaunch: false,
         connectTimeoutMs: 20,
@@ -272,7 +272,7 @@ describe("WorkBuddy desktop RPC client", () => {
   });
 
   test("bounds a stuck WorkBuddy restart by the overall connection timeout", async () => {
-    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "deskrelay-workbuddy-timeout-"));
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "werelay-workbuddy-timeout-"));
     const socketPath = path.join(dir, "bridge.sock");
     try {
       const client = new WorkBuddyDesktopRpcClient({

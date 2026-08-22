@@ -25,13 +25,13 @@ describe("local-companion-start helpers", () => {
   test("buildCodexDesktopDaemonArgs starts a persistent daemon without a terminal companion", () => {
     expect(
       buildCodexDesktopDaemonArgs(
-        "/repo/src/daemon/deskrelay-daemon.ts",
+        "/repo/src/daemon/werelay-daemon.ts",
         "/repo/project",
       ),
     ).toEqual([
       "--no-warnings",
       "--experimental-strip-types",
-      "/repo/src/daemon/deskrelay-daemon.ts",
+      "/repo/src/daemon/werelay-daemon.ts",
       "--cwd",
       "/repo/project",
       "--no-open",
@@ -75,7 +75,7 @@ describe("local-companion-start helpers", () => {
   });
 
   test("buildBackgroundBridgeArgs binds codex background bridge to the launcher lifetime", () => {
-    const args = buildBackgroundBridgeArgs("/tmp/deskrelay-bridge.ts", {
+    const args = buildBackgroundBridgeArgs("/tmp/werelay-bridge.ts", {
       adapter: "codex",
       cwd: path.resolve("./tmp/project"),
       profile: "work",
@@ -87,7 +87,7 @@ describe("local-companion-start helpers", () => {
     expect(args).toEqual([
       "--no-warnings",
       "--experimental-strip-types",
-      "/tmp/deskrelay-bridge.ts",
+      "/tmp/werelay-bridge.ts",
       "--adapter",
       "codex",
       "--cwd",
@@ -100,7 +100,7 @@ describe("local-companion-start helpers", () => {
   });
 
   test("buildBackgroundBridgeArgs can launch claude in the background", () => {
-    const args = buildBackgroundBridgeArgs("/tmp/deskrelay-bridge.ts", {
+    const args = buildBackgroundBridgeArgs("/tmp/werelay-bridge.ts", {
       adapter: "claude",
       cwd: path.resolve("./tmp/project"),
       timeoutMs: 15000,
@@ -111,7 +111,7 @@ describe("local-companion-start helpers", () => {
     expect(args).toEqual([
       "--no-warnings",
       "--experimental-strip-types",
-      "/tmp/deskrelay-bridge.ts",
+      "/tmp/werelay-bridge.ts",
       "--adapter",
       "claude",
       "--cwd",
@@ -124,7 +124,7 @@ describe("local-companion-start helpers", () => {
   });
 
   test("buildBackgroundBridgeArgs keeps shared-owner bridges companion_bound", () => {
-    const args = buildBackgroundBridgeArgs("/tmp/deskrelay-bridge.ts", {
+    const args = buildBackgroundBridgeArgs("/tmp/werelay-bridge.ts", {
       adapter: "grok",
       cwd: path.resolve("./tmp/project"),
       timeoutMs: 15000,
@@ -135,7 +135,7 @@ describe("local-companion-start helpers", () => {
     expect(args).toEqual([
       "--no-warnings",
       "--experimental-strip-types",
-      "/tmp/deskrelay-bridge.ts",
+      "/tmp/werelay-bridge.ts",
       "--adapter",
       "grok",
       "--cwd",
@@ -148,7 +148,7 @@ describe("local-companion-start helpers", () => {
   });
 
   test("buildBackgroundBridgeArgs runs compiled bridge entries without TypeScript stripping", () => {
-    const args = buildBackgroundBridgeArgs("/tmp/dist/bridge/deskrelay-bridge.js", {
+    const args = buildBackgroundBridgeArgs("/tmp/dist/bridge/werelay-bridge.js", {
       adapter: "codex",
       cwd: path.resolve("./tmp/project"),
       timeoutMs: 15000,
@@ -158,7 +158,7 @@ describe("local-companion-start helpers", () => {
 
     expect(args).toEqual([
       "--no-warnings",
-      "/tmp/dist/bridge/deskrelay-bridge.js",
+      "/tmp/dist/bridge/werelay-bridge.js",
       "--adapter",
       "codex",
       "--cwd",
@@ -417,7 +417,7 @@ describe("local-companion-start helpers", () => {
   });
 
   test("buildBackgroundBridgeArgs keeps the launch cwd stable for codex", () => {
-    const args = buildBackgroundBridgeArgs("/tmp/deskrelay-bridge.ts", {
+    const args = buildBackgroundBridgeArgs("/tmp/werelay-bridge.ts", {
       adapter: "codex",
       cwd: path.resolve("./tmp/project"),
       timeoutMs: 15000,
@@ -428,7 +428,7 @@ describe("local-companion-start helpers", () => {
     expect(args).toEqual([
       "--no-warnings",
       "--experimental-strip-types",
-      "/tmp/deskrelay-bridge.ts",
+      "/tmp/werelay-bridge.ts",
       "--adapter",
       "codex",
       "--cwd",

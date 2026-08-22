@@ -132,11 +132,11 @@ const WECHAT_SEND_MAX_ATTEMPTS = 3;
 const WECHAT_SEND_RETRY_BASE_MS = 750;
 
 function log(message: string): void {
-  process.stderr.write(`[deskrelay-bridge] ${message}\n`);
+  process.stderr.write(`[werelay-bridge] ${message}\n`);
 }
 
 function logError(message: string): void {
-  process.stderr.write(`[deskrelay-bridge] ERROR: ${message}\n`);
+  process.stderr.write(`[werelay-bridge] ERROR: ${message}\n`);
 }
 
 function computePollRetryDelayMs(consecutiveFailures: number): number {
@@ -512,20 +512,20 @@ export function parseCliArgs(argv: string[]): BridgeCliOptions {
 function printUsageAndExit(): never {
   process.stdout.write(
     [
-      "Usage: deskrelay-bridge --adapter <codex|claude|tclaude|grok|codebuddy|reasonix|workbuddy|deepseek|opencode|shell> [--cmd <executable>] [--cwd <path>] [--profile <name-or-path>] [--lifecycle <persistent|companion_bound>] [--session-start-mode <restore|new>]",
+      "Usage: werelay-bridge --adapter <codex|claude|tclaude|grok|codebuddy|reasonix|workbuddy|deepseek|opencode|shell> [--cmd <executable>] [--cwd <path>] [--profile <name-or-path>] [--lifecycle <persistent|companion_bound>] [--session-start-mode <restore|new>]",
       "",
       "Examples:",
-      "  deskrelay-bridge-codex",
-      "  deskrelay-bridge-claude --cwd ~/work/my-project",
-      "  deskrelay-bridge-opencode --cwd ~/work/my-project",
-      "  deskrelay-bridge-grok --cwd ~/work/my-project",
-      "  deskrelay-bridge-codebuddy --cwd ~/work/my-project",
-      "  deskrelay-bridge-reasonix --cwd ~/work/my-project",
-      "  deskrelay-bridge-workbuddy --cwd ~/work/my-project",
-      "  deskrelay-bridge-deepseek --cwd ~/work/my-project",
-      "  deskrelay-bridge-shell --cmd pwsh   # headless shell executor for non-interactive commands/scripts",
-      "  deskrelay-bridge-shell --cmd bash   # headless shell executor for non-interactive commands/scripts",
-      "  deskrelay-bridge-codex --lifecycle companion_bound",
+      "  werelay-bridge-codex",
+      "  werelay-bridge-claude --cwd ~/work/my-project",
+      "  werelay-bridge-opencode --cwd ~/work/my-project",
+      "  werelay-bridge-grok --cwd ~/work/my-project",
+      "  werelay-bridge-codebuddy --cwd ~/work/my-project",
+      "  werelay-bridge-reasonix --cwd ~/work/my-project",
+      "  werelay-bridge-workbuddy --cwd ~/work/my-project",
+      "  werelay-bridge-deepseek --cwd ~/work/my-project",
+      "  werelay-bridge-shell --cmd pwsh   # headless shell executor for non-interactive commands/scripts",
+      "  werelay-bridge-shell --cmd bash   # headless shell executor for non-interactive commands/scripts",
+      "  werelay-bridge-codex --lifecycle companion_bound",
       "  bun run bridge:codex            # repo-local development entrypoint",
       "  bun run bridge:opencode          # repo-local development entrypoint",
       "  bun run bridge:grok              # repo-local development entrypoint",
@@ -549,12 +549,12 @@ async function main(): Promise<void> {
   const daemonEndpoint = readDaemonEndpoint();
   if (daemonEndpoint && await isDaemonEndpointAlive(daemonEndpoint, { timeoutMs: 500 })) {
     throw new Error(
-      `deskrelay-daemon is already running (pid=${daemonEndpoint.pid}, cwd=${daemonEndpoint.cwd}). Stop it before starting a standalone bridge.`,
+      `werelay-daemon is already running (pid=${daemonEndpoint.pid}, cwd=${daemonEndpoint.cwd}). Stop it before starting a standalone bridge.`,
     );
   }
   if (daemonEndpoint) {
     clearDaemonEndpoint(daemonEndpoint.pid);
-    log(`Cleared stale deskrelay-daemon endpoint for pid=${daemonEndpoint.pid}.`);
+    log(`Cleared stale werelay-daemon endpoint for pid=${daemonEndpoint.pid}.`);
   }
   const credentials = await ensureWechatCredentials({
     requireUserId: true,
@@ -630,7 +630,7 @@ async function main(): Promise<void> {
   };
 
   // Clear any stale endpoint left by a previous bridge for this workspace.
-  // This prevents stale DeskRelay companions from reconnecting to a dead bridge
+  // This prevents stale WeRelay companions from reconnecting to a dead bridge
   // while the new runtime is still starting up.
   const adapter = createRuntimeHost({
     kind: options.adapter,
@@ -988,7 +988,7 @@ async function main(): Promise<void> {
       `Bridge started with adapter=${options.adapter} command=${options.command} cwd=${options.cwd}`,
     );
 
-    log(`DeskRelay bridge is ready for adapter "${options.adapter}".`);
+    log(`WeRelay bridge is ready for adapter "${options.adapter}".`);
     log(`Working directory: ${options.cwd}`);
     if (options.profile) {
       log(`Profile: ${options.profile}`);
@@ -996,7 +996,7 @@ async function main(): Promise<void> {
     log(`Authorized WeChat user: ${credentials.userId}`);
     if (options.adapter === "codex") {
       log(
-        'Start the visible Codex panel in a second terminal with: deskrelay-codex',
+        'Start the visible Codex panel in a second terminal with: werelay-codex',
       );
     } else if (
       options.adapter === "opencode" ||
@@ -1834,7 +1834,7 @@ async function handleInboundMessage(params: {
         setAwaitingBareCodexTaskSelection(false);
         await queueWechatMessage(
           message.senderId,
-          `WeChat /resume is disabled in ${options.adapter} mode. Use /resume directly inside "deskrelay-${options.adapter}"; WeChat will follow the active local session.`,
+          `WeChat /resume is disabled in ${options.adapter} mode. Use /resume directly inside "werelay-${options.adapter}"; WeChat will follow the active local session.`,
         );
         return null;
       }
@@ -1842,7 +1842,7 @@ async function handleInboundMessage(params: {
         setAwaitingBareCodexTaskSelection(false);
         await queueWechatMessage(
           message.senderId,
-          'WeChat /resume is disabled in opencode mode. Use /resume directly inside "deskrelay-opencode"; WeChat will follow the active local session.',
+          'WeChat /resume is disabled in opencode mode. Use /resume directly inside "werelay-opencode"; WeChat will follow the active local session.',
         );
         return null;
       }

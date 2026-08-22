@@ -182,7 +182,7 @@ describe("forwardWechatFinalReply", () => {
       adapter: "codex",
       rawText: [
         "Reference only:",
-        "`C:\\Users\\example\\Desktop\\Github\\deskrelay-project\\src\\bridge\\bridge-adapters.test.ts`",
+        "`C:\\Users\\example\\Desktop\\Github\\werelay-project\\src\\bridge\\bridge-adapters.test.ts`",
         "Do not upload this file.",
       ].join("\n"),
       sender: {
@@ -205,7 +205,7 @@ describe("forwardWechatFinalReply", () => {
     });
 
     expect(calls).toEqual([
-      "text:Reference only:\n`C:\\Users\\example\\Desktop\\Github\\deskrelay-project\\src\\bridge\\bridge-adapters.test.ts`\nDo not upload this file.",
+      "text:Reference only:\n`C:\\Users\\example\\Desktop\\Github\\werelay-project\\src\\bridge\\bridge-adapters.test.ts`\nDo not upload this file.",
     ]);
   });
 
@@ -281,7 +281,7 @@ describe("forwardWechatFinalReply", () => {
       rawText: [
         "I need to respond to the user's greeting in Chinese as per the CLAUDE.md instruction.",
         "你好！有什么我可以帮助你的吗？",
-        'Bridge error: opencode companion is not connected. Run "deskrelay-opencode" in a second terminal for this directory.',
+        'Bridge error: opencode companion is not connected. Run "werelay-opencode" in a second terminal for this directory.',
         "OpenCode session switched to ses_2cb824bf from the local terminal.",
         "OpenCode is still working on:",
         "hi",

@@ -16,7 +16,7 @@ import {
 const posixTest = process.platform === "win32" ? test.skip : test;
 
 function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-channel-config-"));
+  return fs.mkdtempSync(path.join(os.tmpdir(), "werelay-channel-config-"));
 }
 
 function writeTextFile(filePath: string, content: string): void {
@@ -76,9 +76,9 @@ describe("workspace channel paths", () => {
     expect(pathsA.endpointFile.endsWith("codex-panel-endpoint.json")).toBe(true);
   });
 
-  test("uses .deskrelay as the default user data directory", () => {
+  test("uses .werelay as the default user data directory", () => {
     expect(resolveChannelDataDir({} as NodeJS.ProcessEnv, "C:\\Users\\tester")).toBe(
-      path.join("C:\\Users\\tester", ".deskrelay"),
+      path.join("C:\\Users\\tester", ".werelay"),
     );
   });
 
@@ -86,7 +86,7 @@ describe("workspace channel paths", () => {
     expect(
       resolveChannelDataDir(
         {
-          DESKRELAY_DATA_DIR: "C:\\bridge-data",
+          WERELAY_DATA_DIR: "C:\\bridge-data",
         } as NodeJS.ProcessEnv,
         "C:\\Users\\tester",
       ),
@@ -101,7 +101,18 @@ describe("workspace channel paths", () => {
         } as NodeJS.ProcessEnv,
         "C:\\Users\\tester",
       ),
-    ).toBe(path.join("C:\\Users\\tester", ".deskrelay"));
+    ).toBe(path.join("C:\\Users\\tester", ".werelay"));
+  });
+
+  test("does not keep the DeskRelay data-dir env var as a public alias", () => {
+    expect(
+      resolveChannelDataDir(
+        {
+          DESKRELAY_DATA_DIR: "C:\\old-deskrelay-data",
+        } as NodeJS.ProcessEnv,
+        "C:\\Users\\tester",
+      ),
+    ).toBe(path.join("C:\\Users\\tester", ".werelay"));
   });
 
   test("does not use the legacy Claude data-dir env var as the active directory", () => {
@@ -112,7 +123,7 @@ describe("workspace channel paths", () => {
         } as NodeJS.ProcessEnv,
         "C:\\Users\\tester",
       ),
-    ).toBe(path.join("C:\\Users\\tester", ".deskrelay"));
+    ).toBe(path.join("C:\\Users\\tester", ".werelay"));
   });
 });
 
@@ -203,6 +214,40 @@ describe("legacy channel data migration", () => {
     }
   });
 
+  test("prefers DeskRelay data and fills missing files from older sources", () => {
+    const root = makeTempDir();
+    try {
+      const channelDataDir = path.join(root, "new");
+      const deskRelayDataDir = path.join(root, ".deskrelay");
+      const olderDataDir = path.join(root, ".cli-bridge");
+
+      writeTextFile(path.join(deskRelayDataDir, "account.json"), "deskrelay account");
+      writeTextFile(path.join(olderDataDir, "account.json"), "older account");
+      writeTextFile(path.join(olderDataDir, "sync_buf.txt"), "older sync");
+
+      const migrated = migrateLegacyChannelFiles(undefined, {
+        channelDataDir,
+        legacyDataDirs: [deskRelayDataDir, olderDataDir],
+      });
+
+      expect(migrated).toEqual(["credentials", "sync state"]);
+      expect(readTextFile(path.join(channelDataDir, "account.json"))).toBe(
+        "deskrelay account",
+      );
+      expect(readTextFile(path.join(channelDataDir, "sync_buf.txt"))).toBe(
+        "older sync",
+      );
+      expect(readTextFile(path.join(deskRelayDataDir, "account.json"))).toBe(
+        "deskrelay account",
+      );
+      expect(readTextFile(path.join(olderDataDir, "account.json"))).toBe(
+        "older account",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("does not overwrite existing active files or directories", () => {
     const root = makeTempDir();
     try {
@@ -245,15 +290,15 @@ describe("legacy channel data migration", () => {
       expect(readTextFile(path.join(channelDataDir, "sync_buf.txt"))).toBe(
         "old sync",
       );
-      expect(logs[0]).toContain(
-        "Skipped existing: credentials, workspace state, legacy bridge log.",
+      expect(logs.at(-1)).toContain(
+        "Skipped existing WeRelay data: credentials, workspace state, legacy bridge log",
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  test("uses the first legacy source that has migratable data", () => {
+  test("keeps first-source precedence and fills missing data from later sources", () => {
     const root = makeTempDir();
     try {
       const channelDataDir = path.join(root, "new");
@@ -269,11 +314,13 @@ describe("legacy channel data migration", () => {
         legacyDataDirs: [firstLegacyDataDir, secondLegacyDataDir],
       });
 
-      expect(migrated).toEqual(["credentials"]);
+      expect(migrated).toEqual(["credentials", "sync state"]);
       expect(readTextFile(path.join(channelDataDir, "account.json"))).toBe(
         "first account",
       );
-      expect(fs.existsSync(path.join(channelDataDir, "sync_buf.txt"))).toBe(false);
+      expect(readTextFile(path.join(channelDataDir, "sync_buf.txt"))).toBe(
+        "second sync",
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

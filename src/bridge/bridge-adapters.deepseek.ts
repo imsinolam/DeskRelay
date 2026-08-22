@@ -23,7 +23,7 @@ import type { AdapterOptions, EventSink } from "./bridge-adapters.shared.ts";
 import { nowIso, truncatePreview } from "./bridge-utils.ts";
 
 const DEFAULT_DEEPSEEK_HARNESS_URL = "http://127.0.0.1:3080";
-const DEEPSEEK_HARNESS_URL_ENV = "DESKRELAY_DEEPSEEK_HARNESS_URL";
+const DEEPSEEK_HARNESS_URL_ENV = "WERELAY_DEEPSEEK_HARNESS_URL";
 const DEEPSEEK_HARNESS_HTTP_TIMEOUT_MS = 10_000;
 const DEEPSEEK_HARNESS_RECONNECT_MS = 1_000;
 const DEEPSEEK_HARNESS_RECOVERY_INTERVAL_MS = 2_000;

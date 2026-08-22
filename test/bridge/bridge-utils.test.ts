@@ -601,7 +601,7 @@ describe("wechat inbound prompt visibility", () => {
 
   test("shows only the real request for both legacy and Chinese bridge prompts", () => {
     const legacyPrompt = [
-      "[DeskRelay WeChat note]",
+      "[WeRelay WeChat note]",
       "English transport instructions.",
       "",
       "[User request]",
@@ -642,24 +642,24 @@ describe("wechat inbound prompt injection", () => {
     expect(prompt).toContain("直接引用原始本地绝对路径");
     expect(prompt).toContain("不要在 ~/.claude/channels/wechat");
     expect(prompt).toContain("~/.claude/channels/wechat");
-    expect(prompt).toContain("~/.deskrelay");
+    expect(prompt).toContain("~/.werelay");
     expect(prompt).toContain("outbound-attachments");
   });
 
   test("detects outbound attachment staging writes without blocking read-only commands", () => {
     expect(
       containsWechatOutboundAttachmentPath(
-        "C:\\Users\\example\\.deskrelay\\outbound-attachments\\2026-05-23\\report.docx",
+        "C:\\Users\\example\\.werelay\\outbound-attachments\\2026-05-23\\report.docx",
       ),
     ).toBe(true);
     expect(
       isWechatOutboundAttachmentWriteCommand(
-        'Copy-Item "C:/Users/example/Desktop/report.docx" "C:/Users/example/.deskrelay/outbound-attachments/2026-05-23/report.docx"',
+        'Copy-Item "C:/Users/example/Desktop/report.docx" "C:/Users/example/.werelay/outbound-attachments/2026-05-23/report.docx"',
       ),
     ).toBe(true);
     expect(
       isWechatOutboundAttachmentWriteCommand(
-        'ls "C:/Users/example/.deskrelay/outbound-attachments/2026-05-23"',
+        'ls "C:/Users/example/.werelay/outbound-attachments/2026-05-23"',
       ),
     ).toBe(false);
     expect(
@@ -671,7 +671,7 @@ describe("wechat inbound prompt injection", () => {
     expect(
       isWechatOutboundAttachmentMutationTool(
         "external_directory",
-        "C:\\Users\\example\\.deskrelay\\outbound-attachments\\2026-05-23",
+        "C:\\Users\\example\\.werelay\\outbound-attachments\\2026-05-23",
       ),
     ).toBe(true);
   });
@@ -722,7 +722,7 @@ describe("wechat inbound prompt injection", () => {
     const prompt = buildWechatInboundPrompt("Please summarize this file.", [
       {
         kind: "file",
-        path: "C:\\Users\\example\\.deskrelay\\inbound-attachments\\2026-05-22\\report.pdf",
+        path: "C:\\Users\\example\\.werelay\\inbound-attachments\\2026-05-22\\report.pdf",
         fileName: "report.pdf",
         sizeBytes: 1536,
       },
@@ -737,7 +737,7 @@ describe("wechat inbound prompt injection", () => {
     const prompt = buildWechatInboundPrompt("", [
       {
         kind: "image",
-        path: "C:\\Users\\example\\.deskrelay\\inbound-attachments\\2026-05-22\\photo.jpg",
+        path: "C:\\Users\\example\\.werelay\\inbound-attachments\\2026-05-22\\photo.jpg",
         fileName: "photo.jpg",
       },
     ]);
@@ -951,14 +951,14 @@ describe("WeChat attachment reply protocol", () => {
       parseWechatFinalReply(
         [
           "Reference only:",
-          "`C:\\Users\\example\\Desktop\\Github\\deskrelay-project\\src\\bridge\\bridge-adapters.test.ts`",
+          "`C:\\Users\\example\\Desktop\\Github\\werelay-project\\src\\bridge\\bridge-adapters.test.ts`",
           "Do not upload this file.",
         ].join("\n"),
       ),
     ).toEqual({
       visibleText: [
         "Reference only:",
-        "`C:\\Users\\example\\Desktop\\Github\\deskrelay-project\\src\\bridge\\bridge-adapters.test.ts`",
+        "`C:\\Users\\example\\Desktop\\Github\\werelay-project\\src\\bridge\\bridge-adapters.test.ts`",
         "Do not upload this file.",
       ].join("\n"),
       attachments: [],
@@ -991,7 +991,7 @@ describe("WeChat attachment reply protocol", () => {
         [
           "Ready.",
           "```wechat-attachments",
-          "file C:\\Users\\example\\Desktop\\Github\\deskrelay-project\\src\\bridge\\bridge-adapters.test.ts",
+          "file C:\\Users\\example\\Desktop\\Github\\werelay-project\\src\\bridge\\bridge-adapters.test.ts",
           "```",
         ].join("\n"),
       ),
@@ -1000,7 +1000,7 @@ describe("WeChat attachment reply protocol", () => {
       attachments: [
         {
           kind: "file",
-          path: "C:\\Users\\example\\Desktop\\Github\\deskrelay-project\\src\\bridge\\bridge-adapters.test.ts",
+          path: "C:\\Users\\example\\Desktop\\Github\\werelay-project\\src\\bridge\\bridge-adapters.test.ts",
         },
       ],
     });

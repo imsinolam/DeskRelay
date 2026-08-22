@@ -44,7 +44,7 @@ describe("local companion proxy lifecycle", () => {
       action: "shutdown",
       shutdownReason: "companion_closed",
       message:
-        "codex companion closed. Stopping transient bridge bound to deskrelay-codex.",
+        "codex companion closed. Stopping transient bridge bound to werelay-codex.",
     });
   });
 
@@ -59,7 +59,7 @@ describe("local companion proxy lifecycle", () => {
     ).toEqual({
       action: "wait_for_reconnect",
       message:
-        "codex companion disconnected unexpectedly. Waiting up to 15s for deskrelay-codex to reconnect before stopping this transient bridge.",
+        "codex companion disconnected unexpectedly. Waiting up to 15s for werelay-codex to reconnect before stopping this transient bridge.",
     });
   });
 
@@ -74,7 +74,7 @@ describe("local companion proxy lifecycle", () => {
     ).toEqual({
       action: "await_manual_reconnect",
       message:
-        'claude companion disconnected unexpectedly. Run "deskrelay-claude" again in a second terminal for this directory to reconnect.',
+        'claude companion disconnected unexpectedly. Run "werelay-claude" again in a second terminal for this directory to reconnect.',
     });
   });
 
@@ -172,7 +172,7 @@ describe("local companion proxy lifecycle", () => {
         reconnectGraceMs: 15_000,
       }),
     ).toBe(
-      "codex companion did not reconnect within 15s. Stopping transient bridge bound to deskrelay-codex.",
+      "codex companion did not reconnect within 15s. Stopping transient bridge bound to werelay-codex.",
     );
   });
 

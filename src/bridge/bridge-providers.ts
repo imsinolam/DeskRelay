@@ -68,7 +68,7 @@ export type BridgeProviderCapabilities = {
 
 /**
  * Declarative dependency graph for a provider (DSH-inspired "coeffects").
- * The runtime and `deskrelay doctor` use this to determine whether a
+ * The runtime and `werelay doctor` use this to determine whether a
  * provider's prerequisites are satisfied, and what to tell the user when
  * they are not. A missing dependency must never be silently treated as
  * "online"; it drives the visible unavailable state instead.
@@ -374,12 +374,12 @@ export const BRIDGE_PROVIDERS: Record<BridgeProviderId, BridgeProviderDefinition
         port: 3080,
         host: "127.0.0.1",
         label: "Harness 本机服务",
-        hint: "本机 3080 端口没有 Harness Host 监听。请保持 dsh web 进程运行；可用 DESKRELAY_DEEPSEEK_HARNESS_URL 指定其他回环地址。",
+        hint: "本机 3080 端口没有 Harness Host 监听。请保持 dsh web 进程运行；可用 WERELAY_DEEPSEEK_HARNESS_URL 指定其他回环地址。",
       },
       {
         id: "deepseek-url",
         kind: "env",
-        name: "DESKRELAY_DEEPSEEK_HARNESS_URL",
+        name: "WERELAY_DEEPSEEK_HARNESS_URL",
         label: "自定义 Harness 地址",
         required: false,
         hint: "可选：默认 http://127.0.0.1:3080，只接受本机回环地址。",

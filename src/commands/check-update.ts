@@ -8,7 +8,7 @@ import {
 async function main(): Promise<void> {
   const currentVersion = await getCurrentVersion();
 
-  console.log(`DeskRelay Version Check`);
+  console.log(`WeRelay Version Check`);
   console.log(`Current version: v${currentVersion}\n`);
 
   console.log(`Checking for updates...`);
@@ -30,7 +30,7 @@ async function main(): Promise<void> {
     );
     console.error(`\nCheck the latest release manually:`);
     console.error(
-      `  https://github.com/UNLINEARITY/DeskRelay/releases`,
+      `  https://github.com/imsinolam/WeRelay/releases`,
     );
     // 不使用 process.exit():强制退出会打断 fetch 底层 handle 的关闭流程,
     // 在 Windows + Node 24 上触发 libuv 的 UV_HANDLE_CLOSING 断言崩溃。
@@ -48,13 +48,13 @@ async function main(): Promise<void> {
   console.log(`Current version: v${versionInfo.current}\n`);
 
   console.log(`Update instructions:`);
-  console.log(`   cd DeskRelay`);
+  console.log(`   cd WeRelay`);
   console.log(`   git pull`);
   console.log(`   bun install`);
   console.log(`   npm install -g .\n`);
 
   console.log(`For more information:`);
-  console.log(`   https://github.com/UNLINEARITY/DeskRelay/releases`);
+  console.log(`   https://github.com/imsinolam/WeRelay/releases`);
 }
 
 main().catch((error) => {

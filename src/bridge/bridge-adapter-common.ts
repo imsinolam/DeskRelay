@@ -78,19 +78,19 @@ export function normalizeCodexRpcError(error: unknown): string {
 export function getLocalCompanionCommandName(kind: BridgeAdapterKind): string {
   switch (kind) {
     case "codex":
-      return "deskrelay-codex";
+      return "werelay-codex";
     case "claude":
-      return "deskrelay-claude";
+      return "werelay-claude";
     case "tclaude":
-      return "deskrelay-tclaude";
+      return "werelay-tclaude";
     case "grok":
-      return "deskrelay-grok";
+      return "werelay-grok";
     case "codebuddy":
-      return "deskrelay-codebuddy";
+      return "werelay-codebuddy";
     case "reasonix":
-      return "deskrelay-reasonix";
+      return "werelay-reasonix";
     case "opencode":
-      return "deskrelay-opencode";
+      return "werelay-opencode";
     default:
       return "local companion";
   }

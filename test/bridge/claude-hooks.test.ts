@@ -178,7 +178,7 @@ describe("buildClaudePermissionDecisionHookOutput", () => {
         hookEventName: "PermissionRequest",
         decision: {
           behavior: "deny",
-          message: "Permission denied from DeskRelay.",
+          message: "Permission denied from WeRelay.",
           interrupt: false,
         },
       },
@@ -218,7 +218,7 @@ describe("getClaudeWechatOutboundAttachmentDenyMessage", () => {
         tool_name: "Bash",
         tool_input: {
           command:
-            'cp "C:/Users/example/Desktop/report.docx" "C:/Users/example/.deskrelay/outbound-attachments/2026-05-22/report.docx"',
+            'cp "C:/Users/example/Desktop/report.docx" "C:/Users/example/.werelay/outbound-attachments/2026-05-22/report.docx"',
         },
       }),
     ).toBe(CLAUDE_WECHAT_OUTBOUND_ATTACHMENT_DENY_MESSAGE);
@@ -238,7 +238,7 @@ describe("getClaudeWechatOutboundAttachmentDenyMessage", () => {
         tool_name: "Bash",
         tool_input: {
           command:
-            'ls "C:/Users/example/.deskrelay/outbound-attachments/2026-05-22"',
+            'ls "C:/Users/example/.werelay/outbound-attachments/2026-05-22"',
         },
       }),
     ).toBeNull();
@@ -253,7 +253,7 @@ describe("getClaudePermissionAutoResponse", () => {
           tool_name: "Read",
           tool_input: { file_path: "C:\\repo\\note.md" },
         },
-        { DESKRELAY_STRICT_APPROVAL: "1" },
+        { WERELAY_STRICT_APPROVAL: "1" },
       ),
     ).toBeNull();
     expect(
@@ -262,7 +262,7 @@ describe("getClaudePermissionAutoResponse", () => {
           tool_name: "Read",
           tool_input: { file_path: "C:\\repo\\note.md" },
         },
-        { DESKRELAY_STRICT_APPROVAL: "" },
+        { WERELAY_STRICT_APPROVAL: "" },
       ),
     ).toMatchObject({ action: "confirm" });
   });

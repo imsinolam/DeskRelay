@@ -1304,7 +1304,7 @@ export class WeChatTransport {
     }
 
     if (isWechatSyncSessionTimeout(response)) {
-      throw new Error('WeChat session timed out. Run "deskrelay-setup" to log in again.');
+      throw new Error('WeChat session timed out. Run "werelay-setup" to log in again.');
     }
 
     const isError =
@@ -1601,7 +1601,7 @@ export class WeChatTransport {
     const account = this.getCredentials();
     if (!account) {
       throw new Error(
-        `No saved WeChat credentials found. Start a bridge command in a terminal to log in automatically, or run "deskrelay-setup". Expected file: ${CREDENTIALS_FILE}`,
+        `No saved WeChat credentials found. Start a bridge command in a terminal to log in automatically, or run "werelay-setup". Expected file: ${CREDENTIALS_FILE}`,
       );
     }
     return account;
@@ -1847,6 +1847,6 @@ export class WeChatTransport {
   }
 
   private generateClientId(): string {
-    return `deskrelay-bridge:${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+    return `werelay-bridge:${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
   }
 }

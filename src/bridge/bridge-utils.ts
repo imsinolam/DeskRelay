@@ -117,7 +117,7 @@ export function buildWechatAttachmentPromptPrefix(
     "[微信转发内部说明]",
     "你的最终回复会转发到微信。",
     "仅当用户明确要求发送本机文件或媒体，并且你知道原始文件路径时，才使用下面的附件块；不要回答没有微信发送工具。",
-    "直接引用原始本地绝对路径，不要在 ~/.claude/channels/wechat、~/.deskrelay 或任何 outbound-attachments 目录中创建、复制、移动或暂存文件。",
+    "直接引用原始本地绝对路径，不要在 ~/.claude/channels/wechat、~/.werelay 或任何 outbound-attachments 目录中创建、复制、移动或暂存文件。",
     "先写简短的可见回复，然后在末尾只放一个附件块，例如：",
     "```wechat-attachments",
     `file ${examplePath}`,
@@ -218,10 +218,10 @@ const WECHAT_ATTACHMENT_BLOCK_RE =
   /\n```wechat-attachments[ \t]*\n([\s\S]*?)\n```[ \t]*$/;
 
 export const WECHAT_OUTBOUND_ATTACHMENT_DENY_MESSAGE =
-  "DeskRelay does not use outbound attachment directories for the WeChat channel. Do not create or copy files under .claude/channels/wechat/outbound-attachments or .deskrelay/outbound-attachments. To send a file, put the original absolute local file path in the final ```wechat-attachments``` block.";
+  "WeRelay does not use outbound attachment directories for the WeChat channel. Do not create or copy files under .claude/channels/wechat/outbound-attachments or .werelay/outbound-attachments. To send a file, put the original absolute local file path in the final ```wechat-attachments``` block.";
 
 const WECHAT_OUTBOUND_ATTACHMENT_PATH_RE =
-  /(?:^|\/)(?:(?:\.claude\/channels\/wechat\/|\.deskrelay\/)?outbound-attachments)(?:\/|$)/i;
+  /(?:^|\/)(?:(?:\.claude\/channels\/wechat\/|\.werelay\/)?outbound-attachments)(?:\/|$)/i;
 const WECHAT_OUTBOUND_ATTACHMENT_WRITE_COMMAND_RE =
   /\b(cp|copy|copy-item|xcopy|robocopy|mv|move|move-item|mkdir|md|new-item|ni|set-content|add-content|out-file|write-output|touch)\b|>\s*["']?[^&|]*outbound-attachments/i;
 const WECHAT_OUTBOUND_ATTACHMENT_MUTATION_TOOL_RE =
@@ -388,13 +388,13 @@ function truncateMobileText(text: string, maxLength: number): string {
 }
 
 export function isThinkingForwardEnabled(): boolean {
-  if (process.env.DESKRELAY_THINKING_FORWARD === "1") {
+  if (process.env.WERELAY_THINKING_FORWARD === "1") {
     return true;
   }
   try {
-    const accountPath = process.env.DESKRELAY_DATA_DIR
-      ? path.join(process.env.DESKRELAY_DATA_DIR, "account.json")
-      : path.join(os.homedir(), ".deskrelay", "account.json");
+    const accountPath = process.env.WERELAY_DATA_DIR
+      ? path.join(process.env.WERELAY_DATA_DIR, "account.json")
+      : path.join(os.homedir(), ".werelay", "account.json");
     if (!fs.existsSync(accountPath)) return false;
     const raw = fs.readFileSync(accountPath, "utf8");
     const data = JSON.parse(raw) as { enableThinkingForward?: boolean };
@@ -653,7 +653,7 @@ export function parseWechatControlCommand(
   }
 }
 
-const DESKRELAY_RESERVED_SLASH_COMMAND_RE = /^(?:\/(?:tasks|threads|task|thread|resume|next|prev|new|new-session|stop|full|brief|preview|全文|预览|confirm|yes|deny|no|answer)|\/t[1-9]\d*)$/i;
+const WERELAY_RESERVED_SLASH_COMMAND_RE = /^(?:\/(?:tasks|threads|task|thread|resume|next|prev|new|new-session|stop|full|brief|preview|全文|预览|confirm|yes|deny|no|answer)|\/t[1-9]\d*)$/i;
 
 export function shouldForwardNativeSlashCommand(
   text: string,
@@ -667,7 +667,7 @@ export function shouldForwardNativeSlashCommand(
     return false;
   }
   const command = trimmed.split(/\s+/, 1)[0]?.toLowerCase() ?? "";
-  return Boolean(command) && !DESKRELAY_RESERVED_SLASH_COMMAND_RE.test(command);
+  return Boolean(command) && !WERELAY_RESERVED_SLASH_COMMAND_RE.test(command);
 }
 
 export function shouldInjectWechatAttachmentPrompt(text: string): boolean {
@@ -1962,7 +1962,7 @@ const OPENCODE_WORKING_NOTICE_RE = /^OpenCode is still working on:\s*$/i;
 const OPENCODE_TRANSIENT_NOTICE_RES = [
   /^Bridge error: opencode companion is not connected\./i,
   /^OpenCode companion is not connected(?: for bridge workspace)?:?$/i,
-  /^Run "(?:deskrelay|wechat)-(?:bridge-opencode|opencode(?:-start)?)".*$/i,
+  /^Run "(?:werelay|wechat)-(?:bridge-opencode|opencode(?:-start)?)".*$/i,
   /^OpenCode session switched to \S+ from the local terminal\.$/i,
   /^Local OpenCode input:\s*$/i,
 ];
@@ -2636,13 +2636,13 @@ export class OutputBatcher {
   }
 }
 
-// When DESKRELAY_STRICT_APPROVAL is enabled, no permission request is
+// When WERELAY_STRICT_APPROVAL is enabled, no permission request is
 // auto-approved: everything is forwarded to WeChat for an explicit
 // /confirm or /deny decision.
 export function isStrictApprovalModeEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  const value = env.DESKRELAY_STRICT_APPROVAL?.trim().toLowerCase();
+  const value = env.WERELAY_STRICT_APPROVAL?.trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 

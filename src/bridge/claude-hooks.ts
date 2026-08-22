@@ -366,7 +366,7 @@ export function getClaudePermissionAutoResponse(
 
 export function buildClaudePermissionDecisionHookOutput(
   action: ClaudePermissionDecisionAction,
-  denyMessage = "Permission denied from DeskRelay.",
+  denyMessage = "Permission denied from WeRelay.",
 ): string {
   const decision =
     action === "confirm"

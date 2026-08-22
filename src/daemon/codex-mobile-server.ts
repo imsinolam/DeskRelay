@@ -21,10 +21,10 @@ import {
   CODEX_MOBILE_CSS,
   CODEX_MOBILE_HTML,
   CODEX_MOBILE_JS,
-  DESK_RELAY_ABOUT_HTML,
+  WE_RELAY_ABOUT_HTML,
 } from "./codex-mobile-web.ts";
 
-const CODEX_MOBILE_ASSET_VERSION_PLACEHOLDER = "__DESK_RELAY_ASSET_VERSION__";
+const WE_RELAY_ASSET_VERSION_PLACEHOLDER = "__WE_RELAY_ASSET_VERSION__";
 export const CODEX_MOBILE_ASSET_VERSION = crypto.createHash("sha256")
   .update(CODEX_MOBILE_CSS)
   .update("\0")
@@ -32,27 +32,7 @@ export const CODEX_MOBILE_ASSET_VERSION = crypto.createHash("sha256")
   .digest("hex")
   .slice(0, 12);
 
-const CODEX_MOBILE_SHORT_ADAPTER_CODES: Record<string, string> = {
-  codex: "c",
-  workbuddy: "w",
-  claude: "h",
-  tclaude: "t",
-  grok: "g",
-  codebuddy: "b",
-  reasonix: "r",
-  opencode: "o",
-  deepseek: "d",
-};
-const CODEX_MOBILE_SHORT_CODE_ADAPTERS = Object.fromEntries(
-  Object.entries(CODEX_MOBILE_SHORT_ADAPTER_CODES).map(([adapter, code]) => [code, adapter]),
-) as Record<string, string>;
-const CODEX_MOBILE_UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-export type CodexMobileTaskShortTarget = {
-  adapter: string;
-  threadId: string;
-};
+export type CodexMobileTaskShortTarget = import("../relay/relay-task-short-code.ts").WeRelayTaskShortTarget;
 
 /**
  * Settings payload served to the mobile settings panel. It merges the
@@ -76,92 +56,15 @@ export type CodexMobileProviderInstallResult = {
   message: string;
 };
 
-function encodeCodexMobileShortAdapter(adapter: string): string {
-  const normalized = adapter.trim().toLowerCase() || "codex";
-  const known = CODEX_MOBILE_SHORT_ADAPTER_CODES[normalized];
-  if (known) {
-    return known;
-  }
-  return `x${Buffer.from(normalized, "utf8").toString("base64url")}.`;
-}
+export {
+  decodeWeRelayTaskShortCode as decodeCodexMobileTaskShortCode,
+  encodeWeRelayTaskShortCode as encodeCodexMobileTaskShortCode,
+} from "../relay/relay-task-short-code.ts";
 
-function decodeCodexMobileShortAdapter(
-  code: string,
-): { adapter: string; payloadOffset: number } | null {
-  if (code.startsWith("x")) {
-    const separator = code.indexOf(".", 1);
-    if (separator < 2) return null;
-    try {
-      const adapter = Buffer.from(code.slice(1, separator), "base64url")
-        .toString("utf8")
-        .trim()
-        .toLowerCase();
-      if (!adapter || adapter.length > 64) return null;
-      return { adapter, payloadOffset: separator + 1 };
-    } catch {
-      return null;
-    }
-  }
-  const adapter = CODEX_MOBILE_SHORT_CODE_ADAPTERS[code.slice(0, 1)];
-  return adapter ? { adapter, payloadOffset: 1 } : null;
-}
-
-function decodeCodexMobileUuidPayload(payload: string): string | null {
-  try {
-    const bytes = Buffer.from(payload, "base64url");
-    if (bytes.length !== 16) return null;
-    const hex = bytes.toString("hex");
-    return [
-      hex.slice(0, 8),
-      hex.slice(8, 12),
-      hex.slice(12, 16),
-      hex.slice(16, 20),
-      hex.slice(20),
-    ].join("-");
-  } catch {
-    return null;
-  }
-}
-
-export function encodeCodexMobileTaskShortCode(
-  adapter: string | undefined,
-  threadId: string,
-): string {
-  const normalizedThreadId = threadId.trim();
-  if (!normalizedThreadId) {
-    throw new Error("任务 ID 不能为空。");
-  }
-  const adapterPrefix = encodeCodexMobileShortAdapter(adapter ?? "codex");
-  if (CODEX_MOBILE_UUID_PATTERN.test(normalizedThreadId)) {
-    const bytes = Buffer.from(normalizedThreadId.replaceAll("-", ""), "hex");
-    return `${adapterPrefix}u${bytes.toString("base64url")}`;
-  }
-  return `${adapterPrefix}s${Buffer.from(normalizedThreadId, "utf8").toString("base64url")}`;
-}
-
-export function decodeCodexMobileTaskShortCode(
-  code: string,
-): CodexMobileTaskShortTarget | null {
-  const normalized = code.trim();
-  if (!normalized || normalized.length > 768) return null;
-  const adapterTarget = decodeCodexMobileShortAdapter(normalized);
-  if (!adapterTarget) return null;
-  const kind = normalized.slice(adapterTarget.payloadOffset, adapterTarget.payloadOffset + 1);
-  const payload = normalized.slice(adapterTarget.payloadOffset + 1);
-  if (!payload) return null;
-  let threadId: string | null = null;
-  if (kind === "u") {
-    threadId = decodeCodexMobileUuidPayload(payload);
-  } else if (kind === "s") {
-    try {
-      threadId = Buffer.from(payload, "base64url").toString("utf8").trim();
-    } catch {
-      threadId = null;
-    }
-  }
-  if (!threadId || threadId.length > 512) return null;
-  return { adapter: adapterTarget.adapter, threadId };
-}
+import {
+  decodeWeRelayTaskShortCode,
+  encodeWeRelayTaskShortCode,
+} from "../relay/relay-task-short-code.ts";
 
 export function resolveCodexMobileTaskShortRedirect(
   pathname: string,
@@ -169,7 +72,7 @@ export function resolveCodexMobileTaskShortRedirect(
 ): string | null {
   const match = pathname.match(/^\/t\/([A-Za-z0-9_.~-]+)$/);
   if (!match) return null;
-  const target = decodeCodexMobileTaskShortCode(match[1] ?? "");
+  const target = decodeWeRelayTaskShortCode(match[1] ?? "");
   if (!target) return null;
   const redirect = new URLSearchParams();
   redirect.set("task", target.threadId);
@@ -182,15 +85,15 @@ export function resolveCodexMobileTaskShortRedirect(
   return `/?${redirect.toString()}`;
 }
 const CODEX_MOBILE_HTML_RESPONSE = CODEX_MOBILE_HTML.replaceAll(
-  CODEX_MOBILE_ASSET_VERSION_PLACEHOLDER,
+  WE_RELAY_ASSET_VERSION_PLACEHOLDER,
   CODEX_MOBILE_ASSET_VERSION,
 );
-const DESK_RELAY_ABOUT_HTML_RESPONSE = DESK_RELAY_ABOUT_HTML.replaceAll(
-  CODEX_MOBILE_ASSET_VERSION_PLACEHOLDER,
+const WE_RELAY_ABOUT_HTML_RESPONSE = WE_RELAY_ABOUT_HTML.replaceAll(
+  WE_RELAY_ASSET_VERSION_PLACEHOLDER,
   CODEX_MOBILE_ASSET_VERSION,
 );
 const CODEX_MOBILE_JS_RESPONSE = CODEX_MOBILE_JS.replaceAll(
-  CODEX_MOBILE_ASSET_VERSION_PLACEHOLDER,
+  WE_RELAY_ASSET_VERSION_PLACEHOLDER,
   CODEX_MOBILE_ASSET_VERSION,
 );
 
@@ -687,7 +590,7 @@ const LAN_HANDOFF_TTL_MS = 45_000;
 const LAN_SESSION_TTL_MS = 12 * 60 * 60_000;
 const DESKTOP_PUBLIC_ADDRESS_CACHE_MS = 60_000;
 const DESKTOP_PUBLIC_ADDRESS_FAILURE_CACHE_MS = 10_000;
-const DESKTOP_PUBLIC_ADDRESS_PATH = "/__deskrelay/client-ip";
+const DESKTOP_PUBLIC_ADDRESS_PATH = "/__werelay/client-ip";
 
 type MobileServerNetworkContext = {
   publicBaseUrl: string | null;
@@ -830,8 +733,8 @@ function normalizeLanHandoffTarget(value: unknown): string {
   if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) {
     throw new HttpError(400, "页面地址无效，请刷新后重试。");
   }
-  const target = new URL(value, "http://deskrelay.local");
-  if (target.origin !== "http://deskrelay.local") {
+  const target = new URL(value, "http://werelay.local");
+  if (target.origin !== "http://werelay.local") {
     throw new HttpError(400, "页面地址无效，请刷新后重试。");
   }
   target.searchParams.delete("setup");
@@ -847,7 +750,7 @@ async function fetchDesktopPublicAddress(publicBaseUrl: string): Promise<string 
   try {
     const response = await fetch(`${publicBaseUrl}${DESKTOP_PUBLIC_ADDRESS_PATH}`, {
       cache: "no-store",
-      headers: { "user-agent": "DeskRelay-network-check" },
+      headers: { "user-agent": "WeRelay-network-check" },
       signal: controller.signal,
     });
     if (!response.ok) {
@@ -865,7 +768,7 @@ function lanEntryErrorHtml(message: string, publicBaseUrl: string | null): strin
   const publicLink = publicBaseUrl
     ? `<p><a href="${publicBaseUrl}">继续使用公网连接</a></p>`
     : "";
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DeskRelay</title></head><body style="margin:0;padding:32px;font:15px/1.6 -apple-system,BlinkMacSystemFont,sans-serif;color:#1f1f1f;background:#f7f7f5"><main style="max-width:420px;margin:12vh auto;padding:28px;border-radius:18px;background:#fff"><h1 style="margin:0 0 10px;font-size:20px">局域网连接未完成</h1><p>${message}</p>${publicLink}</main></body></html>`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WeRelay</title></head><body style="margin:0;padding:32px;font:15px/1.6 -apple-system,BlinkMacSystemFont,sans-serif;color:#1f1f1f;background:#f7f7f5"><main style="max-width:420px;margin:12vh auto;padding:28px;border-radius:18px;background:#fff"><h1 style="margin:0 0 10px;font-size:20px">局域网连接未完成</h1><p>${message}</p>${publicLink}</main></body></html>`;
 }
 
 function sendText(
@@ -1221,7 +1124,7 @@ function createRequestHandler(
         return;
       }
       if (method === "GET" && url.pathname === "/about") {
-        sendText(response, 200, "text/html; charset=utf-8", DESK_RELAY_ABOUT_HTML_RESPONSE);
+        sendText(response, 200, "text/html; charset=utf-8", WE_RELAY_ABOUT_HTML_RESPONSE);
         return;
       }
       if (method === "GET" && url.pathname === "/app.css") {
@@ -1317,10 +1220,10 @@ function createRequestHandler(
         const sessionToken = readCookie(request, MOBILE_SESSION_COOKIE);
         const authenticated = authStore.verifySessionToken(sessionToken) ||
           verifyLanSession(request, sessionToken);
-        const relayPrewarmHeader = request.headers["x-deskrelay-relay-prewarm"];
+        const relayPrewarmHeader = request.headers["x-werelay-relay-prewarm"];
         const relayPrewarmAuthorized = Boolean(
           options.relayPrewarmToken &&
-          request.headers["x-deskrelay-relay"] === "1" &&
+          request.headers["x-werelay-relay"] === "1" &&
           typeof relayPrewarmHeader === "string" &&
           timingSafeTokenEqual(relayPrewarmHeader, options.relayPrewarmToken) &&
           isRelayPrewarmRead(method, url)
@@ -1882,7 +1785,7 @@ function createRequestHandler(
       }
       if (!(error instanceof HttpError) && !(error instanceof MobileAdapterUnavailableError)) {
         console.error(
-          `[DeskRelay mobile] ${request.method ?? "GET"} ${request.url ?? "/"} failed:`,
+          `[WeRelay mobile] ${request.method ?? "GET"} ${request.url ?? "/"} failed:`,
           error,
         );
       }
@@ -1976,7 +1879,7 @@ export async function startCodexMobileServer(
     buildTaskUrl: (threadId, adapter) => {
       const selector = threadId.trim();
       const baseUrl = publicBaseUrl ?? `http://${lanAddress}:${port}`;
-      const shortCode = encodeCodexMobileTaskShortCode(adapter ?? "codex", selector);
+      const shortCode = encodeWeRelayTaskShortCode(adapter ?? "codex", selector);
       const searchParams = new URLSearchParams();
       if (!options.authStore) {
         searchParams.set("key", options.accessToken);

@@ -3,33 +3,34 @@ import fs from "node:fs";
 
 import { BoundedTtlSet } from "../utils/bounded-ttl-cache.ts";
 import { writePrivateFileAtomic } from "../utils/private-files.ts";
-import { normalizeDeskRelayRelayBaseUrl } from "./relay-protocol.ts";
+import { normalizeWeRelayRelayBaseUrl } from "./relay-protocol.ts";
+import { encodeWeRelayTaskShortCode } from "./relay-task-short-code.ts";
 
-export const DESKRELAY_RELAY_TASK_LINK_REGISTER_PATH =
-  "/__deskrelay/device/task-links";
-export const DESKRELAY_RELAY_TASK_LINK_ALIAS_LENGTH = 10;
+export const WERELAY_RELAY_TASK_LINK_REGISTER_PATH =
+  "/__werelay/device/task-links";
+export const WERELAY_RELAY_TASK_LINK_ALIAS_LENGTH = 10;
 
 const MAX_TASK_LINKS = 100_000;
 const REGISTERED_ALIAS_CACHE_TTL_MS = 30 * 24 * 60 * 60_000;
 const REGISTER_RETRY_MIN_MS = 1_000;
 const REGISTER_RETRY_MAX_MS = 30_000;
 
-export type DeskRelayRelayTaskLinkTarget = {
+export type WeRelayRelayTaskLinkTarget = {
   adapter: string;
   threadId: string;
 };
 
 type TaskLinkState = {
   version: 1;
-  entries: Array<DeskRelayRelayTaskLinkTarget & {
+  entries: Array<WeRelayRelayTaskLinkTarget & {
     alias: string;
     updatedAt: string;
   }>;
 };
 
 function normalizeTarget(
-  target: DeskRelayRelayTaskLinkTarget,
-): DeskRelayRelayTaskLinkTarget {
+  target: WeRelayRelayTaskLinkTarget,
+): WeRelayRelayTaskLinkTarget {
   const adapter = target.adapter.trim().toLowerCase();
   const threadId = target.threadId.trim();
   if (!adapter || adapter.length > 64 || !threadId || threadId.length > 512) {
@@ -38,7 +39,7 @@ function normalizeTarget(
   return { adapter, threadId };
 }
 
-export function createDeskRelayRelayTaskLinkAlias(
+export function createWeRelayRelayTaskLinkAlias(
   deviceToken: string,
   adapter: string,
   threadId: string,
@@ -53,14 +54,14 @@ export function createDeskRelayRelayTaskLinkAlias(
     .update("\0")
     .update(target.threadId)
     .digest("base64url")
-    .slice(0, DESKRELAY_RELAY_TASK_LINK_ALIAS_LENGTH);
+    .slice(0, WERELAY_RELAY_TASK_LINK_ALIAS_LENGTH);
 }
 
-export class DeskRelayRelayTaskLinkStore {
+export class WeRelayRelayTaskLinkStore {
   private readonly deviceToken: string;
   private readonly stateFile?: string;
   private readonly maxEntries: number;
-  private readonly entries = new Map<string, DeskRelayRelayTaskLinkTarget>();
+  private readonly entries = new Map<string, WeRelayRelayTaskLinkTarget>();
 
   constructor(options: {
     deviceToken: string;
@@ -73,11 +74,11 @@ export class DeskRelayRelayTaskLinkStore {
     this.load();
   }
 
-  register(alias: string, target: DeskRelayRelayTaskLinkTarget): void {
+  register(alias: string, target: WeRelayRelayTaskLinkTarget): void {
     const normalizedAlias = alias.trim();
     const normalizedTarget = normalizeTarget(target);
     if (
-      normalizedAlias !== createDeskRelayRelayTaskLinkAlias(
+      normalizedAlias !== createWeRelayRelayTaskLinkAlias(
         this.deviceToken,
         normalizedTarget.adapter,
         normalizedTarget.threadId,
@@ -103,7 +104,7 @@ export class DeskRelayRelayTaskLinkStore {
     this.persist();
   }
 
-  resolve(alias: string): DeskRelayRelayTaskLinkTarget | null {
+  resolve(alias: string): WeRelayRelayTaskLinkTarget | null {
     return this.entries.get(alias.trim()) ?? null;
   }
 
@@ -116,7 +117,7 @@ export class DeskRelayRelayTaskLinkStore {
         try {
           const target = normalizeTarget(entry);
           if (
-            entry.alias === createDeskRelayRelayTaskLinkAlias(
+            entry.alias === createWeRelayRelayTaskLinkAlias(
               this.deviceToken,
               target.adapter,
               target.threadId,
@@ -148,13 +149,13 @@ export class DeskRelayRelayTaskLinkStore {
   }
 }
 
-type PendingRegistration = DeskRelayRelayTaskLinkTarget & {
+type PendingRegistration = WeRelayRelayTaskLinkTarget & {
   alias: string;
   retryMs: number;
   timer?: ReturnType<typeof setTimeout>;
 };
 
-export class DeskRelayRelayTaskLinkClient {
+export class WeRelayRelayTaskLinkClient {
   private readonly relayUrl: string;
   private readonly deviceId: string;
   private readonly deviceToken: string;
@@ -172,7 +173,7 @@ export class DeskRelayRelayTaskLinkClient {
     deviceToken: string;
     fetchImpl?: typeof fetch;
   }) {
-    this.relayUrl = normalizeDeskRelayRelayBaseUrl(options.relayUrl);
+    this.relayUrl = normalizeWeRelayRelayBaseUrl(options.relayUrl);
     this.deviceId = options.deviceId.trim();
     this.deviceToken = options.deviceToken.trim();
     this.fetchImpl = options.fetchImpl ?? fetch;
@@ -184,14 +185,17 @@ export class DeskRelayRelayTaskLinkClient {
     searchParams: URLSearchParams,
   ): string {
     const target = normalizeTarget({ adapter, threadId });
-    const alias = createDeskRelayRelayTaskLinkAlias(
+    const alias = createWeRelayRelayTaskLinkAlias(
       this.deviceToken,
       target.adapter,
       target.threadId,
     );
     this.ensureRegistered(alias, target);
     const query = searchParams.toString();
-    return `${this.relayUrl}/${alias}${query ? `?${query}` : ""}`;
+    const pathname = this.registered.has(alias)
+      ? `/${alias}`
+      : `/t/${encodeWeRelayTaskShortCode(target.adapter, target.threadId)}`;
+    return `${this.relayUrl}${pathname}${query ? `?${query}` : ""}`;
   }
 
   async close(): Promise<void> {
@@ -204,7 +208,7 @@ export class DeskRelayRelayTaskLinkClient {
 
   private ensureRegistered(
     alias: string,
-    target: DeskRelayRelayTaskLinkTarget,
+    target: WeRelayRelayTaskLinkTarget,
   ): void {
     if (this.registered.has(alias) || this.pending.has(alias)) return;
     const registration: PendingRegistration = {
@@ -220,13 +224,13 @@ export class DeskRelayRelayTaskLinkClient {
     if (this.abortController.signal.aborted) return;
     try {
       const response = await this.fetchImpl(
-        `${this.relayUrl}${DESKRELAY_RELAY_TASK_LINK_REGISTER_PATH}`,
+        `${this.relayUrl}${WERELAY_RELAY_TASK_LINK_REGISTER_PATH}`,
         {
           method: "POST",
           headers: {
             authorization: `Bearer ${this.deviceToken}`,
             "content-type": "application/json",
-            "x-deskrelay-device-id": this.deviceId,
+            "x-werelay-device-id": this.deviceId,
           },
           body: JSON.stringify({
             alias: registration.alias,

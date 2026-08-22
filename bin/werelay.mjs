@@ -2,4 +2,4 @@
 
 import { runJsEntry } from "./_run-entry.mjs";
 
-runJsEntry("dist/daemon/deskrelay-daemon.js");
+runJsEntry("dist/daemon/werelay-daemon.js");

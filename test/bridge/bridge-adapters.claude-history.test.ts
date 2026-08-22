@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 function makeHome(): string {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-claude-history-"));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-claude-history-"));
   tempDirs.push(directory);
   return directory;
 }

@@ -16,7 +16,7 @@ import {
 } from "../../src/bridge/bridge-adapters.grok.ts";
 import { LocalCompanionProxyAdapter } from "../../src/bridge/bridge-adapters.core.ts";
 
-const cwd = path.resolve("/tmp/deskrelay-grok-project");
+const cwd = path.resolve("/tmp/werelay-grok-project");
 
 describe("Grok shared owner adapter", () => {
   test("uses the local companion proxy on the bridge side", () => {
@@ -41,7 +41,7 @@ describe("Grok shared owner adapter", () => {
   });
 
   test("connects ACP and the visible TUI to the same leader socket", () => {
-    const socket = "/tmp/deskrelay-grok-test.sock";
+    const socket = "/tmp/werelay-grok-test.sock";
     const options = {
       kind: "grok" as const,
       command: "grok",
@@ -75,12 +75,12 @@ describe("Grok shared owner adapter", () => {
 
     expect(first).toBe(second);
     expect(first).not.toBe(other);
-    expect(first).toStartWith("/tmp/deskrelay-grok-501-");
+    expect(first).toStartWith("/tmp/werelay-grok-501-");
     expect(first.length).toBeLessThan(100);
   });
 
   test("finds only processes that hold the exact Grok leader socket", () => {
-    const target = "/tmp/deskrelay-grok-501-target.sock";
+    const target = "/tmp/werelay-grok-501-target.sock";
     const lsofOutput = [
       "p101",
       "fcwd",
@@ -89,7 +89,7 @@ describe("Grok shared owner adapter", () => {
       `n${target}`,
       "p202",
       "f19",
-      "n/tmp/deskrelay-grok-501-other.sock",
+      "n/tmp/werelay-grok-501-other.sock",
       "p303",
       "f7",
       `n${target}.backup`,
@@ -109,7 +109,7 @@ describe("Grok shared owner adapter", () => {
   });
 
   test("recovers only exact socket owners whose process is a Grok leader", () => {
-    const target = "/tmp/deskrelay-grok-501-target.sock";
+    const target = "/tmp/werelay-grok-501-target.sock";
     const lsofOutput = [
       "p101",
       "f22",
@@ -119,7 +119,7 @@ describe("Grok shared owner adapter", () => {
       `n${target}`,
       "p303",
       "f24",
-      "n/tmp/deskrelay-grok-501-other.sock",
+      "n/tmp/werelay-grok-501-other.sock",
     ].join("\n");
     const commandLines = new Map([
       [101, "/Users/example/.grok/bin/grok agent leader --no-exit-on-disconnect"],
@@ -133,7 +133,7 @@ describe("Grok shared owner adapter", () => {
 
   test("does not unlink a leader socket owned by another visible Grok client", async () => {
     if (process.platform === "win32") return;
-    const tempCwd = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-grok-owner-"));
+    const tempCwd = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-grok-owner-"));
     const socketPath = resolveGrokLeaderSocket(tempCwd);
     fs.writeFileSync(socketPath, "external-owner", "utf8");
     const adapter = new GrokAcpAdapter({
@@ -153,7 +153,7 @@ describe("Grok shared owner adapter", () => {
   });
 
   test("attaches generated image tool results to the preceding assistant message without duplicating image reads", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-grok-image-"));
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-grok-image-"));
     const imagePath = path.join(tempDir, "images", "3.jpg");
     fs.mkdirSync(path.dirname(imagePath), { recursive: true });
     fs.writeFileSync(imagePath, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));

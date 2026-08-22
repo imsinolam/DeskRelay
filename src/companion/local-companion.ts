@@ -134,7 +134,7 @@ function readMatchingEndpoint(
   });
   if (!endpoint || endpoint.kind !== options.adapter) {
     throw new Error(
-      `No active ${options.adapter} bridge endpoint was found for ${options.cwd}. Start "deskrelay-bridge-${options.adapter}" in that directory first.`,
+      `No active ${options.adapter} bridge endpoint was found for ${options.cwd}. Start "werelay-bridge-${options.adapter}" in that directory first.`,
     );
   }
 

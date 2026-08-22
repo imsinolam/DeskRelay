@@ -11,7 +11,7 @@ import {
 
 describe("daemon workspace state", () => {
   test("persists task-scoped auto-approval across daemon restarts", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-daemon-state-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-daemon-state-"));
     const stateFile = path.join(directory, "daemon-state.json");
     const cwd = path.join(directory, "workspace");
 
@@ -47,7 +47,7 @@ describe("daemon workspace state", () => {
   });
 
   test("persists pending and delivered Codex completion notifications", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-daemon-state-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-daemon-state-"));
     const stateFile = path.join(directory, "daemon-state.json");
     const cwd = path.join(directory, "workspace");
 
@@ -100,7 +100,7 @@ describe("daemon workspace state", () => {
   });
 
   test("persists pending and delivered approval notifications", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-daemon-state-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-daemon-state-"));
     const stateFile = path.join(directory, "daemon-state.json");
     const cwd = path.join(directory, "workspace");
 
@@ -146,7 +146,7 @@ describe("daemon workspace state", () => {
   });
 
   test("persists the active adapter and selected Codex thread", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-daemon-state-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-daemon-state-"));
     const stateFile = path.join(directory, "daemon-state.json");
     const cwd = path.join(directory, "workspace");
 
@@ -199,7 +199,7 @@ describe("daemon workspace state", () => {
   });
 
   test("ignores malformed or cross-workspace state", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-daemon-state-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-daemon-state-"));
     const stateFile = path.join(directory, "daemon-state.json");
     const cwd = path.join(directory, "workspace");
 
@@ -225,7 +225,7 @@ describe("daemon workspace state", () => {
   });
 
   test("persists one latest completed record per task across all adapters", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-daemon-state-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-daemon-state-"));
     const stateFile = path.join(directory, "daemon-state.json");
     const cwd = path.join(directory, "workspace");
 
@@ -278,7 +278,7 @@ describe("daemon workspace state", () => {
   });
 
   test("persists approval results and keeps them isolated by adapter and task", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-daemon-state-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-daemon-state-"));
     const stateFile = path.join(directory, "daemon-state.json");
     const cwd = path.join(directory, "workspace");
 

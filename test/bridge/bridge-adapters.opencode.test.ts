@@ -1308,7 +1308,7 @@ describe("OpenCode permission.updated handling", () => {
         permission: "bash",
         metadata: {
           command:
-            'Copy-Item "C:/Users/example/Desktop/report.docx" "C:/Users/example/.deskrelay/outbound-attachments/2026-05-23/report.docx"',
+            'Copy-Item "C:/Users/example/Desktop/report.docx" "C:/Users/example/.werelay/outbound-attachments/2026-05-23/report.docx"',
         },
       },
     });
@@ -1350,12 +1350,12 @@ describe("OpenCode permission.updated handling", () => {
         id: "perm_outbound_dir",
         sessionID: "session_perm_1",
         permission: "external_directory",
-        patterns: ["C:/Users/example/.deskrelay/outbound-attachments/2026-05-23/*"],
+        patterns: ["C:/Users/example/.werelay/outbound-attachments/2026-05-23/*"],
         metadata: {
           filepath:
-            "C:/Users/example/.deskrelay/outbound-attachments/2026-05-23/report.docx",
+            "C:/Users/example/.werelay/outbound-attachments/2026-05-23/report.docx",
           parentDir:
-            "C:/Users/example/.deskrelay/outbound-attachments/2026-05-23",
+            "C:/Users/example/.werelay/outbound-attachments/2026-05-23",
         },
       },
     });
@@ -3098,8 +3098,8 @@ describe("OpenCode shared utilities", () => {
     expect(resolveDefaultAdapterCommand("opencode", { platform: "darwin" })).toBe("opencode");
   });
 
-  test("getLocalCompanionCommandName returns deskrelay-opencode for opencode", () => {
-    expect(getLocalCompanionCommandName("opencode")).toBe("deskrelay-opencode");
+  test("getLocalCompanionCommandName returns werelay-opencode for opencode", () => {
+    expect(getLocalCompanionCommandName("opencode")).toBe("werelay-opencode");
   });
 });
 
@@ -3147,7 +3147,7 @@ describe("OpenCode stored sessions", () => {
       listOpenCodeStoredSessions,
       readOpenCodeStoredSessionMessages,
     } = await import("../../src/bridge/bridge-adapters.opencode.ts");
-    const storage = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-opencode-"));
+    const storage = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-opencode-"));
     try {
       const sessionId = "ses_test";
       fs.mkdirSync(path.join(storage, "session", "project"), { recursive: true });

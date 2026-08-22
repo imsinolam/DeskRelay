@@ -5,10 +5,13 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import {
-  createDeskRelayRelayTaskLinkAlias,
-  DeskRelayRelayTaskLinkClient,
-  DeskRelayRelayTaskLinkStore,
+  createWeRelayRelayTaskLinkAlias,
+  WeRelayRelayTaskLinkClient,
+  WeRelayRelayTaskLinkStore,
 } from "../../src/relay/relay-task-links.ts";
+import {
+  decodeCodexMobileTaskShortCode,
+} from "../../src/daemon/codex-mobile-server.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -21,8 +24,8 @@ afterEach(() => {
 describe("relay task links", () => {
   test("creates stable ten-character aliases without cross-adapter collisions", () => {
     const threadId = "0000000a-0000-7000-8000-00000000000a";
-    const codex = createDeskRelayRelayTaskLinkAlias("device-secret", "codex", threadId);
-    const workbuddy = createDeskRelayRelayTaskLinkAlias(
+    const codex = createWeRelayRelayTaskLinkAlias("device-secret", "codex", threadId);
+    const workbuddy = createWeRelayRelayTaskLinkAlias(
       "device-secret",
       "workbuddy",
       threadId,
@@ -31,30 +34,30 @@ describe("relay task links", () => {
     expect(codex).toHaveLength(10);
     expect(codex).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(workbuddy).not.toBe(codex);
-    expect(createDeskRelayRelayTaskLinkAlias("device-secret", "codex", threadId)).toBe(codex);
+    expect(createWeRelayRelayTaskLinkAlias("device-secret", "codex", threadId)).toBe(codex);
   });
 
   test("persists aliases across relay restarts", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-task-links-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-task-links-"));
     temporaryDirectories.push(directory);
     const stateFile = path.join(directory, "task-links.json");
     const target = {
       adapter: "codex",
       threadId: "0000000a-0000-7000-8000-00000000000a",
     };
-    const alias = createDeskRelayRelayTaskLinkAlias(
+    const alias = createWeRelayRelayTaskLinkAlias(
       "device-secret",
       target.adapter,
       target.threadId,
     );
 
-    const first = new DeskRelayRelayTaskLinkStore({
+    const first = new WeRelayRelayTaskLinkStore({
       deviceToken: "device-secret",
       stateFile,
     });
     first.register(alias, target);
 
-    const restored = new DeskRelayRelayTaskLinkStore({
+    const restored = new WeRelayRelayTaskLinkStore({
       deviceToken: "device-secret",
       stateFile,
     });
@@ -64,34 +67,69 @@ describe("relay task links", () => {
     }
   });
 
-  test("returns the short URL immediately and registers it in the background", async () => {
+  test("uses a self-contained task URL until the Relay confirms the shorter alias", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
-    const client = new DeskRelayRelayTaskLinkClient({
-      relayUrl: "https://deskrelay.example",
+    let finishRegistration: ((response: Response) => void) | undefined;
+    const client = new WeRelayRelayTaskLinkClient({
+      relayUrl: "https://werelay.example",
       deviceId: "device-1",
       deviceToken: "device-secret",
       fetchImpl: async (url, init) => {
         requests.push({ url: String(url), init });
-        return new Response(JSON.stringify({ ok: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
+        return await new Promise<Response>((resolve) => {
+          finishRegistration = resolve;
         });
       },
     });
     try {
-      const url = client.buildTaskUrl(
+      const firstUrl = new URL(client.buildTaskUrl(
         "0000000a-0000-7000-8000-00000000000a",
         "codex",
         new URLSearchParams(),
-      );
-      expect(url).toMatch(/^https:\/\/deskrelay\.example\/[A-Za-z0-9_-]{10}$/);
-      expect(url.length).toBeLessThan(45);
+      ));
+      expect(firstUrl.pathname).toMatch(/^\/t\/[A-Za-z0-9_.~-]+$/);
+      expect(decodeCodexMobileTaskShortCode(firstUrl.pathname.slice(3))).toEqual({
+        adapter: "codex",
+        threadId: "0000000a-0000-7000-8000-00000000000a",
+      });
       await Bun.sleep(0);
       expect(requests).toHaveLength(1);
       expect(requests[0]?.init?.headers).toMatchObject({
         authorization: "Bearer device-secret",
-        "x-deskrelay-device-id": "device-1",
+        "x-werelay-device-id": "device-1",
       });
+      finishRegistration?.(new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+      await Bun.sleep(0);
+      const confirmedUrl = client.buildTaskUrl(
+        "0000000a-0000-7000-8000-00000000000a",
+        "codex",
+        new URLSearchParams(),
+      );
+      expect(confirmedUrl).toMatch(/^https:\/\/werelay\.example\/[A-Za-z0-9_-]{10}$/);
+      expect(confirmedUrl.length).toBeLessThan(45);
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("never emits an unregistered alias while Relay registration is failing", async () => {
+    const client = new WeRelayRelayTaskLinkClient({
+      relayUrl: "https://werelay.example",
+      deviceId: "device-1",
+      deviceToken: "device-secret",
+      fetchImpl: async () => new Response("unavailable", { status: 503 }),
+    });
+    try {
+      const url = new URL(client.buildTaskUrl(
+        "0000000a-0000-7000-8000-00000000000a",
+        "codex",
+        new URLSearchParams("setup=token"),
+      ));
+      expect(url.pathname).toMatch(/^\/t\//);
+      expect(url.searchParams.get("setup")).toBe("token");
     } finally {
       await client.close();
     }

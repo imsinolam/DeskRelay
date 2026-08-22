@@ -8,7 +8,7 @@ import process from "node:process";
 const root = process.cwd();
 const targetArg = process.argv[2];
 if (!targetArg || targetArg.startsWith("-")) {
-  console.error("Usage: npm run public:snapshot -- /absolute/path/to/DeskRelay-public");
+  console.error("Usage: npm run public:snapshot -- /absolute/path/to/WeRelay-public");
   process.exit(2);
 }
 

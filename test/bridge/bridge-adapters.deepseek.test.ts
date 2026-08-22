@@ -255,7 +255,7 @@ describe("DeepSeek Harness adapter", () => {
     }
   });
 
-  test("is registered as a first-class DeskRelay adapter", () => {
+  test("is registered as a first-class WeRelay adapter", () => {
     const adapter = createBridgeAdapter({
       kind: "deepseek",
       command: "dsh",
@@ -587,7 +587,7 @@ describe("DeepSeek Harness adapter", () => {
   });
 
   test("encodes local images into the existing Harness session prompt", async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-deepseek-image-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-deepseek-image-"));
     const imagePath = path.join(directory, "sample.png");
     fs.writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     try {

@@ -21,7 +21,7 @@ export function setLocale(locale: Locale): void {
 export function initLocaleFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): void {
-  const value = env.DESKRELAY_LANG?.trim().toLowerCase();
+  const value = env.WERELAY_LANG?.trim().toLowerCase();
   if (value === "en" || value === "english") {
     currentLocale = "en";
   } else {

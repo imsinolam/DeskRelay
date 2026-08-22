@@ -96,7 +96,7 @@ describe("bridge provider registry", () => {
       expect(createBridgeAdapter({
         kind,
         command: getBridgeProvider(kind).command,
-        cwd: "/tmp/deskrelay-owner-contract",
+        cwd: "/tmp/werelay-owner-contract",
       })).toBeInstanceOf(LocalCompanionProxyAdapter);
       expect(getBridgeProvider(kind).sessionIntegration).toMatchObject({
         continuity: "same_owner",

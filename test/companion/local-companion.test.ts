@@ -37,8 +37,8 @@ describe("local companion reconnect policy", () => {
   });
 
   test("recognizes direct Node execution even when import.meta.main is unavailable", () => {
-    const modulePath = path.resolve("tmp", "DeskRelay", "dist", "companion", "local-companion.js");
-    const otherPath = path.resolve("tmp", "DeskRelay", "test", "companion", "local-companion.test.js");
+    const modulePath = path.resolve("tmp", "WeRelay", "dist", "companion", "local-companion.js");
+    const otherPath = path.resolve("tmp", "WeRelay", "test", "companion", "local-companion.test.js");
     expect(isDirectRunModule(
       pathToFileURL(modulePath).href,
       modulePath,

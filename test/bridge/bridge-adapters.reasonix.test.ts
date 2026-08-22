@@ -21,11 +21,11 @@ import {
 
 const previousReasonixHome = process.env.REASONIX_HOME;
 const previousReasonixStateHome = process.env.REASONIX_STATE_HOME;
-const previousReasonixOpenWeb = process.env.DESKRELAY_REASONIX_OPEN_WEB;
+const previousReasonixOpenWeb = process.env.WERELAY_REASONIX_OPEN_WEB;
 const tempDirectories: string[] = [];
 
 function makeTempDirectory(): string {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-reasonix-"));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-reasonix-"));
   tempDirectories.push(directory);
   return directory;
 }
@@ -52,8 +52,8 @@ afterEach(() => {
   else process.env.REASONIX_HOME = previousReasonixHome;
   if (previousReasonixStateHome === undefined) delete process.env.REASONIX_STATE_HOME;
   else process.env.REASONIX_STATE_HOME = previousReasonixStateHome;
-  if (previousReasonixOpenWeb === undefined) delete process.env.DESKRELAY_REASONIX_OPEN_WEB;
-  else process.env.DESKRELAY_REASONIX_OPEN_WEB = previousReasonixOpenWeb;
+  if (previousReasonixOpenWeb === undefined) delete process.env.WERELAY_REASONIX_OPEN_WEB;
+  else process.env.WERELAY_REASONIX_OPEN_WEB = previousReasonixOpenWeb;
   while (tempDirectories.length > 0) {
     fs.rmSync(tempDirectories.pop()!, { recursive: true, force: true });
   }
@@ -250,7 +250,7 @@ describe("reasonix adapter", () => {
     const logPath = path.join(stateHome, "fake-reasonix.log");
     const scriptPath = path.join(stateHome, "fake-reasonix.mjs");
     process.env.REASONIX_STATE_HOME = stateHome;
-    process.env.DESKRELAY_REASONIX_OPEN_WEB = "0";
+    process.env.WERELAY_REASONIX_OPEN_WEB = "0";
     fs.mkdirSync(projectCwd, { recursive: true });
     fs.mkdirSync(sessionDir, { recursive: true });
 

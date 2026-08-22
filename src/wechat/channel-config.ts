@@ -22,8 +22,8 @@ export function resolveChannelDataDir(
   env: NodeJS.ProcessEnv = process.env,
   homeDir = os.homedir(),
 ): string {
-  const configured = env.DESKRELAY_DATA_DIR?.trim();
-  return configured ? path.resolve(configured) : path.join(homeDir, ".deskrelay");
+  const configured = env.WERELAY_DATA_DIR?.trim();
+  return configured ? path.resolve(configured) : path.join(homeDir, ".werelay");
 }
 
 export const CHANNEL_DATA_DIR = resolveChannelDataDir();
@@ -118,7 +118,8 @@ type LegacyMigrationItem = {
   kind: "file" | "directory";
 };
 
-const LEGACY_DESKRELAY_DATA_DIR = path.join(os.homedir(), ".cli-bridge");
+const LEGACY_DESKRELAY_DATA_DIR = path.join(os.homedir(), ".deskrelay");
+const LEGACY_CLI_BRIDGE_DATA_DIR = path.join(os.homedir(), ".cli-bridge");
 const LEGACY_GLOBAL_CHANNEL_DATA_DIR = path.join(
   os.homedir(),
   ".claude",
@@ -137,6 +138,7 @@ const LEGACY_ENV_CHANNEL_DATA_DIR = process.env.CLAUDE_WECHAT_CHANNEL_DATA_DIR?.
   : "";
 const LEGACY_CHANNEL_SOURCE_DIRS = [
   LEGACY_DESKRELAY_DATA_DIR,
+  LEGACY_CLI_BRIDGE_DATA_DIR,
   LEGACY_ENV_CHANNEL_DATA_DIR,
   LEGACY_GLOBAL_CHANNEL_DATA_DIR,
   LEGACY_REPO_CHANNEL_DATA_DIR,
@@ -282,19 +284,6 @@ function legacySourceHasMigratableData(source: LegacyChannelSource): boolean {
   });
 }
 
-function findLegacyChannelSource(
-  channelDataDir = CHANNEL_DATA_DIR,
-  legacySources = LEGACY_CHANNEL_SOURCES,
-): LegacyChannelSource | null {
-  return (
-    legacySources.find(
-      (source) =>
-        !isSamePath(source.dataDir, channelDataDir) &&
-        legacySourceHasMigratableData(source),
-    ) ?? null
-  );
-}
-
 export function migrateLegacyChannelFiles(
   log?: (message: string) => void,
   options: LegacyChannelMigrationOptions = {},
@@ -304,51 +293,53 @@ export function migrateLegacyChannelFiles(
     (dataDir) => ({ dataDir }),
   );
   const migrated: string[] = [];
-  const skippedExisting: string[] = [];
+  const skippedExisting = new Set<string>();
   ensureChannelDataDir(channelDataDir);
-  const legacySource = findLegacyChannelSource(channelDataDir, legacySources);
 
-  if (!legacySource) {
-    return migrated;
-  }
-
-  for (const item of LEGACY_MIGRATION_ITEMS) {
-    const sourcePath = path.join(legacySource.dataDir, item.sourceName);
-    const targetPath = path.join(channelDataDir, item.targetName);
-    if (!fs.existsSync(sourcePath)) {
-      continue;
-    }
-    if (fs.existsSync(targetPath)) {
-      skippedExisting.push(item.label);
+  for (const legacySource of legacySources) {
+    if (
+      isSamePath(legacySource.dataDir, channelDataDir) ||
+      !legacySourceHasMigratableData(legacySource)
+    ) {
       continue;
     }
 
-    const stat = fs.statSync(sourcePath);
-    if (item.kind === "directory") {
-      if (!stat.isDirectory()) {
+    for (const item of LEGACY_MIGRATION_ITEMS) {
+      const sourcePath = path.join(legacySource.dataDir, item.sourceName);
+      const targetPath = path.join(channelDataDir, item.targetName);
+      if (!fs.existsSync(sourcePath)) {
         continue;
       }
-      fs.cpSync(sourcePath, targetPath, { recursive: true });
-    } else {
-      if (!stat.isFile()) {
+      if (fs.existsSync(targetPath)) {
+        skippedExisting.add(item.label);
         continue;
       }
-      ensurePrivateDir(path.dirname(targetPath));
-      fs.copyFileSync(sourcePath, targetPath);
+
+      const stat = fs.statSync(sourcePath);
+      if (item.kind === "directory") {
+        if (!stat.isDirectory()) {
+          continue;
+        }
+        fs.cpSync(sourcePath, targetPath, { recursive: true });
+      } else {
+        if (!stat.isFile()) {
+          continue;
+        }
+        ensurePrivateDir(path.dirname(targetPath));
+        fs.copyFileSync(sourcePath, targetPath);
+      }
+      migrated.push(item.label);
+      log?.(
+        `Migrated legacy ${item.label} from ${legacySource.dataDir} to ${targetPath}`,
+      );
     }
-    migrated.push(item.label);
   }
 
   repairPrivateTreePermissions(channelDataDir);
 
-  if (migrated.length && log) {
-    const skippedText = skippedExisting.length
-      ? ` Skipped existing: ${skippedExisting.join(", ")}.`
-      : "";
-    log(
-      `Migrated legacy ${migrated.join(", ")} from ${
-        legacySource.dataDir
-      } to ${channelDataDir}.${skippedText}`,
+  if (skippedExisting.size > 0) {
+    log?.(
+      `Skipped existing WeRelay data: ${[...skippedExisting].join(", ")}`,
     );
   }
 

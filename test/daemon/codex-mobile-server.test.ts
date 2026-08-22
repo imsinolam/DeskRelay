@@ -172,8 +172,8 @@ describe("mobile cache freshness", () => {
     try {
       const root = `http://127.0.0.1:${server.port}`;
       const prewarmHeaders = {
-        "x-deskrelay-relay": "1",
-        "x-deskrelay-relay-prewarm": "relay-prewarm-secret",
+        "x-werelay-relay": "1",
+        "x-werelay-relay-prewarm": "relay-prewarm-secret",
       };
       expect((await fetch(`${root}/api/tasks`, { headers: prewarmHeaders })).status).toBe(200);
       expect((await fetch(`${root}/api/tasks/thread-1/messages`, {
@@ -182,7 +182,7 @@ describe("mobile cache freshness", () => {
       expect((await fetch(`${root}/api/tasks`, {
         headers: {
           ...prewarmHeaders,
-          "x-deskrelay-relay-prewarm": "wrong-secret",
+          "x-werelay-relay-prewarm": "wrong-secret",
         },
       })).status).toBe(401);
       expect((await fetch(`${root}/api/tasks/thread-1/messages?before=older`, {
@@ -232,13 +232,13 @@ describe("mobile task short links", () => {
       host: "127.0.0.1",
       port: 0,
       lanAddress: "127.0.0.1",
-      publicBaseUrl: "https://deskrelay.example",
+      publicBaseUrl: "https://werelay.example",
       accessToken: "access-token",
       authStore: {
         isConfigured: () => true,
       } as never,
       buildPublicTaskUrl: (threadId, adapter, searchParams) =>
-        `https://deskrelay.example/Ab3dE7kPq2${searchParams.size > 0 ? `?${searchParams}` : ""}`,
+        `https://werelay.example/Ab3dE7kPq2${searchParams.size > 0 ? `?${searchParams}` : ""}`,
       listTasks: async () => [],
       readMessages: async () => ({
         messages: [],
@@ -252,7 +252,7 @@ describe("mobile task short links", () => {
       expect(server.buildTaskUrl(
         "0000000a-0000-7000-8000-00000000000a",
         "workbuddy",
-      )).toBe("https://deskrelay.example/Ab3dE7kPq2");
+      )).toBe("https://werelay.example/Ab3dE7kPq2");
     } finally {
       await server.close();
     }
@@ -267,7 +267,7 @@ describe("mobile document title", () => {
     };
     const updateTitle = loadMobileDocumentTitleUpdater({ state, adapterName: "Codex" });
 
-    expect(updateTitle()).toBe("DeskRelay · Codex");
+    expect(updateTitle()).toBe("WeRelay · Codex");
     state.tasks = [
       { threadId: "task-a", title: "任务 A" },
       { threadId: "task-b", title: "任务 B" },
@@ -281,7 +281,7 @@ describe("mobile document title", () => {
     expect(updateTitle()).toBe("任务 B（已重命名）");
 
     state.currentThreadId = "";
-    expect(updateTitle()).toBe("DeskRelay · Codex");
+    expect(updateTitle()).toBe("WeRelay · Codex");
   });
 });
 
@@ -311,26 +311,50 @@ describe("mobile boot connection states", () => {
   test("distinguishes Relay waiting, connected, and direct LAN startup", () => {
     const resolve = loadMobileBootConnectionStateResolver();
 
-    expect(resolve({ ok: true, deviceOnline: false })).toEqual({
+    expect(resolve({ ok: true, deviceOnline: false }, 2_000)).toEqual({
       mode: "relay",
       ready: false,
-      label: "正在等待你的电脑主动连接服务器…",
+      label: "服务器已连接",
+      detail: "正在等待你的电脑主动连接…",
     });
     expect(resolve({ ok: true, deviceOnline: true })).toEqual({
       mode: "relay",
       ready: true,
-      label: "电脑已连接，正在读取任务…",
+      label: "电脑已连接",
+      detail: "正在读取任务和最近消息…",
     });
     expect(resolve({ ok: true })).toEqual({
       mode: "direct",
       ready: true,
-      label: "正在读取电脑上的任务…",
+      label: "已连接电脑",
+      detail: "正在读取任务和最近消息…",
+    });
+  });
+
+  test("adds elapsed-time guidance while the Relay waits for the computer", () => {
+    const resolve = loadMobileBootConnectionStateResolver();
+
+    expect(resolve({ ok: true, deviceOnline: false }, 12_000)).toEqual({
+      mode: "relay",
+      ready: false,
+      label: "电脑尚未连接",
+      detail: "已等待 12 秒，WeRelay 会自动重试。",
+    });
+    expect(resolve({ ok: true, deviceOnline: false }, 35_000)).toEqual({
+      mode: "relay",
+      ready: false,
+      label: "电脑仍未连接",
+      detail: "已等待 35 秒，请确认电脑已开机、联网且 WeRelay 正在运行。",
     });
   });
 
   test("restores trusted cache before waiting for the computer and authenticates in background", () => {
     expect(CODEX_MOBILE_HTML).toContain("正在检查电脑连接状态…");
+    expect(CODEX_MOBILE_HTML).toContain('id="boot-detail"');
+    expect(CODEX_MOBILE_HTML).toContain('class="boot-activity"');
     expect(CODEX_MOBILE_JS).toContain("async function waitForComputerConnection");
+    expect(CODEX_MOBILE_JS).toContain('setCacheSyncState("waiting-computer")');
+    expect(CODEX_MOBILE_JS).toContain('setCacheSyncState("server-retry")');
     expect(CODEX_MOBILE_JS).toContain("restoreTrustedPersistentMobileCachePreview");
     expect(CODEX_MOBILE_JS).toContain("void waitForComputerConnection();");
     expect(CODEX_MOBILE_JS).toContain("await initializeAuthentication();");
@@ -767,7 +791,8 @@ function loadMobileAdapterStateLabel(): (status: string) => string {
 
 function loadMobileBootConnectionStateResolver(): (
   health: { ok?: boolean; deviceOnline?: boolean } | null,
-) => { mode: "relay" | "direct"; ready: boolean; label: string } {
+  waitedMs?: number,
+) => { mode: "relay" | "direct"; ready: boolean; label: string; detail: string } {
   const start = CODEX_MOBILE_JS.indexOf("  function resolveBootConnectionState");
   const end = CODEX_MOBILE_JS.indexOf("\n  function bootReadyStatus", start);
   if (start < 0 || end < 0) throw new Error("Mobile boot connection resolver not found");
@@ -1588,7 +1613,7 @@ describe("Codex mobile persistent cache", () => {
       threadId: "shared-id",
       title: "Codex 任务",
       status: "running",
-      projectName: "DeskRelay",
+      projectName: "WeRelay",
       projectPath: "/Users/example/project",
     }];
     state.serverMessages = Array.from({ length: 90 }, (_, index) => ({
@@ -2130,7 +2155,7 @@ describe("Codex mobile web rendering", () => {
     );
     expect(taskBoardMatchesQuery({
       title: "统一任务看板",
-      projectName: "DeskRelay",
+      projectName: "WeRelay",
       adapterLabel: "Codex",
     }, "codex")).toBe(true);
     expect(formatTaskBoardTime(
@@ -2165,7 +2190,7 @@ describe("Codex mobile web rendering", () => {
 
   test("gives every task-board card a direct task link", () => {
     const href = loadMobileTaskBoardHref(
-      "https://deskrelay.sinolin.com/?view=board&board=completed&appv=123",
+      "https://werelay.sinolin.com/?view=board&board=completed&appv=123",
     );
 
     expect(href({ adapter: "workbuddy", threadId: "task-123" })).toBe(
@@ -3098,7 +3123,7 @@ describe("Codex mobile server", () => {
       expect(htmlResponse.status).toBe(200);
       expect(html).toContain('name="viewport"');
       expect(html).toContain('id="boot-status"');
-      expect(html).toContain("<title>DeskRelay</title>");
+      expect(html).toContain("<title>WeRelay</title>");
       const cssVersion = html.match(/href="\/app\.css\?appv=([a-f0-9]+)"/i)?.[1];
       const jsVersion = html.match(/src="\/app\.js\?appv=([a-f0-9]+)"/i)?.[1];
       expect(cssVersion).toBeTruthy();
@@ -3107,10 +3132,10 @@ describe("Codex mobile server", () => {
       expect(versionResponse.status).toBe(200);
       expect(await versionResponse.json()).toEqual({ version: cssVersion });
       expect(html).toContain("从手机继续任务");
-      expect(html).toContain('id="boot-screen" aria-label="正在打开 DeskRelay"');
+      expect(html).toContain('id="boot-screen" aria-label="正在打开 WeRelay"');
       expect(html).not.toContain('class="brand-title"');
       expect(html).toContain('id="workspace-switcher"');
-      expect(html).toContain('class="workspace-product">DeskRelay</span>');
+      expect(html).toContain('class="workspace-product">WeRelay</span>');
       expect(html).toContain('class="workspace-divider">·</span>');
       expect(html).toContain('id="adapter-menu"');
       expect(html).not.toContain('id="composer-status"');
@@ -3169,10 +3194,10 @@ describe("Codex mobile server", () => {
       const aboutResponse = await fetch(`${root}/about`);
       const aboutHtml = await aboutResponse.text();
       expect(aboutResponse.status).toBe(200);
-      expect(aboutHtml).toContain("<title>项目说明 · DeskRelay</title>");
+      expect(aboutHtml).toContain("<title>项目说明 · WeRelay</title>");
       expect(aboutHtml).toContain("ONE REAL SESSION. EVERY SCREEN.");
       expect(aboutHtml).toContain("电脑端持有唯一真实任务");
-      expect(aboutHtml).toContain('class="about-logo" href="/about">DeskRelay</a>');
+      expect(aboutHtml).toContain('class="about-logo" href="/about">WeRelay</a>');
       expect(aboutHtml).toContain('class="about-open-app" href="/">打开任务</a>');
 
       const cssResponse = await fetch(`${root}/app.css`);
@@ -3275,7 +3300,7 @@ describe("Codex mobile server", () => {
       expect(js).toContain("toggleWorkspaceMenu");
       expect(js).toContain("var task = currentTask();");
       expect(js).toContain("? task.title");
-      expect(js).toContain(': "DeskRelay \\u00B7 " + currentAdapterName();');
+      expect(js).toContain(': "WeRelay \\u00B7 " + currentAdapterName();');
       expect(js).toContain('var requestedAdapter = pageUrl.searchParams.get("adapter") || "";');
       expect(js).toContain('requestedAdapter !== adapterPayload.activeAdapter');
       expect(js).toContain('if (!initial) canonicalUrl.searchParams.delete("task");');
@@ -3301,7 +3326,7 @@ describe("Codex mobile server", () => {
       expect(js).toContain('pending.status = "creating_task";');
       expect(js).toContain("initializeAuthentication");
       expect(js).toContain("attemptLanAcceleration");
-      expect(js).toContain("deskrelayLanRedirectAttemptedAt");
+      expect(js).toContain("werelayLanRedirectAttemptedAt");
       expect(js).toContain("route.sameNetworkLikely");
       expect(js).toContain("bootStatus.textContent =");
       expect(js).toContain("window.location.assign(handoff.handoffUrl)");
@@ -3950,7 +3975,7 @@ describe("Codex mobile task creation", () => {
 
 describe("Codex mobile generated image messages", () => {
   test("maps local assistant and user images to authenticated opaque URLs and serves the image", async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-mobile-output-image-"));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-mobile-output-image-"));
     tempDirs.push(dir);
     const imagePath = path.join(dir, "generated.png");
     const imageBytes = Buffer.from(

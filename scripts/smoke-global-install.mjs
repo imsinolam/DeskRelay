@@ -11,7 +11,11 @@ const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
 const PACKAGE_JSON_PATH = path.join(REPO_ROOT, "package.json");
 const PACKAGE_JSON = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf8"));
 const PACKAGE_NAME = String(PACKAGE_JSON.name ?? "");
-const LEGACY_PACKAGE_NAMES = ["cli-wechat-bridge", "@unlinearity/cli-wechat-bridge"];
+const LEGACY_PACKAGE_NAMES = [
+  "deskrelay",
+  "cli-wechat-bridge",
+  "@unlinearity/cli-wechat-bridge",
+];
 const BIN_MAP = PACKAGE_JSON.bin && typeof PACKAGE_JSON.bin === "object" ? PACKAGE_JSON.bin : {};
 const NPM_EXEC_PATH = process.env.npm_execpath;
 
@@ -135,19 +139,19 @@ function printHelp() {
 
 function isSafeSmokeCommand(commandName) {
   return (
-    commandName === "deskrelay" ||
-    commandName === "deskrelay-codex" ||
-    commandName === "deskrelay-claude" ||
-    commandName === "deskrelay-opencode" ||
-    commandName === "deskrelay-daemon" ||
-    commandName.startsWith("deskrelay-bridge") ||
+    commandName === "werelay" ||
+    commandName === "werelay-codex" ||
+    commandName === "werelay-claude" ||
+    commandName === "werelay-opencode" ||
+    commandName === "werelay-daemon" ||
+    commandName.startsWith("werelay-bridge") ||
     commandName.endsWith("-start")
   );
 }
 
 function getSmokeCommands() {
   return Object.keys(BIN_MAP)
-    .filter((commandName) => commandName !== "deskrelay-setup" && commandName !== "deskrelay-check-update")
+    .filter((commandName) => commandName !== "werelay-setup" && commandName !== "werelay-check-update")
     .filter(isSafeSmokeCommand)
     .sort();
 }

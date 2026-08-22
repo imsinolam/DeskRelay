@@ -2,14 +2,14 @@ import { describe, expect, test } from "bun:test";
 
 import {
   resolveDaemonRelayConfig,
-} from "../../src/daemon/deskrelay-daemon.ts";
+} from "../../src/daemon/werelay-daemon.ts";
 
-describe("DeskRelay daemon relay configuration", () => {
+describe("WeRelay daemon relay configuration", () => {
   test("enables the application relay only when the device token is configured", () => {
     expect(resolveDaemonRelayConfig({
-      DESKRELAY_RELAY_URL: "https://relay.example.com",
-      DESKRELAY_RELAY_DEVICE_ID: "example-device",
-      DESKRELAY_RELAY_DEVICE_TOKEN: "device-secret",
+      WERELAY_RELAY_URL: "https://relay.example.com",
+      WERELAY_RELAY_DEVICE_ID: "example-device",
+      WERELAY_RELAY_DEVICE_TOKEN: "device-secret",
     })).toEqual({
       relayUrl: "https://relay.example.com",
       deviceId: "example-device",
@@ -17,15 +17,15 @@ describe("DeskRelay daemon relay configuration", () => {
     });
 
     expect(resolveDaemonRelayConfig({
-      DESKRELAY_RELAY_URL: "https://relay.example.com",
+      WERELAY_RELAY_URL: "https://relay.example.com",
     })).toBeNull();
     expect(resolveDaemonRelayConfig({})).toBeNull();
   });
 
   test("uses a stable default device identifier", () => {
     expect(resolveDaemonRelayConfig({
-      DESKRELAY_RELAY_URL: "https://relay.example.com",
-      DESKRELAY_RELAY_DEVICE_TOKEN: "device-secret",
+      WERELAY_RELAY_URL: "https://relay.example.com",
+      WERELAY_RELAY_DEVICE_TOKEN: "device-secret",
     })?.deviceId).toBe("default");
   });
 });

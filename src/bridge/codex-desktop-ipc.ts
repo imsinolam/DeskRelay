@@ -316,7 +316,7 @@ export class CodexDesktopIpcClient {
   constructor(options: CodexDesktopIpcClientOptions = {}) {
     this.options = {
       socketPath: options.socketPath,
-      clientType: options.clientType ?? "deskrelay",
+      clientType: options.clientType ?? "werelay",
       openThread: options.openThread,
       reconnectDelayMs: options.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS,
       requestTimeoutMs: options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,

@@ -1,8 +1,8 @@
 # Notice
 
-Copyright (C) 2026 UNLINEARITY and DeskRelay contributors.
+Copyright (C) 2026 UNLINEARITY and WeRelay contributors.
 
-DeskRelay evolved from the CLI WeChat Bridge project. Version 2.0 completes the independent DeskRelay naming migration across the npm package, CLI commands, runtime data directory, environment variables, documentation, and public release workflow.
+WeRelay evolved from the CLI WeChat Bridge project. Version 2.0 completes the independent WeRelay naming migration across the npm package, CLI commands, runtime data directory, environment variables, documentation, and public release workflow.
 
 The project is licensed under the GNU Affero General Public License v3.0 or later. Third-party dependencies retain their own licenses; see `package.json` and the linked upstream projects in `README.md`.
 

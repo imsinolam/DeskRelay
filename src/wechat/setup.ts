@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 /**
- * DeskRelay setup.
+ * WeRelay setup.
  *
  * Installed bridge commands run this automatically on first use.
  * To force a relogin manually:
- *   deskrelay-setup
+ *   werelay-setup
  */
 
 import crypto from "node:crypto";
@@ -237,15 +237,15 @@ function saveCredentials(account: StoredAccount): void {
 }
 
 function printPostLoginHelp(log: (message: string) => void): void {
-  log("This WeChat account is now authorized for DeskRelay.");
+  log("This WeChat account is now authorized for WeRelay.");
   log("");
-  log("Start DeskRelay from your project directory:");
-  log("  deskrelay --adapter codex");
+  log("Start WeRelay from your project directory:");
+  log("  werelay --adapter codex");
   log("");
   log("Replace codex with claude, tclaude, grok, codebuddy, reasonix, workbuddy, deepseek, or opencode when needed.");
   log("Advanced standalone bridge commands are documented in docs/使用指南/Agent安装与配置.md.");
   log("");
-  log("Run deskrelay-setup again any time you need to refresh the login.");
+  log("Run werelay-setup again any time you need to refresh the login.");
 }
 
 export async function runWechatLogin(

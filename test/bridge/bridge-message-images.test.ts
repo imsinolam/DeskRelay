@@ -10,19 +10,19 @@ import {
 
 describe("extractBridgeMessageImages", () => {
   test("extracts only explicit local and remote image references", () => {
-    const cwd = path.resolve("/tmp/deskrelay-media");
+    const cwd = path.resolve("/tmp/werelay-media");
     const images = extractBridgeMessageImages([
       "生成结果：",
       "![预览](images/result.png)",
-      '<image path="/tmp/deskrelay-media/final.webp">',
-      "[local image: /tmp/deskrelay-media/final.webp]",
-      "源码在 /tmp/deskrelay-media/src/app.ts，不应作为图片。",
+      '<image path="/tmp/werelay-media/final.webp">',
+      "[local image: /tmp/werelay-media/final.webp]",
+      "源码在 /tmp/werelay-media/src/app.ts，不应作为图片。",
       "远程图：![海报](https://example.com/poster.jpg)",
     ].join("\n"), { cwd });
 
     expect(images).toEqual([
       { source: "local", path: path.join(cwd, "images/result.png"), alt: "预览" },
-      { source: "local", path: "/tmp/deskrelay-media/final.webp" },
+      { source: "local", path: "/tmp/werelay-media/final.webp" },
       { source: "remote", url: "https://example.com/poster.jpg", alt: "海报" },
     ]);
   });
@@ -44,7 +44,7 @@ describe("extractBridgeMessageImages", () => {
       '<image path="C:\\Users\\tester\\Desktop\\input.png">',
       "![结果](file:///C:/Users/tester/Desktop/result.webp)",
       "![相对图片](images/final.jpg)",
-    ].join("\n"), { cwd: "C:\\repo\\deskrelay" })).toEqual([
+    ].join("\n"), { cwd: "C:\\repo\\werelay" })).toEqual([
       { source: "local", path: "C:\\Users\\tester\\Desktop\\input.png" },
       {
         source: "local",
@@ -53,7 +53,7 @@ describe("extractBridgeMessageImages", () => {
       },
       {
         source: "local",
-        path: "C:\\repo\\deskrelay\\images\\final.jpg",
+        path: "C:\\repo\\werelay\\images\\final.jpg",
         alt: "相对图片",
       },
     ]);

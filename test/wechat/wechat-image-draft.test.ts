@@ -176,11 +176,11 @@ describe("WechatImageDraftCollector", () => {
 
   test("is wired into both the persistent daemon and standalone bridge", () => {
     const daemonSource = fs.readFileSync(
-      path.resolve(process.cwd(), "src/daemon/deskrelay-daemon.ts"),
+      path.resolve(process.cwd(), "src/daemon/werelay-daemon.ts"),
       "utf8",
     );
     const bridgeSource = fs.readFileSync(
-      path.resolve(process.cwd(), "src/bridge/deskrelay-bridge.ts"),
+      path.resolve(process.cwd(), "src/bridge/werelay-bridge.ts"),
       "utf8",
     );
 

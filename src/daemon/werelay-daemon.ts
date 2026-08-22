@@ -33,9 +33,9 @@ import {
 import {
   type BridgeProcessRecord,
   getProcessRecordByPid,
-  isDeskRelayDaemonCommandLine,
+  isWeRelayDaemonCommandLine,
   killProcessTreeSync,
-  listDeskRelayDaemonProcesses,
+  listWeRelayDaemonProcesses,
   reapOrphanedOpencodeProcesses,
   reapPeerBridgeProcesses,
 } from "../bridge/bridge-process-reaper.ts";
@@ -123,7 +123,7 @@ import {
   isRetryableWechatSendError,
   isRetryableDeferredCodexDrainError,
   shouldForwardBridgeEventToWechat,
-} from "../bridge/deskrelay-bridge.ts";
+} from "../bridge/werelay-bridge.ts";
 import {
   BRIDGE_LOCK_FILE,
   BRIDGE_LOG_FILE,
@@ -219,10 +219,10 @@ import {
   type CodexMobileSettings,
 } from "./codex-mobile-server.ts";
 import {
-  startDeskRelayRelayClient,
-  type DeskRelayRelayClientHandle,
+  startWeRelayRelayClient,
+  type WeRelayRelayClientHandle,
 } from "../relay/relay-client.ts";
-import { DeskRelayRelayTaskLinkClient } from "../relay/relay-task-links.ts";
+import { WeRelayRelayTaskLinkClient } from "../relay/relay-task-links.ts";
 import {
   activateGlobalTaskCandidate,
   buildGlobalTaskSnapshot,
@@ -614,11 +614,11 @@ const CODEX_DEFERRED_DRAIN_RETRY_MAX_MS = 30_000;
 const DAEMON_ADAPTERS: DaemonAdapterKind[] = [...DAEMON_PROVIDER_IDS];
 
 function log(message: string): void {
-  process.stderr.write(`[deskrelay-daemon] ${message}\n`);
+  process.stderr.write(`[werelay-daemon] ${message}\n`);
 }
 
 function logError(message: string): void {
-  process.stderr.write(`[deskrelay-daemon] ERROR: ${message}\n`);
+  process.stderr.write(`[werelay-daemon] ERROR: ${message}\n`);
 }
 
 function appendDaemonLog(message: string): void {
@@ -735,7 +735,7 @@ export function parseDaemonCliArgs(argv: string[]): DaemonCliOptions {
     if (arg === "--help" || arg === "-h") {
       process.stdout.write(
         [
-          "Usage: deskrelay [--cwd <path>] [--adapter <codex|claude|tclaude|grok|codebuddy|reasonix|workbuddy|deepseek|opencode>] [--profile <name-or-path>] [--idle-start] [--no-open] [--open-desktop-apps]",
+          "Usage: werelay [--cwd <path>] [--adapter <codex|claude|tclaude|grok|codebuddy|reasonix|workbuddy|deepseek|opencode>] [--profile <name-or-path>] [--idle-start] [--no-open] [--open-desktop-apps]",
           "",
           "Keeps one WeChat connection alive and switches between supported agents from WeChat.",
           "Send /codex, /claude, /tclaude, /grok, /codebuddy, /reasonix, /workbuddy, /deepseek, or /opencode in WeChat to switch the active agent.",
@@ -1014,7 +1014,7 @@ function normalizeDaemonTaskDisplayTitle(
   const normalized = title
     ? normalizeOutput(title).trim().replace(/\s+/g, " ")
     : "";
-  const migrated = normalized.replace(/codex[-_\s]*clawbot/gi, "DeskRelay");
+  const migrated = normalized.replace(/codex[-_\s]*clawbot/gi, "WeRelay");
   return migrated || fallback;
 }
 
@@ -1087,7 +1087,7 @@ export function buildWindowsVisibleClientLaunchCommand(params: {
 }): string {
   return [
     "start",
-    quoteWindowsCommandArg(`deskrelay-${params.adapter}`),
+    quoteWindowsCommandArg(`werelay-${params.adapter}`),
     "/D",
     quoteWindowsCommandArg(params.cwd),
     quoteWindowsCommandArg(process.execPath),
@@ -1255,7 +1255,7 @@ function openVisibleClient(params: {
     };
   }
 
-  const title = `deskrelay-${params.adapter}`;
+  const title = `werelay-${params.adapter}`;
   const fullArgs = [process.execPath, ...args];
 
   if (process.platform === "darwin") {
@@ -1679,8 +1679,8 @@ export function buildDaemonTaskCatalogRuntimeOptions(params: {
 
 export function formatDaemonRestartNotice(restored: boolean): string {
   return restored
-    ? "DeskRelay 已重启，仍在原任务。\n直接发送消息即可继续；发送“任务”可切换。"
-    : "DeskRelay 已重启。\n发送“任务”选择要继续的任务。";
+    ? "WeRelay 已重启，仍在原任务。\n直接发送消息即可继续；发送“任务”可切换。"
+    : "WeRelay 已重启。\n发送“任务”选择要继续的任务。";
 }
 
 const DAEMON_RESTART_NOTICE_COOLDOWN_MS = 60 * 60 * 1000;
@@ -2470,22 +2470,22 @@ export type DaemonRelayConfig = {
 export function resolveDaemonRelayConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): DaemonRelayConfig | null {
-  const relayUrl = env.DESKRELAY_RELAY_URL?.trim();
+  const relayUrl = env.WERELAY_RELAY_URL?.trim();
   if (!relayUrl) {
     return null;
   }
-  const deviceToken = env.DESKRELAY_RELAY_DEVICE_TOKEN?.trim();
+  const deviceToken = env.WERELAY_RELAY_DEVICE_TOKEN?.trim();
   if (!deviceToken) {
     return null;
   }
   return {
     relayUrl,
-    deviceId: env.DESKRELAY_RELAY_DEVICE_ID?.trim() || "default",
+    deviceId: env.WERELAY_RELAY_DEVICE_ID?.trim() || "default",
     deviceToken,
   };
 }
 
-class DeskRelayDaemon {
+class WeRelayDaemon {
   private readonly cwd: string;
   private readonly profile?: string;
   private readonly authorizedUserId: string;
@@ -2511,7 +2511,7 @@ class DeskRelayDaemon {
   /** Runtime override for strict approval; null = follow env var. */
   private runtimeStrictApproval: boolean | null = null;
 
-  /** True when DESKRELAY_STRICT_APPROVAL is enabled (all approvals go remote). */
+  /** True when WERELAY_STRICT_APPROVAL is enabled (all approvals go remote). */
   private get strictApprovalEnabled(): boolean {
     if (this.runtimeStrictApproval !== null) {
       return this.runtimeStrictApproval;
@@ -2530,8 +2530,8 @@ class DeskRelayDaemon {
   private startupNotice: string | null = null;
   private pendingRestartNotice: string | null = null;
   private codexMobileServer: CodexMobileServerHandle | null = null;
-  private deskRelayRelayClient: DeskRelayRelayClientHandle | null = null;
-  private deskRelayRelayTaskLinks: DeskRelayRelayTaskLinkClient | null = null;
+  private deskRelayRelayClient: WeRelayRelayClientHandle | null = null;
+  private deskRelayRelayTaskLinks: WeRelayRelayTaskLinkClient | null = null;
   private codexTaskMonitorTimer: ReturnType<typeof setTimeout> | null = null;
   private codexTaskMonitorRunning = false;
   private readonly codexTaskObservations = new BoundedTtlMap<string, CodexTaskObservation>({
@@ -2687,7 +2687,7 @@ class DeskRelayDaemon {
       return;
     }
     const configuredPort = Number.parseInt(
-      process.env.DESKRELAY_MOBILE_PORT?.trim() ?? "4396",
+      process.env.WERELAY_MOBILE_PORT?.trim() ?? "4396",
       10,
     );
     const port = Number.isInteger(configuredPort) &&
@@ -2700,12 +2700,12 @@ class DeskRelayDaemon {
       const workspaceDir = ensureWorkspaceChannelDir(this.cwd).workspaceDir;
       const relayConfig = resolveDaemonRelayConfig();
       const publicBaseUrl = relayConfig?.relayUrl ??
-        process.env.DESKRELAY_MOBILE_PUBLIC_URL;
+        process.env.WERELAY_MOBILE_PUBLIC_URL;
       const authStore = new CodexMobileAuthStore({
         stateFile: path.join(workspaceDir, "codex-mobile-auth.json"),
       });
       const relayTaskLinks = relayConfig
-        ? new DeskRelayRelayTaskLinkClient({
+        ? new WeRelayRelayTaskLinkClient({
             relayUrl: relayConfig.relayUrl,
             deviceId: relayConfig.deviceId,
             deviceToken: relayConfig.deviceToken,
@@ -2758,7 +2758,7 @@ class DeskRelayDaemon {
         stopTask: (threadId, adapter) => this.stopMobileTask(threadId, adapter),
       });
       if (relayConfig) {
-        this.deskRelayRelayClient = startDeskRelayRelayClient({
+        this.deskRelayRelayClient = startWeRelayRelayClient({
           relayUrl: relayConfig.relayUrl,
           deviceId: relayConfig.deviceId,
           deviceToken: relayConfig.deviceToken,
@@ -2772,19 +2772,19 @@ class DeskRelayDaemon {
         appendDaemonLog(
           `relay_client_started: device=${relayConfig.deviceId} url=${relayConfig.relayUrl}`,
         );
-      } else if (process.env.DESKRELAY_RELAY_URL?.trim()) {
+      } else if (process.env.WERELAY_RELAY_URL?.trim()) {
         appendDaemonLog(
-          "relay_client_disabled: DESKRELAY_RELAY_DEVICE_TOKEN is missing",
+          "relay_client_disabled: WERELAY_RELAY_DEVICE_TOKEN is missing",
         );
       }
       appendDaemonLog(
         `codex_mobile_started: address=${this.codexMobileServer.lanAddress} port=${this.codexMobileServer.port}`,
       );
       log(
-        `DeskRelay mobile web is ready at http://${this.codexMobileServer.lanAddress}:${this.codexMobileServer.port}`,
+        `WeRelay mobile web is ready at http://${this.codexMobileServer.lanAddress}:${this.codexMobileServer.port}`,
       );
       if (relayConfig) {
-        log(`DeskRelay public relay is connecting to ${relayConfig.relayUrl}`);
+        log(`WeRelay public relay is connecting to ${relayConfig.relayUrl}`);
       }
     } catch (error) {
       if (this.deskRelayRelayTaskLinks) {
@@ -2796,7 +2796,7 @@ class DeskRelayDaemon {
         `codex_mobile_start_error: error=${truncatePreview(error instanceof Error ? error.message : String(error), 400)}`,
       );
       logError(
-        `DeskRelay mobile web failed to start: ${error instanceof Error ? error.message : String(error)}`,
+        `WeRelay mobile web failed to start: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -2818,7 +2818,7 @@ class DeskRelayDaemon {
 
   async runPollLoop(): Promise<void> {
     let consecutivePollFailures = 0;
-    log("DeskRelay daemon is ready.");
+    log("WeRelay daemon is ready.");
     log(`Working directory: ${this.cwd}`);
     log("Switch from WeChat with /codex, /claude, /tclaude, /grok, /codebuddy, /reasonix, /workbuddy, /deepseek, or /opencode.");
     appendDaemonLog(`started: cwd=${this.cwd}`);
@@ -3052,7 +3052,7 @@ class DeskRelayDaemon {
       case "ensure_slot":
         if (!isSameWorkspaceCwd(request.cwd, this.cwd)) {
           throw new Error(
-            `deskrelay-daemon is bound to ${this.cwd}; requested cwd was ${request.cwd}.`,
+            `werelay-daemon is bound to ${this.cwd}; requested cwd was ${request.cwd}.`,
           );
         }
         return await this.ensureSlot(request.adapter, {
@@ -3939,7 +3939,7 @@ class DeskRelayDaemon {
     const switchAdapter = parseDaemonSwitchCommand(message.text);
     if (switchAdapter) {
       const previousSlot = this.getActiveSlot();
-      let result: Awaited<ReturnType<DeskRelayDaemon["ensureSlot"]>>;
+      let result: Awaited<ReturnType<WeRelayDaemon["ensureSlot"]>>;
       try {
         result = await this.ensureSlot(switchAdapter, {
           openVisible: true,
@@ -7887,7 +7887,7 @@ function clearDaemonWorkspaceEndpoints(endpoint: DaemonEndpoint): void {
 
 function isEndpointDaemonProcess(endpoint: DaemonEndpoint): boolean {
   const record = getProcessRecordByPid(endpoint.pid);
-  return Boolean(record && isDeskRelayDaemonCommandLine(record.commandLine));
+  return Boolean(record && isWeRelayDaemonCommandLine(record.commandLine));
 }
 
 function selectDaemonProcessesToStop(
@@ -7962,7 +7962,7 @@ export async function cleanupDaemonBeforeStart(
   const listDaemonProcesses =
     deps.listDaemonProcesses ??
     ((cwd: string) =>
-      listDeskRelayDaemonProcesses({
+      listWeRelayDaemonProcesses({
         cwd,
         excludePids: [process.pid, process.ppid],
       }));
@@ -7999,7 +7999,7 @@ export async function cleanupDaemonBeforeStart(
 
   if (endpoint.pid === process.pid || !isAlive(endpoint.pid)) {
     cleanupLog(
-      `Found stale deskrelay-daemon endpoint for ${endpoint.cwd} (pid=${endpoint.pid}). Cleaning it before daemon startup.`,
+      `Found stale werelay-daemon endpoint for ${endpoint.cwd} (pid=${endpoint.pid}). Cleaning it before daemon startup.`,
     );
     daemonLog(
       `daemon_stale_endpoint_cleanup: pid=${endpoint.pid} cwd=${endpoint.cwd}`,
@@ -8019,7 +8019,7 @@ export async function cleanupDaemonBeforeStart(
   }
 
   cleanupLog(
-    `Found existing deskrelay-daemon for ${endpoint.cwd} (pid=${endpoint.pid}). Stopping it before daemon startup...`,
+    `Found existing werelay-daemon for ${endpoint.cwd} (pid=${endpoint.pid}). Stopping it before daemon startup...`,
   );
   daemonLog(
     `daemon_takeover_attempt: pid=${endpoint.pid} cwd=${endpoint.cwd}`,
@@ -8100,13 +8100,13 @@ export async function cleanupDaemonBeforeStart(
 
   if (!stopped && isAlive(endpoint.pid)) {
     throw new Error(
-      `Could not stop existing deskrelay-daemon automatically (pid=${endpoint.pid}, cwd=${endpoint.cwd}).`,
+      `Could not stop existing werelay-daemon automatically (pid=${endpoint.pid}, cwd=${endpoint.cwd}).`,
     );
   }
 
   clearDaemonArtifacts();
   cleanupLog(
-    `Cleaned previous deskrelay-daemon for ${endpoint.cwd}; daemon startup can continue.`,
+    `Cleaned previous werelay-daemon for ${endpoint.cwd}; daemon startup can continue.`,
   );
   daemonLog(
     `daemon_takeover_complete: pid=${endpoint.pid} cwd=${endpoint.cwd} forced=${forced}`,
@@ -8319,7 +8319,7 @@ export async function runDaemon(
 
   const stateStore = new DaemonWorkspaceStateStore(options.cwd);
   const persistedState = stateStore.getPersistedState();
-  const daemon = new DeskRelayDaemon({
+  const daemon = new WeRelayDaemon({
     cwd: options.cwd,
     profile: options.profile,
     authorizedUserId: credentials.userId,
@@ -8339,7 +8339,7 @@ export async function runDaemon(
     appendDaemonLog(
       `initial_adapter_start_error: adapter=${resolveDaemonInitialAdapter(options, persistedState?.activeAdapter) ?? "none"} error=${truncatePreview(detail, 400)}`,
     );
-    logError(`初始终端暂时无法连接，DeskRelay 将继续运行：${detail}`);
+    logError(`初始终端暂时无法连接，WeRelay 将继续运行：${detail}`);
   }
   daemon.configureRestartNotice(persistedState);
 

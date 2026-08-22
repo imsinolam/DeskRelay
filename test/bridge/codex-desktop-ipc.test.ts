@@ -56,7 +56,7 @@ async function createMockRouter(
     ? null
     : fs.mkdtempSync(path.join(os.tmpdir(), "codex-desktop-ipc-test-"));
   const socketPath = process.platform === "win32"
-    ? `\\\\.\\pipe\\deskrelay-codex-ipc-${process.pid}-${crypto.randomUUID()}`
+    ? `\\\\.\\pipe\\werelay-codex-ipc-${process.pid}-${crypto.randomUUID()}`
     : path.join(dir!, "ipc.sock");
   if (dir) cleanupPaths.push(dir);
   const server = net.createServer((socket) => {
@@ -77,8 +77,8 @@ function sendFrame(socket: net.Socket, message: Record<string, unknown>): void {
 
 describe("Codex desktop IPC framing and state", () => {
   test("recognizes Windows named pipes without requiring a filesystem entry", () => {
-    expect(isWindowsNamedPipePath("\\\\.\\pipe\\deskrelay-codex-ipc")).toBe(true);
-    expect(isWindowsNamedPipePath("\\\\?\\pipe\\deskrelay-codex-ipc")).toBe(true);
+    expect(isWindowsNamedPipePath("\\\\.\\pipe\\werelay-codex-ipc")).toBe(true);
+    expect(isWindowsNamedPipePath("\\\\?\\pipe\\werelay-codex-ipc")).toBe(true);
     expect(isWindowsNamedPipePath("/tmp/codex-ipc.sock")).toBe(false);
   });
 

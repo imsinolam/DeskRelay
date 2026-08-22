@@ -59,7 +59,7 @@ for (const relative of candidates) {
     fixed += 1;
   } catch (error) {
     console.warn(
-      `[deskrelay] Could not make node-pty spawn-helper executable: ${helperPath}\n` +
+      `[werelay] Could not make node-pty spawn-helper executable: ${helperPath}\n` +
         `  ${error instanceof Error ? error.message : String(error)}\n` +
         "  PTY mode may be unavailable; run --doctor for details.",
     );
@@ -68,6 +68,6 @@ for (const relative of candidates) {
 
 if (fixed > 0) {
   console.log(
-    `[deskrelay] Restored executable bit on ${fixed} node-pty spawn-helper binary(ies).`,
+    `[werelay] Restored executable bit on ${fixed} node-pty spawn-helper binary(ies).`,
   );
 }

@@ -571,7 +571,7 @@ class WorkBuddyAcpHttpClient implements WorkBuddyAcpClientLike {
     this.getTask = this.readGetStream(this.getAbortController.signal).catch(() => undefined);
     await this.request("initialize", {
       protocolVersion: 1,
-      clientInfo: { name: "deskrelay", version: "1" },
+      clientInfo: { name: "werelay", version: "1" },
       clientCapabilities: {
         fs: { readTextFile: false, writeTextFile: false },
         terminal: false,
@@ -1145,7 +1145,7 @@ export class WorkBuddyDesktopAdapter implements BridgeAdapter {
               conversationId: sessionId,
               clientSendTime,
               emitSyntheticUserPromptLive: true,
-              source: "deskrelay",
+              source: "werelay",
             },
           },
         },

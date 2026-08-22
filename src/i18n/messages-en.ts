@@ -1,6 +1,6 @@
 export const messages: Record<string, string> = {
   // === Bridge welcome & control ===
-  "bridge.welcome": "DeskRelay ready ({adapter}).\nCWD: {cwd}\n\nCommands: /stop, /confirm, /deny, /status, /new",
+  "bridge.welcome": "WeRelay ready ({adapter}).\nCWD: {cwd}\n\nCommands: /stop, /confirm, /deny, /status, /new",
   "bridge.stopped": "Bridge stopped.",
   "bridge.interrupt.sent": "Interrupt requested. You will be notified when it is confirmed.",
   "bridge.interrupt.notBusy": "No active task to interrupt.",
@@ -12,7 +12,7 @@ export const messages: Record<string, string> = {
   "bridge.backlogIgnored": "Ignored {count} backlog message(s) sent before the bridge started (they will not be processed).\nIf you actually sent them after the bridge started, your system clock is likely skewed by more than {graceSeconds}s — sync the clock and restart the bridge.",
 
   // === Daemon welcome & control ===
-  "daemon.welcome": "DeskRelay daemon ready.\nCWD: {cwd}\nActive: {adapter}\n\nCommands: /claude, /codex, /opencode, /stop, /confirm, /deny, /status",
+  "daemon.welcome": "WeRelay daemon ready.\nCWD: {cwd}\nActive: {adapter}\n\nCommands: /claude, /codex, /opencode, /stop, /confirm, /deny, /status",
   "daemon.noActiveAdapter": "No active terminal is selected. Send /codex, /claude, or /opencode to start one.",
   "daemon.switchResult.new": "Started a new visible CLI.",
   "daemon.switchResult.reused": "Reused the existing visible CLI.",
@@ -49,7 +49,7 @@ export const messages: Record<string, string> = {
   // === Hook health check ===
   "hook.healthCheck.warning": "[Warning] No hook events received from Claude after 15s.\nThe hook system may not be working — Claude output will not reach WeChat.",
   "hook.healthCheck.logHint": "\nCheck: {logPath}",
-  "hook.healthCheck.fixes": "\nCommon fixes:\n- Ensure Node.js >= 24.0.0: node --version\n- Reinstall: npm install -g deskrelay@latest\n- Check firewall: allow localhost TCP connections",
+  "hook.healthCheck.fixes": "\nCommon fixes:\n- Ensure Node.js >= 24.0.0: node --version\n- Reinstall: npm install -g werelay@latest\n- Check firewall: allow localhost TCP connections",
 
   // === PTY fallback ===
   "pty.fallback.warning": "[Warning] PTY unavailable — using fallback mode (TERM=dumb).\nCore features (messaging, approvals, session management) work normally; terminal rendering (colors, progress bars) may be degraded.\nFix: Linux install build-essential python3 | Windows run npm rebuild node-pty | macOS run xcode-select --install\nRun --doctor for detailed environment info.\n",
@@ -57,18 +57,18 @@ export const messages: Record<string, string> = {
   // === Spawn diagnostic ===
   "spawn.diagnostic.title": "Failed to start CLI process: {target}\nError: {error}",
   "spawn.diagnostic.fixesHeader": "\nPossible fixes:",
-  "spawn.diagnostic.nodePty": "- The node-pty native module is incompatible with your Node.js version.\n- Run: npm rebuild node-pty\n- Or reinstall: npm install -g deskrelay@latest",
+  "spawn.diagnostic.nodePty": "- The node-pty native module is incompatible with your Node.js version.\n- Run: npm rebuild node-pty\n- Or reinstall: npm install -g werelay@latest",
   "spawn.diagnostic.xcode": "- Ensure Xcode CLI tools are installed: xcode-select --install",
-  "spawn.diagnostic.linuxBuildTools": "- Linux requires build tools for node-pty: sudo apt install build-essential python3\n- Then reinstall: npm install -g deskrelay@latest",
+  "spawn.diagnostic.linuxBuildTools": "- Linux requires build tools for node-pty: sudo apt install build-essential python3\n- Then reinstall: npm install -g werelay@latest",
   "spawn.diagnostic.notFound": "- The command \"{target}\" was not found on PATH.\n- Verify it is installed and accessible from your terminal.",
-  "spawn.diagnostic.generic": "- Reinstall: npm install -g deskrelay@latest",
+  "spawn.diagnostic.generic": "- Reinstall: npm install -g werelay@latest",
   "spawn.diagnostic.nodeVersion": "- Ensure Node.js >= 24.0.0: node --version",
   "spawn.diagnostic.winFull": "- Ensure Windows 10 build 18309+ (run 'winver' to check)\n- Install Visual C++ Redistributable: https://aka.ms/vs/17/release/vc_redist.x64.exe\n- Run: npm rebuild node-pty\n- Try running as Administrator",
 
   // === Version checker ===
-  "update.available": "[Update Available] Version {latest} is available (current: {current}).\nRun: npm install -g deskrelay@latest",
+  "update.available": "[Update Available] Version {latest} is available (current: {current}).\nRun: npm install -g werelay@latest",
   // === Doctor ===
-  "doctor.title": "DeskRelay Doctor",
+  "doctor.title": "WeRelay Doctor",
   "doctor.section.environment": "Environment",
   "doctor.section.adapterCli": "Adapter commands",
   "doctor.section.data": "Data",
@@ -103,7 +103,7 @@ export const messages: Record<string, string> = {
   "doctor.adapterCli.notFound": "not found{optional}",
   "doctor.dataDirMissing": "(will be created on first run)",
   "doctor.credentialsFound": "found",
-  "doctor.credentialsMissing": "not found (run deskrelay-setup first)",
+  "doctor.credentialsMissing": "not found (run werelay-setup first)",
   "doctor.mode.bridge": "standalone bridge",
   "doctor.mode.generic": "generic",
   "doctor.notSpecified": "(not specified)",

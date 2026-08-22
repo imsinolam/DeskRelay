@@ -38,18 +38,18 @@ const binaryExtensions = new Set([
 const rasterImagePattern = /\.(?:gif|jpe?g|png|webp)$/i;
 const reviewedRasterAssets = new Map([
   [
-    "docs/images/deskrelay-four-panel-white-paper-boy-v10-handoff-comic.png",
+    "docs/images/werelay-four-panel-white-paper-boy-v10-handoff-comic.png",
     "9b1de869315893a4bfacf8bd3e10818207977f4731ab28861d7b37a8ab6dc4fe",
   ],
   [
-    "docs/images/deskrelay-relationship-simple.png",
+    "docs/images/werelay-relationship-simple.svg",
     "ff53f9931a77cf17e8a402c43e20a94876cfe8e3d74f46099b399dce32fac1fc",
   ],
 ]);
 const forbiddenFilePatterns = [
   { pattern: /(^|\/)\.env(?:\.|$)/, allow: /(^|\/)\.env\.example$/, reason: "environment file" },
   { pattern: /\.(?:key|mobileprovision|p12|pfx|pem)$/i, reason: "private key or certificate bundle" },
-  { pattern: /(^|\/)(?:\.deskrelay|inbound-attachments|mobile-images)(\/|$)/, reason: "local runtime data" },
+  { pattern: /(^|\/)(?:\.werelay|inbound-attachments|mobile-images)(\/|$)/, reason: "local runtime data" },
   { pattern: /(^|\/)(?:account\.json|context_tokens\.json|daemon-endpoint\.json|bridge-state\.json)$/i, reason: "runtime credential or state file" },
 ];
 const secretPatterns = [

@@ -9,7 +9,7 @@ const PROJECT_DIR = path.resolve(BIN_DIR, "..");
 const MIN_NODE_MAJOR = 24;
 
 function ensureSupportedNodeVersion() {
-  if (process.env.DESKRELAY_SKIP_NODE_CHECK === "1") {
+  if (process.env.WERELAY_SKIP_NODE_CHECK === "1") {
     return;
   }
 
@@ -20,10 +20,10 @@ function ensureSupportedNodeVersion() {
 
   process.stderr.write(
     [
-      `[deskrelay] Node.js >= ${MIN_NODE_MAJOR} is required, but you are running ${process.version}.`,
-      `[deskrelay] 需要 Node.js >= ${MIN_NODE_MAJOR}，当前版本为 ${process.version}。`,
+      `[werelay] Node.js >= ${MIN_NODE_MAJOR} is required, but you are running ${process.version}.`,
+      `[werelay] 需要 Node.js >= ${MIN_NODE_MAJOR}，当前版本为 ${process.version}。`,
       "Install the latest LTS from https://nodejs.org/ (or via nvm), then retry.",
-      "Set DESKRELAY_SKIP_NODE_CHECK=1 to bypass this check at your own risk.",
+      "Set WERELAY_SKIP_NODE_CHECK=1 to bypass this check at your own risk.",
       "",
     ].join("\n"),
   );

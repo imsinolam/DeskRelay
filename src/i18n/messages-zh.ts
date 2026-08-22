@@ -1,6 +1,6 @@
 export const messages: Record<string, string> = {
   // === 桥接欢迎 & 控制 ===
-  "bridge.welcome": "DeskRelay 已就绪：{adapter}",
+  "bridge.welcome": "WeRelay 已就绪：{adapter}",
   "bridge.stopped": "桥接已停止。",
   "bridge.interrupt.sent": "已发送中断请求，确认中断后会通知。",
   "bridge.interrupt.notBusy": "没有正在执行的任务可中断。",
@@ -12,7 +12,7 @@ export const messages: Record<string, string> = {
   "bridge.backlogIgnored": "已忽略 {count} 条桥接启动前的积压消息（不会自动处理）。\n如果你是在桥接启动后才发送的消息却看到此提示，说明本机系统时钟可能不准（偏差超过 {graceSeconds} 秒），请校准时间后重启桥接。",
 
   // === Daemon 欢迎 & 控制 ===
-  "daemon.welcome": "DeskRelay 已就绪，当前：{adapter}",
+  "daemon.welcome": "WeRelay 已就绪，当前：{adapter}",
   "daemon.noActiveAdapter": "未选择活跃终端。发送 /codex、/claude、/deepseek 或 /opencode 启动一个。",
   "daemon.switchResult.new": "已启动桌面端。",
   "daemon.switchResult.reused": "已连接现有桌面端。",
@@ -57,18 +57,18 @@ export const messages: Record<string, string> = {
   // === 启动诊断 ===
   "spawn.diagnostic.title": "无法启动 CLI 进程: {target}\n错误: {error}",
   "spawn.diagnostic.fixesHeader": "\n可能的修复方法:",
-  "spawn.diagnostic.nodePty": "- node-pty 原生模块与当前 Node.js 版本不兼容。\n- 运行: npm rebuild node-pty\n- 或重新安装: npm install -g deskrelay@latest",
+  "spawn.diagnostic.nodePty": "- node-pty 原生模块与当前 Node.js 版本不兼容。\n- 运行: npm rebuild node-pty\n- 或重新安装: npm install -g werelay@latest",
   "spawn.diagnostic.xcode": "- 确保已安装 Xcode 命令行工具: xcode-select --install",
-  "spawn.diagnostic.linuxBuildTools": "- Linux 需要编译工具来构建 node-pty: sudo apt install build-essential python3\n- 然后重新安装: npm install -g deskrelay@latest",
+  "spawn.diagnostic.linuxBuildTools": "- Linux 需要编译工具来构建 node-pty: sudo apt install build-essential python3\n- 然后重新安装: npm install -g werelay@latest",
   "spawn.diagnostic.notFound": "- 命令 \"{target}\" 未在 PATH 中找到。\n- 请确认已安装并可从终端访问。",
-  "spawn.diagnostic.generic": "- 重新安装: npm install -g deskrelay@latest",
+  "spawn.diagnostic.generic": "- 重新安装: npm install -g werelay@latest",
   "spawn.diagnostic.nodeVersion": "- 确保 Node.js >= 24.0.0: node --version",
   "spawn.diagnostic.winFull": "- 确保 Windows 10 build 18309+（运行 winver 查看）\n- 安装 Visual C++ Redistributable: https://aka.ms/vs/17/release/vc_redist.x64.exe\n- 运行: npm rebuild node-pty\n- 尝试以管理员身份运行",
 
   // === 版本检查 ===
-  "update.available": "[有新版本] 版本 {latest} 可用（当前: {current}）。\n运行: npm install -g deskrelay@latest",
+  "update.available": "[有新版本] 版本 {latest} 可用（当前: {current}）。\n运行: npm install -g werelay@latest",
   // === Doctor ===
-  "doctor.title": "DeskRelay 诊断",
+  "doctor.title": "WeRelay 诊断",
   "doctor.section.environment": "环境",
   "doctor.section.adapterCli": "适配器命令",
   "doctor.section.providerDeps": "适配器依赖",
@@ -108,7 +108,7 @@ export const messages: Record<string, string> = {
   "doctor.adapterCli.notFound": "未找到{optional}",
   "doctor.dataDirMissing": "(首次运行会创建)",
   "doctor.credentialsFound": "已找到",
-  "doctor.credentialsMissing": "未找到 (先运行 deskrelay-setup)",
+  "doctor.credentialsMissing": "未找到 (先运行 werelay-setup)",
   "doctor.mode.bridge": "独立桥接",
   "doctor.mode.generic": "通用",
   "doctor.notSpecified": "(未指定)",

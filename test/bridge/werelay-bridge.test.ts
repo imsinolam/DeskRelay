@@ -20,10 +20,10 @@ import {
   shouldForwardBridgeEventToWechat,
   shouldWatchParentProcess,
   startParentProcessWatcher,
-} from "../../src/bridge/deskrelay-bridge.ts";
+} from "../../src/bridge/werelay-bridge.ts";
 import { WechatApiResponseError } from "../../src/wechat/wechat-transport.ts";
 
-describe("deskrelay-bridge cli helpers", () => {
+describe("werelay-bridge cli helpers", () => {
   test("parseCliArgs keeps persistent lifecycle by default", () => {
     const options = parseCliArgs(["--adapter", "codex"]);
 
@@ -186,7 +186,7 @@ describe("deskrelay-bridge cli helpers", () => {
         adapter: "opencode",
         cwd: "C:\\Users\\example",
         errorText:
-          'opencode companion is not connected. Run "deskrelay-opencode" in a second terminal for this directory.',
+          'opencode companion is not connected. Run "werelay-opencode" in a second terminal for this directory.',
         isUserFacingShellRejection: false,
       }),
 
@@ -350,8 +350,8 @@ describe("deskrelay-bridge cli helpers", () => {
 
   test("does not interrupt Codex before switching desktop tasks", () => {
     const source = [
-      fs.readFileSync(path.resolve(process.cwd(), "src/bridge/deskrelay-bridge.ts"), "utf8"),
-      fs.readFileSync(path.resolve(process.cwd(), "src/daemon/deskrelay-daemon.ts"), "utf8"),
+      fs.readFileSync(path.resolve(process.cwd(), "src/bridge/werelay-bridge.ts"), "utf8"),
+      fs.readFileSync(path.resolve(process.cwd(), "src/daemon/werelay-daemon.ts"), "utf8"),
     ].join("\n");
 
     expect(source).not.toContain("当前 Codex 任务仍在运行，正在停止并切换");
@@ -381,8 +381,8 @@ describe("deskrelay-bridge cli helpers", () => {
 
   test("removes periodic Codex heartbeat code from bridge and daemon loops", () => {
     const source = [
-      fs.readFileSync(path.resolve(process.cwd(), "src/bridge/deskrelay-bridge.ts"), "utf8"),
-      fs.readFileSync(path.resolve(process.cwd(), "src/daemon/deskrelay-daemon.ts"), "utf8"),
+      fs.readFileSync(path.resolve(process.cwd(), "src/bridge/werelay-bridge.ts"), "utf8"),
+      fs.readFileSync(path.resolve(process.cwd(), "src/daemon/werelay-daemon.ts"), "utf8"),
     ].join("\n");
 
     expect(source).not.toContain("CODEX_PROGRESS_HEARTBEAT_INTERVAL_MS");

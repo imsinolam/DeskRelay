@@ -35,9 +35,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function isDeskRelayBridgeCommandLine(commandLine: string): boolean {
+export function isWeRelayBridgeCommandLine(commandLine: string): boolean {
   return (
-    /deskrelay-bridge\.(?:ts|js|mjs)/i.test(commandLine) &&
+    /werelay-bridge\.(?:ts|js|mjs)/i.test(commandLine) &&
     /(?:^|\s|["'])--adapter(?:(?:["']?\s)|=)/i.test(commandLine)
   );
 }
@@ -61,13 +61,13 @@ function isJavascriptRuntimeCommand(command: string): boolean {
   );
 }
 
-function isDeskRelayDaemonEntrypoint(command: string): boolean {
-  return /^(?:deskrelay(?:-daemon)?\.(?:ts|js|mjs)|launch-daemon\.(?:js|mjs))$/i.test(
+function isWeRelayDaemonEntrypoint(command: string): boolean {
+  return /^(?:werelay(?:-daemon)?\.(?:ts|js|mjs)|launch-daemon\.(?:js|mjs))$/i.test(
     commandBasename(command),
   );
 }
 
-export function isDeskRelayDaemonCommandLine(commandLine: string): boolean {
+export function isWeRelayDaemonCommandLine(commandLine: string): boolean {
   const tokens = tokenizeProcessCommandLine(commandLine);
   if (tokens.length < 2) {
     return false;
@@ -88,7 +88,7 @@ export function isDeskRelayDaemonCommandLine(commandLine: string): boolean {
 
   return tokens
     .slice(runtimeIndex + 1)
-    .some((token) => isDeskRelayDaemonEntrypoint(token));
+    .some((token) => isWeRelayDaemonEntrypoint(token));
 }
 
 function normalizeComparablePath(filePath: string): string {
@@ -109,11 +109,11 @@ function extractCommandLineOption(
   return match?.[1] ?? match?.[2] ?? match?.[3] ?? null;
 }
 
-export function isDeskRelayDaemonCommandLineForCwd(
+export function isWeRelayDaemonCommandLineForCwd(
   commandLine: string,
   cwd: string,
 ): boolean {
-  if (!isDeskRelayDaemonCommandLine(commandLine)) {
+  if (!isWeRelayDaemonCommandLine(commandLine)) {
     return false;
   }
 
@@ -214,7 +214,7 @@ export function parseWindowsBridgeProcessProbeOutput(
     .map(normalizeBridgeProcessRecord)
     .filter((record): record is BridgeProcessRecord => Boolean(record))
     .filter(
-      (record) => record.pid !== currentPid && isDeskRelayBridgeCommandLine(record.commandLine),
+      (record) => record.pid !== currentPid && isWeRelayBridgeCommandLine(record.commandLine),
     );
 }
 
@@ -243,7 +243,7 @@ export function parsePosixBridgeProcessProbeOutput(
     })
     .filter((record): record is BridgeProcessRecord => Boolean(record))
     .filter(
-      (record) => record.pid !== currentPid && isDeskRelayBridgeCommandLine(record.commandLine),
+      (record) => record.pid !== currentPid && isWeRelayBridgeCommandLine(record.commandLine),
     );
 }
 
@@ -312,7 +312,7 @@ export function getProcessRecordByPid(
   return listAllProcessesRaw(currentPid).find((record) => record.pid === pid) ?? null;
 }
 
-export function listDeskRelayDaemonProcesses(params: {
+export function listWeRelayDaemonProcesses(params: {
   cwd?: string;
   currentPid?: number;
   excludePids?: Iterable<number>;
@@ -323,8 +323,8 @@ export function listDeskRelayDaemonProcesses(params: {
     .filter((record) => !excludePids.has(record.pid))
     .filter((record) =>
       params.cwd
-        ? isDeskRelayDaemonCommandLineForCwd(record.commandLine, params.cwd)
-        : isDeskRelayDaemonCommandLine(record.commandLine),
+        ? isWeRelayDaemonCommandLineForCwd(record.commandLine, params.cwd)
+        : isWeRelayDaemonCommandLine(record.commandLine),
     );
 }
 

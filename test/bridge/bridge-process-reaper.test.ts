@@ -3,55 +3,55 @@ import { describe, expect, test } from "bun:test";
 import {
   isOpencodeAttachCommandLine,
   isOpencodeServeCommandLine,
-  isDeskRelayBridgeCommandLine,
-  isDeskRelayDaemonCommandLine,
-  isDeskRelayDaemonCommandLineForCwd,
+  isWeRelayBridgeCommandLine,
+  isWeRelayDaemonCommandLine,
+  isWeRelayDaemonCommandLineForCwd,
   parsePosixBridgeProcessProbeOutput,
   parseWindowsBridgeProcessProbeOutput,
 } from "../../src/bridge/bridge-process-reaper.ts";
 
 describe("bridge peer process reaper", () => {
-  test("detects deskrelay-bridge command lines", () => {
+  test("detects werelay-bridge command lines", () => {
     expect(
-      isDeskRelayBridgeCommandLine(
-        '"C:\\Program Files\\nodejs\\node.exe" --no-warnings --experimental-strip-types C:\\repo\\src\\bridge\\deskrelay-bridge.ts --adapter opencode --cwd C:\\Users\\example',
+      isWeRelayBridgeCommandLine(
+        '"C:\\Program Files\\nodejs\\node.exe" --no-warnings --experimental-strip-types C:\\repo\\src\\bridge\\werelay-bridge.ts --adapter opencode --cwd C:\\Users\\example',
       ),
     ).toBe(true);
     expect(
-      isDeskRelayBridgeCommandLine(
-        '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\example\\AppData\\Roaming\\npm\\node_modules\\deskrelay\\dist\\bridge\\deskrelay-bridge.js" "--adapter" "codex"',
+      isWeRelayBridgeCommandLine(
+        '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\example\\AppData\\Roaming\\npm\\node_modules\\werelay\\dist\\bridge\\werelay-bridge.js" "--adapter" "codex"',
       ),
     ).toBe(true);
     expect(
-      isDeskRelayBridgeCommandLine(
+      isWeRelayBridgeCommandLine(
         '"C:\\Program Files\\nodejs\\node.exe" --no-warnings --experimental-strip-types C:\\repo\\src\\companion\\local-companion-start.ts --adapter opencode',
       ),
     ).toBe(false);
   });
 
-  test("detects deskrelay-daemon command lines", () => {
+  test("detects werelay-daemon command lines", () => {
     expect(
-      isDeskRelayDaemonCommandLine(
-        '"C:\\Program Files\\nodejs\\node.exe" --no-warnings --experimental-strip-types C:\\repo\\src\\daemon\\deskrelay-daemon.ts --cwd C:\\repo',
+      isWeRelayDaemonCommandLine(
+        '"C:\\Program Files\\nodejs\\node.exe" --no-warnings --experimental-strip-types C:\\repo\\src\\daemon\\werelay-daemon.ts --cwd C:\\repo',
       ),
     ).toBe(true);
     expect(
-      isDeskRelayDaemonCommandLine(
-        '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\example\\AppData\\Roaming\\npm\\node_modules\\deskrelay\\dist\\daemon\\deskrelay-daemon.js"',
+      isWeRelayDaemonCommandLine(
+        '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\example\\AppData\\Roaming\\npm\\node_modules\\werelay\\dist\\daemon\\werelay-daemon.js"',
       ),
     ).toBe(true);
     expect(
-      isDeskRelayDaemonCommandLine(
-        '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\example\\AppData\\Roaming\\npm\\node_modules\\deskrelay\\bin\\deskrelay.mjs" --adapter codex',
+      isWeRelayDaemonCommandLine(
+        '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\example\\AppData\\Roaming\\npm\\node_modules\\werelay\\bin\\werelay.mjs" --adapter codex',
       ),
     ).toBe(true);
     expect(
-      isDeskRelayDaemonCommandLine(
-        '"C:\\Program Files\\nodejs\\node.exe" C:\\repo\\src\\bridge\\deskrelay-bridge.ts --adapter codex',
+      isWeRelayDaemonCommandLine(
+        '"C:\\Program Files\\nodejs\\node.exe" C:\\repo\\src\\bridge\\werelay-bridge.ts --adapter codex',
       ),
     ).toBe(false);
     expect(
-      isDeskRelayDaemonCommandLine(
+      isWeRelayDaemonCommandLine(
         "/opt/homebrew/bin/node --no-warnings ./launch-daemon.mjs --cwd /Users/test/project --adapter codex --no-open",
       ),
     ).toBe(true);
@@ -59,42 +59,42 @@ describe("bridge peer process reaper", () => {
 
   test("does not mistake deployment shells that mention daemon files for daemon processes", () => {
     expect(
-      isDeskRelayDaemonCommandLine(
-        '/bin/zsh -lc set -euo pipefail; runtime="$HOME/.deskrelay/runtime/DeskRelay"; rsync -a dist/ "$runtime/dist/"; launchctl bootstrap gui/501 "$HOME/Library/LaunchAgents/com.example.deskrelay-daemon.plist"',
+      isWeRelayDaemonCommandLine(
+        '/bin/zsh -lc set -euo pipefail; runtime="$HOME/.werelay/runtime/WeRelay"; rsync -a dist/ "$runtime/dist/"; launchctl bootstrap gui/501 "$HOME/Library/LaunchAgents/com.example.werelay-daemon.plist"',
       ),
     ).toBe(false);
     expect(
-      isDeskRelayDaemonCommandLine(
-        "/bin/bash -lc 'node /repo/dist/daemon/deskrelay-daemon.js --cwd /tmp/project'",
+      isWeRelayDaemonCommandLine(
+        "/bin/bash -lc 'node /repo/dist/daemon/werelay-daemon.js --cwd /tmp/project'",
       ),
     ).toBe(false);
   });
 
-  test("matches deskrelay-daemon command lines for a startup cwd", () => {
+  test("matches werelay-daemon command lines for a startup cwd", () => {
     expect(
-      isDeskRelayDaemonCommandLineForCwd(
-        '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\example\\AppData\\Roaming\\npm\\node_modules\\deskrelay\\bin\\deskrelay-daemon.mjs" "--cwd" "C:\\Users\\example"',
+      isWeRelayDaemonCommandLineForCwd(
+        '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\example\\AppData\\Roaming\\npm\\node_modules\\werelay\\bin\\werelay-daemon.mjs" "--cwd" "C:\\Users\\example"',
         "C:\\Users\\example",
       ),
     ).toBe(true);
 
     expect(
-      isDeskRelayDaemonCommandLineForCwd(
-        '"C:\\Program Files\\nodejs\\node.exe" C:\\repo\\dist\\daemon\\deskrelay-daemon.js --cwd=C:\\Users\\example',
+      isWeRelayDaemonCommandLineForCwd(
+        '"C:\\Program Files\\nodejs\\node.exe" C:\\repo\\dist\\daemon\\werelay-daemon.js --cwd=C:\\Users\\example',
         "C:\\Users\\example",
       ),
     ).toBe(true);
 
     expect(
-      isDeskRelayDaemonCommandLineForCwd(
-        '"C:\\Program Files\\nodejs\\node.exe" C:\\repo\\dist\\daemon\\deskrelay-daemon.js --cwd C:\\Users\\tester',
+      isWeRelayDaemonCommandLineForCwd(
+        '"C:\\Program Files\\nodejs\\node.exe" C:\\repo\\dist\\daemon\\werelay-daemon.js --cwd C:\\Users\\tester',
         "C:\\Users\\example",
       ),
     ).toBe(false);
 
     expect(
-      isDeskRelayDaemonCommandLineForCwd(
-        '"C:\\Program Files\\nodejs\\node.exe" C:\\repo\\src\\bridge\\deskrelay-bridge.ts --adapter codex --cwd C:\\Users\\example',
+      isWeRelayDaemonCommandLineForCwd(
+        '"C:\\Program Files\\nodejs\\node.exe" C:\\repo\\src\\bridge\\werelay-bridge.ts --adapter codex --cwd C:\\Users\\example',
         "C:\\Users\\example",
       ),
     ).toBe(false);
@@ -132,7 +132,7 @@ describe("bridge peer process reaper", () => {
         ParentProcessId: 1,
         Name: "node.exe",
         CommandLine:
-          '"C:\\Program Files\\nodejs\\node.exe" --no-warnings --experimental-strip-types C:\\repo\\src\\bridge\\deskrelay-bridge.ts --adapter opencode --cwd C:\\Users\\example',
+          '"C:\\Program Files\\nodejs\\node.exe" --no-warnings --experimental-strip-types C:\\repo\\src\\bridge\\werelay-bridge.ts --adapter opencode --cwd C:\\Users\\example',
       },
       {
         ProcessId: 202,
@@ -146,14 +146,14 @@ describe("bridge peer process reaper", () => {
         ParentProcessId: 1,
         Name: "node.exe",
         CommandLine:
-          '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\example\\AppData\\Roaming\\npm\\node_modules\\deskrelay\\dist\\bridge\\deskrelay-bridge.js" "--adapter" "codex"',
+          '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\example\\AppData\\Roaming\\npm\\node_modules\\werelay\\dist\\bridge\\werelay-bridge.js" "--adapter" "codex"',
       },
       {
         ProcessId: 303,
         ParentProcessId: 1,
         Name: "node.exe",
         CommandLine:
-          '"C:\\Program Files\\nodejs\\node.exe" --no-warnings --experimental-strip-types C:\\repo\\src\\bridge\\deskrelay-bridge.ts --adapter codex --cwd C:\\repo',
+          '"C:\\Program Files\\nodejs\\node.exe" --no-warnings --experimental-strip-types C:\\repo\\src\\bridge\\werelay-bridge.ts --adapter codex --cwd C:\\repo',
       },
     ]);
 
@@ -163,30 +163,30 @@ describe("bridge peer process reaper", () => {
         parentPid: 1,
         name: "node.exe",
         commandLine:
-          '"C:\\Program Files\\nodejs\\node.exe" --no-warnings --experimental-strip-types C:\\repo\\src\\bridge\\deskrelay-bridge.ts --adapter opencode --cwd C:\\Users\\example',
+          '"C:\\Program Files\\nodejs\\node.exe" --no-warnings --experimental-strip-types C:\\repo\\src\\bridge\\werelay-bridge.ts --adapter opencode --cwd C:\\Users\\example',
       },
       {
         pid: 204,
         parentPid: 1,
         name: "node.exe",
         commandLine:
-          '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\example\\AppData\\Roaming\\npm\\node_modules\\deskrelay\\dist\\bridge\\deskrelay-bridge.js" "--adapter" "codex"',
+          '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\example\\AppData\\Roaming\\npm\\node_modules\\werelay\\dist\\bridge\\werelay-bridge.js" "--adapter" "codex"',
       },
     ]);
   });
 
   test("parses POSIX process probe output and ignores the current pid", () => {
     const output = [
-      '101 node --no-warnings --experimental-strip-types /repo/src/bridge/deskrelay-bridge.ts --adapter opencode --cwd /tmp/work',
+      '101 node --no-warnings --experimental-strip-types /repo/src/bridge/werelay-bridge.ts --adapter opencode --cwd /tmp/work',
       '202 node --no-warnings --experimental-strip-types /repo/src/companion/local-companion-start.ts --adapter opencode',
-      '303 node --no-warnings --experimental-strip-types /repo/src/bridge/deskrelay-bridge.ts --adapter codex --cwd /repo',
+      '303 node --no-warnings --experimental-strip-types /repo/src/bridge/werelay-bridge.ts --adapter codex --cwd /repo',
     ].join("\n");
 
     expect(parsePosixBridgeProcessProbeOutput(output, 303)).toEqual([
       {
         pid: 101,
         commandLine:
-          'node --no-warnings --experimental-strip-types /repo/src/bridge/deskrelay-bridge.ts --adapter opencode --cwd /tmp/work',
+          'node --no-warnings --experimental-strip-types /repo/src/bridge/werelay-bridge.ts --adapter opencode --cwd /tmp/work',
       },
     ]);
   });

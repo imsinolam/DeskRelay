@@ -25,8 +25,8 @@ describe("emoji command removal", () => {
   });
 
   test("removes emoji command routing and binding management from both bridge modes", () => {
-    const bridgeSource = readProjectFile("src/bridge/deskrelay-bridge.ts");
-    const daemonSource = readProjectFile("src/daemon/deskrelay-daemon.ts");
+    const bridgeSource = readProjectFile("src/bridge/werelay-bridge.ts");
+    const daemonSource = readProjectFile("src/daemon/werelay-daemon.ts");
     const combinedSource = `${bridgeSource}\n${daemonSource}`;
 
     expect(fs.existsSync(path.resolve(process.cwd(), "src/daemon/emoji-bindings.ts"))).toBe(false);

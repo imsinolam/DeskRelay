@@ -7,21 +7,21 @@ function readRepoFile(relativePath: string): string {
 }
 
 describe("OpenCode CLI entrypoints", () => {
-  test("deskrelay-opencode launches the shared local companion in opencode mode", () => {
-    const source = readRepoFile("bin/deskrelay-opencode.mjs");
+  test("werelay-opencode launches the shared local companion in opencode mode", () => {
+    const source = readRepoFile("bin/werelay-opencode.mjs");
 
     expect(source).toContain('runJsEntry("dist/companion/local-companion.js", ["--adapter", "opencode"])');
     expect(source).not.toContain("opencode-panel.ts");
   });
 
-  test("deskrelay-bridge-opencode stays a bridge-only entrypoint", () => {
-    const source = readRepoFile("bin/deskrelay-bridge-opencode.mjs");
+  test("werelay-bridge-opencode stays a bridge-only entrypoint", () => {
+    const source = readRepoFile("bin/werelay-bridge-opencode.mjs");
 
-    expect(source).toContain('runJsEntry("dist/bridge/deskrelay-bridge.js", ["--adapter", "opencode"])');
+    expect(source).toContain('runJsEntry("dist/bridge/werelay-bridge.js", ["--adapter", "opencode"])');
   });
 
-  test("deskrelay-opencode-start keeps the bridge bootstrap flow", () => {
-    const source = readRepoFile("bin/deskrelay-opencode-start.mjs");
+  test("werelay-opencode-start keeps the bridge bootstrap flow", () => {
+    const source = readRepoFile("bin/werelay-opencode-start.mjs");
 
     expect(source).toContain('runJsEntry("dist/companion/local-companion-start.js", ["--adapter", "opencode"])');
   });

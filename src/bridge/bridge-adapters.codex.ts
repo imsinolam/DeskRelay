@@ -205,7 +205,7 @@ export async function connectCodexDesktopIpcClientWithLaunch(
     }
     const launchHint = options.allowDesktopApplicationLaunch === true
       ? ""
-      : "DeskRelay 不会自动打开 ChatGPT，请先手动打开后重试。";
+      : "WeRelay 不会自动打开 ChatGPT，请先手动打开后重试。";
     throw new Error(
       `无法连接 Codex 桌面端：${describeUnknownError(lastError)}${launchHint}`,
       { cause: initialError },
@@ -3492,7 +3492,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
         approvalPolicy: permissionSettings.approvalPolicy,
         approvalsReviewer: permissionSettings.approvalsReviewer,
         sandbox: permissionSettings.sandbox,
-        serviceName: "deskrelay-bridge",
+        serviceName: "werelay-bridge",
         experimentalRawEvents: false,
         persistExtendedHistory: true,
       },
@@ -5993,7 +5993,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
         type: "status",
         status: this.state.status,
         message:
-          "Codex 桌面任务仍可继续，但任务列表、历史和重命名暂时不可用；DeskRelay 会在下次读取时重试任务索引连接。",
+          "Codex 桌面任务仍可继续，但任务列表、历史和重命名暂时不可用；WeRelay 会在下次读取时重试任务索引连接。",
         timestamp: nowIso(),
       });
       return false;
@@ -6446,8 +6446,8 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
   private async initializeRpcClient(): Promise<void> {
     await this.sendRpcRequest("initialize", {
       clientInfo: {
-        name: "deskrelay-bridge",
-        title: "DeskRelay",
+        name: "werelay-bridge",
+        title: "WeRelay",
         version: "0.1.0",
       },
       capabilities: {
@@ -6492,7 +6492,7 @@ export class CodexPtyAdapter extends AbstractPtyAdapter {
       approvalPolicy: permissionSettings.approvalPolicy,
       approvalsReviewer: permissionSettings.approvalsReviewer,
       sandbox: permissionSettings.sandbox,
-      serviceName: "deskrelay-bridge",
+      serviceName: "werelay-bridge",
       experimentalRawEvents: false,
       persistExtendedHistory: true,
     });

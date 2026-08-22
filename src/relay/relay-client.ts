@@ -2,14 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
-  DESKRELAY_RELAY_POLL_PATH,
-  DESKRELAY_RELAY_PROTOCOL_VERSION,
-  DESKRELAY_RELAY_RESPONSE_BODY_LIMIT,
-  DESKRELAY_RELAY_RESPONSE_PATH,
-  normalizeDeskRelayRelayBaseUrl,
-  type DeskRelayRelayCommand,
-  type DeskRelayRelayCommandResponse,
-  type DeskRelayRelayHeaderMap,
+  WERELAY_RELAY_POLL_PATH,
+  WERELAY_RELAY_PROTOCOL_VERSION,
+  WERELAY_RELAY_RESPONSE_BODY_LIMIT,
+  WERELAY_RELAY_RESPONSE_PATH,
+  normalizeWeRelayRelayBaseUrl,
+  type WeRelayRelayCommand,
+  type WeRelayRelayCommandResponse,
+  type WeRelayRelayHeaderMap,
 } from "./relay-protocol.ts";
 import { writePrivateFileAtomic } from "../utils/private-files.ts";
 
@@ -17,7 +17,7 @@ const DEFAULT_RETRY_DELAY_MS = 1_000;
 const MAX_RETRY_DELAY_MS = 15_000;
 const JOURNAL_MAX_ENTRIES = 64;
 
-export type StartDeskRelayRelayClientOptions = {
+export type StartWeRelayRelayClientOptions = {
   relayUrl: string;
   deviceId: string;
   deviceToken: string;
@@ -29,7 +29,7 @@ export type StartDeskRelayRelayClientOptions = {
   retryDelayMs?: number;
 };
 
-export type DeskRelayRelayClientHandle = {
+export type WeRelayRelayClientHandle = {
   close: () => Promise<void>;
   done: Promise<void>;
 };
@@ -39,7 +39,7 @@ type JournalState = {
   entries: Array<{
     commandId: string;
     completedAt: string;
-    response: DeskRelayRelayCommandResponse;
+    response: WeRelayRelayCommandResponse;
   }>;
 };
 
@@ -57,13 +57,13 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-function isRelayCommand(value: unknown): value is DeskRelayRelayCommand {
+function isRelayCommand(value: unknown): value is WeRelayRelayCommand {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
   const record = value as Record<string, unknown>;
   if (
-    record.protocolVersion !== DESKRELAY_RELAY_PROTOCOL_VERSION ||
+    record.protocolVersion !== WERELAY_RELAY_PROTOCOL_VERSION ||
     typeof record.id !== "string" ||
     typeof record.deviceId !== "string" ||
     typeof record.createdAtMs !== "number" ||
@@ -91,8 +91,8 @@ function isRelayCommand(value: unknown): value is DeskRelayRelayCommand {
     (request.bodyBase64 === undefined || typeof request.bodyBase64 === "string");
 }
 
-function responseHeaders(response: Response): DeskRelayRelayHeaderMap {
-  const result: DeskRelayRelayHeaderMap = {};
+function responseHeaders(response: Response): WeRelayRelayHeaderMap {
+  const result: WeRelayRelayHeaderMap = {};
   for (const name of [
     "content-type",
     "cache-control",
@@ -125,9 +125,9 @@ function buildJsonErrorResponse(
   commandId: string,
   statusCode: number,
   message: string,
-): DeskRelayRelayCommandResponse {
+): WeRelayRelayCommandResponse {
   return {
-    protocolVersion: DESKRELAY_RELAY_PROTOCOL_VERSION,
+    protocolVersion: WERELAY_RELAY_PROTOCOL_VERSION,
     commandId,
     statusCode,
     headers: { "content-type": "application/json; charset=utf-8" },
@@ -135,9 +135,9 @@ function buildJsonErrorResponse(
   };
 }
 
-export class DeskRelayRelayCommandJournal {
+export class WeRelayRelayCommandJournal {
   private readonly stateFile?: string;
-  private readonly entries = new Map<string, DeskRelayRelayCommandResponse>();
+  private readonly entries = new Map<string, WeRelayRelayCommandResponse>();
   private readonly order: string[] = [];
 
   constructor(stateFile?: string) {
@@ -145,11 +145,11 @@ export class DeskRelayRelayCommandJournal {
     this.load();
   }
 
-  get(commandId: string): DeskRelayRelayCommandResponse | null {
+  get(commandId: string): WeRelayRelayCommandResponse | null {
     return this.entries.get(commandId) ?? null;
   }
 
-  save(response: DeskRelayRelayCommandResponse): void {
+  save(response: WeRelayRelayCommandResponse): void {
     if (this.entries.has(response.commandId)) {
       this.entries.set(response.commandId, response);
       this.persist();
@@ -200,7 +200,7 @@ export class DeskRelayRelayCommandJournal {
       entries: this.order.map((commandId) => ({
         commandId,
         completedAt: new Date().toISOString(),
-        response: this.entries.get(commandId) as DeskRelayRelayCommandResponse,
+        response: this.entries.get(commandId) as WeRelayRelayCommandResponse,
       })),
     };
     writePrivateFileAtomic(this.stateFile, `${JSON.stringify(state)}\n`);
@@ -208,13 +208,13 @@ export class DeskRelayRelayCommandJournal {
 }
 
 async function executeRelayCommand(
-  command: DeskRelayRelayCommand,
+  command: WeRelayRelayCommand,
   options: {
     localBaseUrl: string;
     localPrewarmToken?: string;
     fetchImpl: typeof fetch;
   },
-): Promise<DeskRelayRelayCommandResponse> {
+): Promise<WeRelayRelayCommandResponse> {
   let localUrl: URL;
   try {
     localUrl = new URL(command.request.path, `${options.localBaseUrl}/`);
@@ -223,24 +223,24 @@ async function executeRelayCommand(
   }
   const expectedOrigin = new URL(`${options.localBaseUrl}/`).origin;
   if (localUrl.origin !== expectedOrigin || !localUrl.pathname.startsWith("/api/")) {
-    return buildJsonErrorResponse(command.id, 403, "这个请求不属于 DeskRelay 移动接口。");
+    return buildJsonErrorResponse(command.id, 403, "这个请求不属于 WeRelay 移动接口。");
   }
   if (command.expiresAtMs <= Date.now()) {
     return buildJsonErrorResponse(command.id, 408, "请求已经过期，请重新操作。");
   }
 
   const headers = new Headers(command.request.headers);
-  const prewarmRequest = headers.get("x-deskrelay-prewarm") === "1";
-  headers.delete("x-deskrelay-prewarm");
+  const prewarmRequest = headers.get("x-werelay-prewarm") === "1";
+  headers.delete("x-werelay-prewarm");
   if (prewarmRequest) {
     if (!options.localPrewarmToken) {
       return buildJsonErrorResponse(command.id, 403, "电脑未启用 Relay 预热授权。");
     }
-    headers.set("x-deskrelay-relay-prewarm", options.localPrewarmToken);
+    headers.set("x-werelay-relay-prewarm", options.localPrewarmToken);
   }
   headers.set("x-real-ip", command.request.clientAddress);
   headers.set("x-forwarded-proto", command.request.forwardedProto);
-  headers.set("x-deskrelay-relay", "1");
+  headers.set("x-werelay-relay", "1");
   let body: Buffer | undefined;
   if (command.request.bodyBase64) {
     try {
@@ -258,11 +258,11 @@ async function executeRelayCommand(
       redirect: "manual",
     });
     const responseBody = Buffer.from(await response.arrayBuffer());
-    if (responseBody.length > DESKRELAY_RELAY_RESPONSE_BODY_LIMIT) {
+    if (responseBody.length > WERELAY_RELAY_RESPONSE_BODY_LIMIT) {
       return buildJsonErrorResponse(command.id, 502, "电脑返回的内容过大。");
     }
     return {
-      protocolVersion: DESKRELAY_RELAY_PROTOCOL_VERSION,
+      protocolVersion: WERELAY_RELAY_PROTOCOL_VERSION,
       commandId: command.id,
       statusCode: response.status,
       headers: responseHeaders(response),
@@ -280,7 +280,7 @@ async function executeRelayCommand(
 }
 
 async function postCommandResponse(
-  response: DeskRelayRelayCommandResponse,
+  response: WeRelayRelayCommandResponse,
   options: {
     relayUrl: string;
     deviceId: string;
@@ -290,13 +290,13 @@ async function postCommandResponse(
   },
 ): Promise<void> {
   const result = await options.fetchImpl(
-    `${options.relayUrl}${DESKRELAY_RELAY_RESPONSE_PATH}`,
+    `${options.relayUrl}${WERELAY_RELAY_RESPONSE_PATH}`,
     {
       method: "POST",
       headers: {
         authorization: `Bearer ${options.deviceToken}`,
         "content-type": "application/json",
-        "x-deskrelay-device-id": options.deviceId,
+        "x-werelay-device-id": options.deviceId,
       },
       body: JSON.stringify(response),
       signal: options.signal,
@@ -307,20 +307,20 @@ async function postCommandResponse(
   }
 }
 
-export function startDeskRelayRelayClient(
-  options: StartDeskRelayRelayClientOptions,
-): DeskRelayRelayClientHandle {
-  const relayUrl = normalizeDeskRelayRelayBaseUrl(options.relayUrl);
-  const localBaseUrl = normalizeDeskRelayRelayBaseUrl(options.localBaseUrl);
+export function startWeRelayRelayClient(
+  options: StartWeRelayRelayClientOptions,
+): WeRelayRelayClientHandle {
+  const relayUrl = normalizeWeRelayRelayBaseUrl(options.relayUrl);
+  const localBaseUrl = normalizeWeRelayRelayBaseUrl(options.localBaseUrl);
   const deviceId = options.deviceId.trim();
   const deviceToken = options.deviceToken.trim();
   if (!deviceId || !deviceToken) {
-    throw new Error("DeskRelay Relay 缺少设备 ID 或设备密钥。");
+    throw new Error("WeRelay Relay 缺少设备 ID 或设备密钥。");
   }
   const logger = options.logger ?? (() => undefined);
   const fetchImpl = options.fetchImpl ?? fetch;
   const baseRetryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
-  const journal = new DeskRelayRelayCommandJournal(options.journalFile);
+  const journal = new WeRelayRelayCommandJournal(options.journalFile);
   const abortController = new AbortController();
 
   const done = (async () => {
@@ -328,13 +328,13 @@ export function startDeskRelayRelayClient(
     while (!abortController.signal.aborted) {
       try {
         const pollResponse = await fetchImpl(
-          `${relayUrl}${DESKRELAY_RELAY_POLL_PATH}`,
+          `${relayUrl}${WERELAY_RELAY_POLL_PATH}`,
           {
             method: "POST",
             headers: {
               authorization: `Bearer ${deviceToken}`,
               "content-type": "application/json",
-              "x-deskrelay-device-id": deviceId,
+              "x-werelay-device-id": deviceId,
             },
             body: "{}",
             signal: abortController.signal,
@@ -378,7 +378,7 @@ export function startDeskRelayRelayClient(
           signal: abortController.signal,
         });
         if (consecutiveFailures > 0) {
-          logger("DeskRelay 公网连接已恢复。");
+          logger("WeRelay 公网连接已恢复。");
         }
         consecutiveFailures = 0;
       } catch (error) {
@@ -387,7 +387,7 @@ export function startDeskRelayRelayClient(
         }
         consecutiveFailures += 1;
         const message = error instanceof Error ? error.message : String(error);
-        logger(`DeskRelay 公网连接异常：${message}`);
+        logger(`WeRelay 公网连接异常：${message}`);
         const retryDelayMs = Math.min(
           MAX_RETRY_DELAY_MS,
           baseRetryDelayMs * Math.max(1, 2 ** Math.min(4, consecutiveFailures - 1)),

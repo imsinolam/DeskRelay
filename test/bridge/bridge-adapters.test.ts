@@ -25,6 +25,7 @@ import {
   getCodexWechatOutboundAttachmentDenyMessage,
   hasClaudeNoAltScreenOption,
   isClaudeInvalidResumeError,
+  isTrustedCodexFallbackSession,
   listCodexResumeThreads,
   matchesCodexSessionMeta,
   resolveDefaultAdapterCommand,
@@ -57,7 +58,7 @@ const posixHostTest = process.platform === "win32" ? test.skip : test;
 
 function makeTempDirectory(): string {
   const directory = fs.mkdtempSync(
-    path.join(os.tmpdir(), "deskrelay-bridge-adapter-test-"),
+    path.join(os.tmpdir(), "werelay-bridge-adapter-test-"),
   );
   tempDirectories.push(directory);
   return directory;
@@ -88,6 +89,17 @@ afterEach(() => {
 
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+describe("Codex brand migration compatibility", () => {
+  test("keeps Codex sessions created by DeskRelay available after the rename", () => {
+    expect(
+      isTrustedCodexFallbackSession({
+        source: "vscode",
+        originator: "deskrelay-bridge",
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("Codex desktop persisted runtime status", () => {
@@ -1170,7 +1182,7 @@ describe("ShellAdapter", () => {
 describe("matchesCodexSessionMeta", () => {
   test("matches the expected cwd and thread id", () => {
     const startedAtMs = Date.parse("2026-03-22T15:00:00.000Z");
-    const cwd = "C:\\workspace\\deskrelay-bridge";
+    const cwd = "C:\\workspace\\werelay-bridge";
 
     expect(
       matchesCodexSessionMeta(
@@ -1191,7 +1203,7 @@ describe("matchesCodexSessionMeta", () => {
 
   test("rejects a session from the same cwd when the source does not match", () => {
     const startedAtMs = Date.parse("2026-03-22T15:00:00.000Z");
-    const cwd = "C:\\workspace\\deskrelay-bridge";
+    const cwd = "C:\\workspace\\werelay-bridge";
 
     expect(
       matchesCodexSessionMeta(
@@ -1212,7 +1224,7 @@ describe("matchesCodexSessionMeta", () => {
 
   test("rejects a session that started too far before the bridge session", () => {
     const startedAtMs = Date.parse("2026-03-22T15:00:00.000Z");
-    const cwd = "C:\\workspace\\deskrelay-bridge";
+    const cwd = "C:\\workspace\\werelay-bridge";
 
     expect(
       matchesCodexSessionMeta(
@@ -1274,7 +1286,7 @@ describe("buildCodexApprovalRequest", () => {
         "item/commandExecution/requestApproval",
         {
           command:
-            'cp "C:/Users/example/Desktop/report.docx" "C:/Users/example/.deskrelay/outbound-attachments/2026-05-23/report.docx"',
+            'cp "C:/Users/example/Desktop/report.docx" "C:/Users/example/.werelay/outbound-attachments/2026-05-23/report.docx"',
         },
       ),
     ).toContain("original absolute local file path");
@@ -1296,7 +1308,7 @@ describe("buildCodexApprovalRequest", () => {
           permissions: {
             fileSystem: {
               write: [
-                "C:\\Users\\example\\.deskrelay\\outbound-attachments\\2026-05-23",
+                "C:\\Users\\example\\.werelay\\outbound-attachments\\2026-05-23",
               ],
             },
           },
@@ -1309,7 +1321,7 @@ describe("buildCodexApprovalRequest", () => {
         "item/commandExecution/requestApproval",
         {
           command:
-            'ls "C:/Users/example/.deskrelay/outbound-attachments/2026-05-23"',
+            'ls "C:/Users/example/.werelay/outbound-attachments/2026-05-23"',
         },
       ),
     ).toBeNull();
@@ -1419,7 +1431,7 @@ describe("buildCodexApprovalRequest", () => {
           cwd: "C:\\repo",
           availableDecisions: ["accept", "cancel"],
         },
-        { DESKRELAY_STRICT_APPROVAL: "true" },
+        { WERELAY_STRICT_APPROVAL: "true" },
       ),
     ).toBeNull();
 
@@ -3552,7 +3564,7 @@ describe("Codex panel completion recovery", () => {
       "item/commandExecution/requestApproval",
       {
         command:
-          'cp "C:/Users/example/Desktop/report.docx" "C:/Users/example/.deskrelay/outbound-attachments/2026-05-23/report.docx"',
+          'cp "C:/Users/example/Desktop/report.docx" "C:/Users/example/.werelay/outbound-attachments/2026-05-23/report.docx"',
       },
       {
         threadId: "thread_1",
@@ -3800,7 +3812,7 @@ describe("Codex panel completion recovery", () => {
           fileSystem: {
             read: null,
             write: [
-              "C:\\Users\\example\\.deskrelay\\outbound-attachments\\2026-05-23",
+              "C:\\Users\\example\\.werelay\\outbound-attachments\\2026-05-23",
             ],
           },
         },
@@ -4025,7 +4037,7 @@ describe("Codex panel completion recovery", () => {
           contentItems: [
             {
               type: "inputText",
-              text: "Dynamic tool calls are not supported by DeskRelay.",
+              text: "Dynamic tool calls are not supported by WeRelay.",
             },
           ],
           success: false,
@@ -4482,7 +4494,7 @@ describe("findRecentCodexSessionFileForCwd", () => {
     expect(recent?.filePath).toBe(sessionFilePath);
   });
 
-  test("only accepts trusted CLI or deskrelay-bridge vscode sessions for recent fallback", () => {
+  test("only accepts trusted CLI or werelay-bridge vscode sessions for recent fallback", () => {
     const homeDirectory = makeTempDirectory();
     process.env.HOME = homeDirectory;
     process.env.USERPROFILE = homeDirectory;
@@ -4561,7 +4573,7 @@ describe("findRecentCodexSessionFileForCwd", () => {
             id: "thread_bridge",
             cwd,
             source: "vscode",
-            originator: "deskrelay-bridge",
+            originator: "werelay-bridge",
             timestamp: "2026-03-23T12:00:01.000Z",
           },
         }),

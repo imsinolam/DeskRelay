@@ -64,9 +64,9 @@ export function resolveGrokLeaderSocket(
     .digest("hex")
     .slice(0, 16);
   if (platform === "win32") {
-    return `\\\\.\\pipe\\deskrelay-grok-${uid}-${workspaceHash}`;
+    return `\\\\.\\pipe\\werelay-grok-${uid}-${workspaceHash}`;
   }
-  return `/tmp/deskrelay-grok-${uid}-${workspaceHash}.sock`;
+  return `/tmp/werelay-grok-${uid}-${workspaceHash}.sock`;
 }
 
 export function buildGrokAcpArgs(

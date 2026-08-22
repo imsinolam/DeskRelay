@@ -41,9 +41,9 @@ export function parseCliArgs(argv: string[]): CodexRemoteClientCliOptions {
     if (arg === "--help" || arg === "-h") {
       process.stdout.write(
         [
-          "Usage: deskrelay-codex [--cwd <path>] [...codex args]",
+          "Usage: werelay-codex [--cwd <path>] [...codex args]",
           "",
-          'Starts the visible native Codex client and connects it to the running "deskrelay-bridge-codex" instance for the current directory.',
+          'Starts the visible native Codex client and connects it to the running "werelay-bridge-codex" instance for the current directory.',
           "Unknown arguments are forwarded to the Codex client.",
           "",
         ].join("\n"),
@@ -70,13 +70,13 @@ export function readCodexRuntimeEndpoint(cwd: string): LocalCompanionEndpoint {
   const endpoint = readLocalCompanionEndpoint(cwd, { adapter: "codex" });
   if (!endpoint || endpoint.kind !== "codex") {
     throw new Error(
-      `No active Codex bridge endpoint was found for ${cwd}. Start "deskrelay-bridge-codex" in that directory first.`,
+      `No active Codex bridge endpoint was found for ${cwd}. Start "werelay-bridge-codex" in that directory first.`,
     );
   }
 
   if (endpoint.runtimeKind !== "codex_runtime_host" || (!endpoint.serverUrl && !endpoint.serverPort)) {
     throw new Error(
-      `The running Codex bridge for ${cwd} is using an older local companion protocol. Restart "deskrelay-bridge-codex" in that directory first.`,
+      `The running Codex bridge for ${cwd} is using an older local companion protocol. Restart "werelay-bridge-codex" in that directory first.`,
     );
   }
 

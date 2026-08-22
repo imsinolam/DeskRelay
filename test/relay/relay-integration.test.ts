@@ -6,19 +6,19 @@ import path from "node:path";
 
 import { encodeCodexMobileTaskShortCode } from "../../src/daemon/codex-mobile-server.ts";
 import {
-  startDeskRelayRelayClient,
-  type DeskRelayRelayClientHandle,
+  startWeRelayRelayClient,
+  type WeRelayRelayClientHandle,
 } from "../../src/relay/relay-client.ts";
 import {
-  DESKRELAY_RELAY_POLL_PATH,
+  WERELAY_RELAY_POLL_PATH,
 } from "../../src/relay/relay-protocol.ts";
 import {
-  startDeskRelayRelayServer,
-  type DeskRelayRelayServerHandle,
+  startWeRelayRelayServer,
+  type WeRelayRelayServerHandle,
 } from "../../src/relay/relay-server.ts";
 import {
-  createDeskRelayRelayTaskLinkAlias,
-  DESKRELAY_RELAY_TASK_LINK_REGISTER_PATH,
+  createWeRelayRelayTaskLinkAlias,
+  WERELAY_RELAY_TASK_LINK_REGISTER_PATH,
 } from "../../src/relay/relay-task-links.ts";
 
 const closers: Array<() => Promise<void>> = [];
@@ -95,16 +95,16 @@ async function waitUntilOnline(baseUrl: string): Promise<void> {
   throw new Error("relay client did not connect");
 }
 
-describe("DeskRelay application relay", () => {
+describe("WeRelay application relay", () => {
   test("prewarms authenticated task data before the browser opens again", async () => {
     const sessionToken = `v1.${Date.now() + 60_000}.nonce.signature`;
     let version = 1;
     const requestCounts = new Map<string, number>();
     const localServer = http.createServer((request, response) => {
       const path = request.url ?? "/";
-      const url = new URL(path, "http://deskrelay.local");
+      const url = new URL(path, "http://werelay.local");
       requestCounts.set(path, (requestCounts.get(path) ?? 0) + 1);
-      const prewarmAuthorized = request.headers["x-deskrelay-relay-prewarm"] ===
+      const prewarmAuthorized = request.headers["x-werelay-relay-prewarm"] ===
         "local-prewarm-secret";
       if (
         request.headers.cookie !== `codex_mobile_session=${sessionToken}` &&
@@ -191,7 +191,7 @@ describe("DeskRelay application relay", () => {
       });
     });
 
-    const relay = await startDeskRelayRelayServer({
+    const relay = await startWeRelayRelayServer({
       host: "127.0.0.1",
       port: 0,
       deviceId: "example-device",
@@ -202,7 +202,7 @@ describe("DeskRelay application relay", () => {
       warmCacheFreshMs: 5,
     });
     closers.push(() => relay.close());
-    const client = startDeskRelayRelayClient({
+    const client = startWeRelayRelayClient({
       relayUrl: relay.baseUrl,
       deviceId: "example-device",
       deviceToken: "test-device-token",
@@ -244,7 +244,7 @@ describe("DeskRelay application relay", () => {
     const authStatus = await fetch(`${relay.baseUrl}/api/auth/status`, { headers });
     expect(await authStatus.json()).toMatchObject({ authenticated: true });
     const preloadedTasks = await fetch(`${relay.baseUrl}${tasksPath}`, { headers });
-    expect(preloadedTasks.headers.get("x-deskrelay-cache")).toBe("warm");
+    expect(preloadedTasks.headers.get("x-werelay-cache")).toBe("warm");
     expect(await preloadedTasks.json()).toMatchObject({
       tasks: [{ title: "任务列表 2" }],
     });
@@ -253,12 +253,12 @@ describe("DeskRelay application relay", () => {
     await Bun.sleep(90);
     const cachedTasks = await fetch(`${relay.baseUrl}${tasksPath}`, { headers });
     expect(cachedTasks.status).toBe(200);
-    expect(cachedTasks.headers.get("x-deskrelay-cache")).toBe("warm");
+    expect(cachedTasks.headers.get("x-werelay-cache")).toBe("warm");
     expect(await cachedTasks.json()).toMatchObject({
       tasks: [{ title: "任务列表 2" }],
     });
     const cachedMessages = await fetch(`${relay.baseUrl}${messagesPath}`, { headers });
-    expect(cachedMessages.headers.get("x-deskrelay-cache")).toBe("warm");
+    expect(cachedMessages.headers.get("x-werelay-cache")).toBe("warm");
     expect(await cachedMessages.json()).toMatchObject({
       messages: [{ text: "thread-1 任务详情 2" }],
     });
@@ -274,7 +274,7 @@ describe("DeskRelay application relay", () => {
     const sessionTwo = `v1.${Date.now() + 60_000}.two.signature`;
     let version = 1;
     const localServer = http.createServer((request, response) => {
-      const url = new URL(request.url ?? "/", "http://deskrelay.local");
+      const url = new URL(request.url ?? "/", "http://werelay.local");
       const cookie = request.headers.cookie;
       const authenticated = cookie === `codex_mobile_session=${sessionOne}` ||
         cookie === `codex_mobile_session=${sessionTwo}`;
@@ -306,7 +306,7 @@ describe("DeskRelay application relay", () => {
         localServer.closeAllConnections?.();
       });
     });
-    const relay = await startDeskRelayRelayServer({
+    const relay = await startWeRelayRelayServer({
       host: "127.0.0.1",
       port: 0,
       deviceId: "example-device",
@@ -316,7 +316,7 @@ describe("DeskRelay application relay", () => {
       warmRefreshIntervalMs: 1_000,
     });
     closers.push(() => relay.close());
-    const client = startDeskRelayRelayClient({
+    const client = startWeRelayRelayClient({
       relayUrl: relay.baseUrl,
       deviceId: "example-device",
       deviceToken: "test-device-token",
@@ -334,7 +334,7 @@ describe("DeskRelay application relay", () => {
     await fetch(`${relay.baseUrl}${modelPath}`, { headers: headersOne });
     await fetch(`${relay.baseUrl}${modelPath}`, { headers: headersTwo });
     expect((await fetch(`${relay.baseUrl}${modelPath}`, { headers: headersTwo }))
-      .headers.get("x-deskrelay-cache")).toBe("warm");
+      .headers.get("x-werelay-cache")).toBe("warm");
 
     version = 2;
     const sent = await fetch(`${relay.baseUrl}/api/tasks/thread-1/messages?adapter=codex`, {
@@ -344,7 +344,7 @@ describe("DeskRelay application relay", () => {
     });
     expect(sent.status).toBe(200);
     const refreshed = await fetch(`${relay.baseUrl}${modelPath}`, { headers: headersTwo });
-    expect(refreshed.headers.get("x-deskrelay-cache")).toBeNull();
+    expect(refreshed.headers.get("x-werelay-cache")).toBeNull();
     expect(await refreshed.json()).toMatchObject({ currentModel: "model-2" });
   });
 
@@ -372,7 +372,7 @@ describe("DeskRelay application relay", () => {
         localServer.closeAllConnections?.();
       });
     });
-    const relay = await startDeskRelayRelayServer({
+    const relay = await startWeRelayRelayServer({
       host: "127.0.0.1",
       port: 0,
       deviceId: "example-device",
@@ -385,7 +385,7 @@ describe("DeskRelay application relay", () => {
       now: () => clockMs,
     });
     closers.push(() => relay.close());
-    const client = startDeskRelayRelayClient({
+    const client = startWeRelayRelayClient({
       relayUrl: relay.baseUrl,
       deviceId: "example-device",
       deviceToken: "test-device-token",
@@ -409,7 +409,7 @@ describe("DeskRelay application relay", () => {
 
   test("serves the mobile shell and forwards only mobile API requests through the Mac client", async () => {
     const local = await startLocalMobileStub();
-    const relay: DeskRelayRelayServerHandle = await startDeskRelayRelayServer({
+    const relay: WeRelayRelayServerHandle = await startWeRelayRelayServer({
       host: "127.0.0.1",
       port: 0,
       deviceId: "example-device",
@@ -418,7 +418,7 @@ describe("DeskRelay application relay", () => {
       deviceOfflineMs: 500,
     });
     closers.push(() => relay.close());
-    const client: DeskRelayRelayClientHandle = startDeskRelayRelayClient({
+    const client: WeRelayRelayClientHandle = startWeRelayRelayClient({
       relayUrl: relay.baseUrl,
       deviceId: "example-device",
       deviceToken: "test-device-token",
@@ -431,7 +431,7 @@ describe("DeskRelay application relay", () => {
 
     const page = await fetch(`${relay.baseUrl}/?task=thread-1`);
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain("DeskRelay");
+    expect(await page.text()).toContain("WeRelay");
     expect(local.received).toHaveLength(0);
 
     const tasks = await fetch(`${relay.baseUrl}/api/tasks?adapter=codex`, {
@@ -470,7 +470,7 @@ describe("DeskRelay application relay", () => {
   });
 
   test("rejects unauthenticated device polls and reports an offline Mac in Chinese", async () => {
-    const relay = await startDeskRelayRelayServer({
+    const relay = await startWeRelayRelayServer({
       host: "127.0.0.1",
       port: 0,
       deviceId: "example-device",
@@ -480,11 +480,11 @@ describe("DeskRelay application relay", () => {
     });
     closers.push(() => relay.close());
 
-    const poll = await fetch(`${relay.baseUrl}${DESKRELAY_RELAY_POLL_PATH}`, {
+    const poll = await fetch(`${relay.baseUrl}${WERELAY_RELAY_POLL_PATH}`, {
       method: "POST",
       headers: {
         authorization: "Bearer wrong-token",
-        "x-deskrelay-device-id": "example-device",
+        "x-werelay-device-id": "example-device",
       },
     });
     expect(poll.status).toBe(401);
@@ -492,12 +492,12 @@ describe("DeskRelay application relay", () => {
     const tasks = await fetch(`${relay.baseUrl}/api/tasks`);
     expect(tasks.status).toBe(503);
     expect(await tasks.json()).toEqual({
-      error: "电脑当前离线，请确认 DeskRelay 正在运行。",
+      error: "电脑当前离线，请确认 WeRelay 正在运行。",
     });
   });
 
   test("resolves task short links while the Mac is offline", async () => {
-    const relay = await startDeskRelayRelayServer({
+    const relay = await startWeRelayRelayServer({
       host: "127.0.0.1",
       port: 0,
       deviceId: "example-device",
@@ -521,18 +521,18 @@ describe("DeskRelay application relay", () => {
   });
 
   test("resolves registered ten-character task links after a relay restart", async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-relay-links-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-relay-links-"));
     const stateFile = path.join(directory, "task-links.json");
     const target = {
       adapter: "workbuddy",
       threadId: "0000000a-0000-7000-8000-00000000000a",
     };
-    const alias = createDeskRelayRelayTaskLinkAlias(
+    const alias = createWeRelayRelayTaskLinkAlias(
       "test-device-token",
       target.adapter,
       target.threadId,
     );
-    const first = await startDeskRelayRelayServer({
+    const first = await startWeRelayRelayServer({
       host: "127.0.0.1",
       port: 0,
       deviceId: "example-device",
@@ -540,13 +540,13 @@ describe("DeskRelay application relay", () => {
       taskLinkStateFile: stateFile,
     });
     const register = await fetch(
-      `${first.baseUrl}${DESKRELAY_RELAY_TASK_LINK_REGISTER_PATH}`,
+      `${first.baseUrl}${WERELAY_RELAY_TASK_LINK_REGISTER_PATH}`,
       {
         method: "POST",
         headers: {
           authorization: "Bearer test-device-token",
           "content-type": "application/json",
-          "x-deskrelay-device-id": "example-device",
+          "x-werelay-device-id": "example-device",
         },
         body: JSON.stringify({ alias, ...target }),
       },
@@ -554,7 +554,7 @@ describe("DeskRelay application relay", () => {
     expect(register.status).toBe(200);
     await first.close();
 
-    const restored = await startDeskRelayRelayServer({
+    const restored = await startWeRelayRelayServer({
       host: "127.0.0.1",
       port: 0,
       deviceId: "example-device",

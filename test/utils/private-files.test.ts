@@ -15,7 +15,7 @@ import {
 const roots: string[] = [];
 
 function makeTempDir(): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-private-files-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-private-files-"));
   roots.push(root);
   return root;
 }
@@ -72,7 +72,7 @@ describe("private runtime filesystem helpers", () => {
     const stateFile = path.join(workspace, "daemon-state.json");
     const attachmentFile = path.join(attachments, "photo.png");
     const launcherFile = path.join(root, "start-daemon.zsh");
-    const outside = path.join(os.tmpdir(), `deskrelay-outside-${process.pid}-${Date.now()}`);
+    const outside = path.join(os.tmpdir(), `werelay-outside-${process.pid}-${Date.now()}`);
 
     fs.mkdirSync(workspace, { recursive: true, mode: 0o755 });
     fs.mkdirSync(attachments, { recursive: true, mode: 0o755 });

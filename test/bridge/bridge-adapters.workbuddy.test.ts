@@ -211,7 +211,7 @@ describe("WorkBuddy Desktop adapter", () => {
         "codebuddy.ai": {
           conversationId: "wb-session",
           emitSyntheticUserPromptLive: true,
-          source: "deskrelay",
+          source: "werelay",
         },
       },
     });

@@ -124,7 +124,7 @@ function findExecutable(name: string): string | null {
 function getPlatformPtyFix(platform: NodeJS.Platform): string {
   switch (platform) {
     case "linux":
-      return "sudo apt install build-essential python3 && npm install -g deskrelay@latest";
+      return "sudo apt install build-essential python3 && npm install -g werelay@latest";
     case "darwin":
       return "xcode-select --install && npm rebuild node-pty";
     case "win32":
@@ -385,7 +385,7 @@ function formatMode(mode: DoctorMode): string {
     return msg("mode.bridge");
   }
   if (mode === "daemon") {
-    return "deskrelay";
+    return "werelay";
   }
   return msg("mode.generic");
 }

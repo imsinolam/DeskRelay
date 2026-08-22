@@ -7,7 +7,7 @@ import { MobileMessageImageStore } from "../../src/daemon/mobile-message-image-s
 
 describe("MobileMessageImageStore", () => {
   test("persists web input images and restores them onto the matching user message", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-mobile-input-images-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-mobile-input-images-"));
     const stateFile = path.join(directory, "mobile-message-images.json");
     const imagePath = path.join(directory, "input.png");
     fs.writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
@@ -44,7 +44,7 @@ describe("MobileMessageImageStore", () => {
   });
 
   test("uses the stored web originals instead of merging duplicate native input images", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-mobile-input-images-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-mobile-input-images-"));
     const stateFile = path.join(directory, "mobile-message-images.json");
     const originalPath = path.join(directory, "original.jpg");
     const nativePath = path.join(directory, "native-converted.jpg");
@@ -77,7 +77,7 @@ describe("MobileMessageImageStore", () => {
   });
 
   test("matches repeated image-only inputs from newest to oldest without crossing threads", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-mobile-input-images-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-mobile-input-images-"));
     const stateFile = path.join(directory, "mobile-message-images.json");
     const firstPath = path.join(directory, "first.jpg");
     const secondPath = path.join(directory, "second.jpg");

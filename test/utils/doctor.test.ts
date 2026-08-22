@@ -147,7 +147,7 @@ describe("doctor report", () => {
     );
     const output = lines.join("\n");
 
-    expect(output).toContain("DeskRelay 诊断");
+    expect(output).toContain("WeRelay 诊断");
     expect(output).toContain("\n环境\n");
     expect(output).toContain("\n适配器命令\n");
     expect(output).toContain("\n数据\n");
@@ -363,7 +363,7 @@ describe("doctor report", () => {
     );
     const output = lines.join("\n");
 
-    expect(output).toContain("DeskRelay Doctor");
+    expect(output).toContain("WeRelay Doctor");
     expect(output).toContain("\nRuntime\n");
     expect(output).toContain("  [ok] Daemon none");
     expect(output).toContain("  [ok] Workspace endpoint (codex) none");
@@ -376,7 +376,7 @@ describe("doctor report", () => {
   test("warns when the console code page is non-UTF8 and the data dir has non-ASCII characters", async () => {
     const risky = await buildDoctorReport(
       { argv: [], mode: "bridge", cwd: CWD },
-      makeDeps({ codePage: 936, dataDir: "C:\\Users\\用户名\\.deskrelay" }),
+      makeDeps({ codePage: 936, dataDir: "C:\\Users\\用户名\\.werelay" }),
     );
     expect(risky.join("\n")).toContain("[warn] 控制台代码页");
 

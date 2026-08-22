@@ -4,11 +4,11 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  DeskRelayRelayCommandJournal,
+  WeRelayRelayCommandJournal,
 } from "../../src/relay/relay-client.ts";
 import {
-  DESKRELAY_RELAY_PROTOCOL_VERSION,
-  type DeskRelayRelayCommandResponse,
+  WERELAY_RELAY_PROTOCOL_VERSION,
+  type WeRelayRelayCommandResponse,
 } from "../../src/relay/relay-protocol.ts";
 
 const tempDirs: string[] = [];
@@ -19,22 +19,22 @@ afterEach(() => {
   }
 });
 
-describe("DeskRelay relay command journal", () => {
+describe("WeRelay relay command journal", () => {
   test("persists completed non-idempotent command responses across restarts", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deskrelay-relay-journal-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "werelay-relay-journal-"));
     tempDirs.push(directory);
     const stateFile = path.join(directory, "journal.json");
-    const response: DeskRelayRelayCommandResponse = {
-      protocolVersion: DESKRELAY_RELAY_PROTOCOL_VERSION,
+    const response: WeRelayRelayCommandResponse = {
+      protocolVersion: WERELAY_RELAY_PROTOCOL_VERSION,
       commandId: "relay-command-1",
       statusCode: 200,
       headers: { "content-type": "application/json" },
       bodyBase64: Buffer.from('{"ok":true}').toString("base64"),
     };
 
-    new DeskRelayRelayCommandJournal(stateFile).save(response);
+    new WeRelayRelayCommandJournal(stateFile).save(response);
 
-    expect(new DeskRelayRelayCommandJournal(stateFile).get("relay-command-1"))
+    expect(new WeRelayRelayCommandJournal(stateFile).get("relay-command-1"))
       .toEqual(response);
     if (process.platform !== "win32") {
       expect(fs.statSync(stateFile).mode & 0o777).toBe(0o600);
