@@ -298,6 +298,55 @@ describe("legacy channel data migration", () => {
     }
   });
 
+  test("fills missing workspace files without overwriting an already-created workspace", () => {
+    const root = makeTempDir();
+    try {
+      const channelDataDir = path.join(root, "new");
+      const legacyDataDir = path.join(root, "legacy");
+
+      writeTextFile(
+        path.join(channelDataDir, "workspaces", "repo", "daemon-state.json"),
+        "new daemon state",
+      );
+      writeTextFile(
+        path.join(legacyDataDir, "workspaces", "repo", "daemon-state.json"),
+        "old daemon state",
+      );
+      writeTextFile(
+        path.join(legacyDataDir, "workspaces", "repo", "codex-mobile-auth.json"),
+        "legacy mobile auth",
+      );
+      writeTextFile(
+        path.join(legacyDataDir, "workspaces", "repo", "relay-command-journal.json"),
+        "legacy command journal",
+      );
+
+      const migrated = migrateLegacyChannelFiles(undefined, {
+        channelDataDir,
+        legacyDataDirs: [legacyDataDir],
+      });
+
+      expect(migrated).toEqual(["workspace state"]);
+      expect(
+        readTextFile(
+          path.join(channelDataDir, "workspaces", "repo", "daemon-state.json"),
+        ),
+      ).toBe("new daemon state");
+      expect(
+        readTextFile(
+          path.join(channelDataDir, "workspaces", "repo", "codex-mobile-auth.json"),
+        ),
+      ).toBe("legacy mobile auth");
+      expect(
+        readTextFile(
+          path.join(channelDataDir, "workspaces", "repo", "relay-command-journal.json"),
+        ),
+      ).toBe("legacy command journal");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("keeps first-source precedence and fills missing data from later sources", () => {
     const root = makeTempDir();
     try {

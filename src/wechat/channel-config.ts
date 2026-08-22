@@ -284,6 +284,36 @@ function legacySourceHasMigratableData(source: LegacyChannelSource): boolean {
   });
 }
 
+function isExistingDirectory(targetPath: string): boolean {
+  try {
+    return fs.statSync(targetPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function copyMissingDirectoryEntries(sourceDir: string, targetDir: string): boolean {
+  let copied = false;
+  for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+    const sourcePath = path.join(sourceDir, entry.name);
+    const targetPath = path.join(targetDir, entry.name);
+    if (!fs.existsSync(targetPath)) {
+      fs.cpSync(sourcePath, targetPath, { recursive: entry.isDirectory() });
+      copied = true;
+      continue;
+    }
+    if (entry.isDirectory()) {
+      if (
+        isExistingDirectory(targetPath) &&
+        copyMissingDirectoryEntries(sourcePath, targetPath)
+      ) {
+        copied = true;
+      }
+    }
+  }
+  return copied;
+}
+
 export function migrateLegacyChannelFiles(
   log?: (message: string) => void,
   options: LegacyChannelMigrationOptions = {},
@@ -310,19 +340,28 @@ export function migrateLegacyChannelFiles(
       if (!fs.existsSync(sourcePath)) {
         continue;
       }
-      if (fs.existsSync(targetPath)) {
-        skippedExisting.add(item.label);
-        continue;
-      }
-
       const stat = fs.statSync(sourcePath);
       if (item.kind === "directory") {
         if (!stat.isDirectory()) {
           continue;
         }
-        fs.cpSync(sourcePath, targetPath, { recursive: true });
+        if (fs.existsSync(targetPath)) {
+          if (
+            !isExistingDirectory(targetPath) ||
+            !copyMissingDirectoryEntries(sourcePath, targetPath)
+          ) {
+            skippedExisting.add(item.label);
+            continue;
+          }
+        } else {
+          fs.cpSync(sourcePath, targetPath, { recursive: true });
+        }
       } else {
         if (!stat.isFile()) {
+          continue;
+        }
+        if (fs.existsSync(targetPath)) {
+          skippedExisting.add(item.label);
           continue;
         }
         ensurePrivateDir(path.dirname(targetPath));
